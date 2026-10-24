@@ -1,29 +1,15 @@
-// ==========================================================================
-// notification.js  -  bell dropdown with a list of notifications
-//
-// Add to Navbar.html (after navbar.js):  <script src="notification.js"></script>
-// and in <head>:                         <link rel="stylesheet" href="Notification.css">
-//
-// BACKEND: set NOTIFICATIONS_URL below to a page that returns JSON like:
-//   [
-//     { "id": 1, "type": "lead", "title": "New lead assigned",
-//       "message": "Wedding Reception - Juan Santos",
-//       "createdAt": "2026-10-20T14:30:00", "read": false, "page": "leadsAndDeals.html" }
-//   ]
-// type: lead | deal | ticket | activity | customer (anything else = dashboard icon)
-// page: optional, the page to open when the notification is clicked
-// ==========================================================================
+// Render the notification bell and its dropdown panel.
 (function () {
   'use strict';
 
-  // ---- settings ----
-  var NOTIFICATIONS_URL = '';      // e.g. 'get_notifications.php'
-  var REFRESH_MS = 30000;          // check for new notifications every 30 seconds
-  var ICON_FOLDER = '';            // folder of the svg files, e.g. 'icons/' (empty = same folder as Navbar.html)
+  // Configure the feed URL, refresh interval, and icon path prefix.
+  var NOTIFICATIONS_URL = '';
+  var REFRESH_MS = 30000;
+  var ICON_FOLDER = '';
 
   var MIN = 60 * 1000;
 
-  // type -> icon file (check the exact file names)
+  // Map notification types to their icons.
   var ICON_FILES = {
     lead:     'icons/leads-and-deals-icon.svg',
     deal:     'icons/leads-and-deals-icon.svg',
@@ -64,7 +50,7 @@
     return items.filter(function (n) { return !n.read; }).length;
   }
 
-  // ---- the red dot on the bell ----
+  // Update the unread indicator on the bell.
   function updateDot() {
     var dot = document.getElementById('notificationDot');
     if (!dot) return;
@@ -72,7 +58,7 @@
     dot.classList.toggle('active', unreadCount() > 0);
   }
 
-  // ---- build the panel once ----
+  // Build the notification panel once.
   function buildPanel() {
     panel = document.createElement('div');
     panel.className = 'notif-panel';
@@ -114,7 +100,6 @@
     }).join('');
   }
 
-  // ---- open / close ----
   function position() {
     var bell = document.getElementById('notificationBell');
     if (!bell || !panel) return;
@@ -142,19 +127,17 @@
     if (bell) bell.setAttribute('aria-expanded', 'false');
   }
 
-  // ---- actions ----
+  // Update notification state in the current page.
   function markRead(id) {
     items.forEach(function (n) { if (String(n.id) === String(id)) n.read = true; });
     render();
     updateDot();
-    // BACKEND: tell the server too, e.g. fetch('mark_notification_read.php', { method: 'POST', body: ... })
   }
 
   function markAllRead() {
     items.forEach(function (n) { n.read = true; });
     render();
     updateDot();
-    // BACKEND: e.g. fetch('mark_all_notifications_read.php', { method: 'POST' })
   }
 
   function openPage(page) {
@@ -198,7 +181,7 @@
     updateDot();
   }
 
-  // ---- automatic loading from the backend ----
+  // Load notifications when a feed URL is configured.
   function loadFromServer() {
     if (!NOTIFICATIONS_URL) return;
     fetch(NOTIFICATIONS_URL, { credentials: 'same-origin' })
@@ -209,12 +192,12 @@
       .catch(function (err) { console.warn('Could not load notifications', err); });
   }
 
-  // ---- public API ----
+  // Expose notification controls for other scripts.
   window.crmNotifications = {
     add: add, setAll: setAll, markAllRead: markAllRead, open: open, close: close, reload: loadFromServer
   };
 
-  // ---- events ----
+  // Handle bell clicks and dismiss the panel.
   document.addEventListener('click', function (e) {
     if (e.target.closest('#notificationBell')) {
       e.preventDefault();

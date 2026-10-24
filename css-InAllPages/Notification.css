@@ -1,8 +1,4 @@
-/* ==========================================================================
-   NOTIFICATION PANEL (opens when the bell is clicked)
-   Uses the same colors as the rest of the CRM: --card-bg, --border-color,
-   --text-main, --text-muted
-   ========================================================================== */
+/* Notification panel uses the shared CRM theme colors. */
 
 .notif-panel {
   position: fixed;
@@ -59,7 +55,7 @@
   text-decoration: underline;
 }
 
-/* List */
+/* Notifications */
 .notif-list {
   margin: 0;
   padding: 0;
@@ -142,7 +138,7 @@ html.light-mode .notif-item:hover {
   color: var(--text-muted);
 }
 
-/* Unread: bold title + green dot on the right. Read: slightly faded */
+/* Distinguish unread notifications from read ones. */
 .notif-item.unread .notif-item-title {
   font-weight: 700;
 }

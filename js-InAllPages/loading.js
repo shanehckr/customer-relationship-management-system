@@ -1,15 +1,15 @@
+/** Manages page-loading behavior and loading indicators.*/
+
 (function () {
-  // Inject loading screen overlay into the DOM
+  // Add the loading overlay to the page.
   function injectLoader() {
     if (!document.getElementById("loadingOverlay")) {
       const loaderHTML = `
         <div id="loadingOverlay" class="loading-overlay hidden d-flex justify-content-center align-items-center">
-          <!-- Background Theme Overlay Images -->
           <img src="backgroundPicture/background-darkmode.png" class="loader-bg bg-dark" alt="Background Dark">
           <img src="backgroundPicture/background-lightmode.png" class="loader-bg bg-light" alt="Background Light">
           
           <div class="loading-content d-flex flex-column align-items-center text-center">
-            <!-- Spinner Dots SVG -->
             <svg class="svg-spinner" viewBox="0 0 50 50">
               <g transform="translate(25, 25)">
                 <rect class="dot dot-1" x="-2" y="-20" width="4" height="10" rx="2" />
@@ -40,7 +40,7 @@
     injectLoader();
   }
 
-  // Global loader controls
+  // Expose the global loader controls.
   window.CRMLoader = {
     show: function () {
       const loader = document.getElementById("loadingOverlay");
@@ -58,12 +58,12 @@
     }
   };
 
-  // Hide loader once the page finishes loading
+  // Hide the loader when the page finishes loading.
   window.addEventListener("load", () => {
     window.CRMLoader.hide();
   });
 
-  // Automatically show spinner for network requests taking longer than 300ms
+  // Show the loader only when a request takes longer than 300 ms.
   const originalFetch = window.fetch;
   let activeRequests = 0;
 

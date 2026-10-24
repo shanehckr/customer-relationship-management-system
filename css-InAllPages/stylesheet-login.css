@@ -1,6 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* Color Variables */
+/* Colors */
 :root {
   --bg-color: #0d1b17;
   --panel-bg: #092017;
@@ -49,7 +49,7 @@ body {
   transition: background-color 0.2s ease;
 }
 
-/* Card Container */
+/* Login card */
 .login-container {
   max-width: 1100px;
   height: 600px;
@@ -117,7 +117,7 @@ html.preload-transition .form-content {
   transform: translateX(0) !important;
 }
 
-/* Theme Toggle Button */
+/* Theme toggle */
 .theme-toggle {
   top: 28px;
   left: calc(45% - 50px);
@@ -139,7 +139,7 @@ html.dark-mode .sun-icon { display: block; }
 html.light-mode .sun-icon { display: none; }
 html.light-mode .moon-icon { display: block; }
 
-/* Form Typography and Inputs */
+/* Form fields */
 .login-panel h1 {
   font-size: 32px;
   color: var(--text-main);
@@ -169,7 +169,7 @@ html.light-mode .moon-icon { display: block; }
   opacity: 0.8;
 }
 
-/* SCOPED: only affects forms inside the login panel */
+/* Scope form styles to the login panel. */
 .login-panel form label {
   font-size: 13px;
   color: var(--label-color);
@@ -229,7 +229,7 @@ html.light-mode .login-panel form input {
 .toggle-password.visible .eye-closed-icon { display: none; }
 .toggle-password.visible .eye-open-icon { display: block; }
 
-/* Buttons (SCOPED to login panel) */
+/* Login panel buttons */
 .login-panel form button[type="submit"],
 .login-panel .btn-submit {
   width: 100% !important;
@@ -253,7 +253,7 @@ html.dark-mode .login-panel form input::placeholder {
   color: #FFFAFA !important;
 }
 
-/* Mobile Screens */
+/* Mobile layout */
 @media (max-width: 768px) {
   .login-container {
     max-width: 420px;
@@ -329,7 +329,7 @@ html.dark-mode .login-panel form input::placeholder {
   }
 }
 
-/* Loading Overlay */
+/* Loading overlay */
 .loading-overlay {
   position: fixed;
   top: 0;
@@ -408,7 +408,7 @@ html.light-mode .loader-bg.bg-light { opacity: 1; }
   color: var(--text-color, #FFFAFA);
 }
 
-/* Icon Filters */
+/* Icon colors */
 html.dark-mode .input-icon {
   filter: brightness(0) invert(1) !important;
   opacity: 1 !important;

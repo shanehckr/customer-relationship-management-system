@@ -1,0 +1,7 @@
+# Private database credentials
+/config.local.php
+
+# Environment and secret files
+.env
+.env.*
+!.env.example

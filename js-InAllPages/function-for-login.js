@@ -1,9 +1,11 @@
+/** Handles client-side interactions on the login interface.*/
+
 document.addEventListener("DOMContentLoaded", () => {
   const formContent = document.querySelector(".login-panel .form-content");
   const togglePasswordBtn = document.getElementById("togglePassword");
   const passwordInput = document.getElementById("password");
 
-  // Show or Hide Password when clicking the eye icon
+  // Toggle password visibility when the eye button is clicked.
   if (togglePasswordBtn && passwordInput) {
     togglePasswordBtn.addEventListener("click", () => {
       const isPassword = passwordInput.type === "password";
@@ -12,7 +14,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Smooth entrance animation for form content
+  // Animate the form content as it appears.
   if (sessionStorage.getItem("pageTransition") === "true") {
     sessionStorage.removeItem("pageTransition");
     if (formContent) {
