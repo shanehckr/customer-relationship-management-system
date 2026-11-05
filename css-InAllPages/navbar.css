@@ -405,3 +405,213 @@ html {
   height: auto !important;
   flex: none !important;
 }
+/* ==========================================================================
+   Sidebar dropdown group (Sales Staff > Catering Operations)
+   Full width: the list slides open under the group.
+   Icon-only (collapsed / phone): the list opens as a small flyout beside the icon.
+   ========================================================================== */
+.sidebar-nav .nav-group-toggle {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-nav .nav-group-toggle .nav-text { flex: 1 1 auto; }
+
+.nav-chevron {
+  margin-left: auto;
+  font-size: 12px;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.nav-group.open > .nav-group-toggle .nav-chevron { transform: rotate(180deg); }
+
+/* the group that holds the page you are on */
+.sidebar-nav .nav-group.has-active > .nav-group-toggle {
+  color: var(--accent-green) !important;
+  font-weight: 600;
+}
+
+.sidebar-nav .nav-group.has-active > .nav-group-toggle:hover { color: #ffffff !important; }
+
+/* sliding list */
+.nav-submenu {
+  display: grid;
+  grid-template-rows: 0fr;
+  visibility: hidden;
+  transition: grid-template-rows 0.25s ease, visibility 0s linear 0.25s;
+}
+
+.nav-group.open > .nav-submenu {
+  grid-template-rows: 1fr;
+  visibility: visible;
+  margin-top: 4px;
+  transition: grid-template-rows 0.25s ease, visibility 0s;
+}
+
+.sidebar-nav .nav-submenu-list {
+  min-height: 0;
+  overflow: hidden;
+  margin: 0 0 0 24px;
+  padding: 0 0 0 10px;
+  gap: 4px !important;
+  border-left: 1px solid var(--border-color);
+}
+
+.sidebar-nav .nav-sublink {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 10px !important;
+}
+
+.nav-sub-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* icon-only sidebar: flyout next to the icon */
+.crm-sidebar.collapsed .nav-chevron,
+html.sidebar-is-collapsed .crm-sidebar .nav-chevron { display: none; }
+
+.crm-sidebar.collapsed .nav-submenu,
+html.sidebar-is-collapsed .crm-sidebar .nav-submenu {
+  position: fixed;
+  left: 78px;
+  top: var(--flyout-top, 0px);
+  display: block;
+  min-width: 220px;
+  margin: 0 !important;
+  padding: 8px;
+  background-color: var(--panel-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  z-index: 1050;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+}
+
+.crm-sidebar.collapsed .nav-group.open > .nav-submenu,
+html.sidebar-is-collapsed .crm-sidebar .nav-group.open > .nav-submenu {
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 0.15s ease;
+}
+
+.crm-sidebar.collapsed .nav-submenu-list,
+html.sidebar-is-collapsed .crm-sidebar .nav-submenu-list {
+  margin: 0;
+  padding: 0;
+  border-left: 0;
+  overflow: visible;
+}
+
+.crm-sidebar.collapsed .nav-submenu .nav-sublink,
+html.sidebar-is-collapsed .crm-sidebar .nav-submenu .nav-sublink {
+  width: 100%;
+  height: auto;
+  margin: 0;
+  justify-content: flex-start !important;
+  padding: 8px 12px !important;
+}
+
+/* phone-size screens: the sidebar is always icon-only, so use the flyout there too */
+@media (max-width: 768px) {
+  .nav-chevron { display: none; }
+
+  .crm-sidebar .nav-submenu {
+    position: fixed;
+    left: 78px;
+    top: var(--flyout-top, 0px);
+    display: block;
+    min-width: 200px;
+    margin: 0 !important;
+    padding: 8px;
+    background-color: var(--panel-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    z-index: 1050;
+    visibility: hidden;
+    opacity: 0;
+    transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+  }
+
+  .crm-sidebar .nav-group.open > .nav-submenu {
+    visibility: visible;
+    opacity: 1;
+    transition: opacity 0.15s ease;
+  }
+
+  .crm-sidebar .nav-submenu-list {
+    margin: 0;
+    padding: 0;
+    border-left: 0;
+    overflow: visible;
+  }
+
+  .crm-sidebar .nav-submenu .nav-sublink {
+    width: 100%;
+    height: auto;
+    margin: 0;
+    justify-content: flex-start !important;
+    padding: 8px 12px !important;
+  }
+}
+
+/* ==========================================================================
+   Icon-only sidebar tooltip (collapsed sidebar + phone-size screens)
+   Hover / keyboard focus on desktop, tap or long-press on touch screens.
+   Uses the theme variables, so it follows dark and light mode.
+   ========================================================================== */
+.crm-nav-tip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 2000;
+  max-width: 220px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent-green);
+  border-radius: 12px;
+  background-color: var(--panel-bg);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-4px);
+  transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
+}
+
+.crm-nav-tip.show {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+/* little pointer on the side facing the icon */
+.crm-nav-tip::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -6px;
+  width: 10px;
+  height: 10px;
+  background-color: var(--panel-bg);
+  border-left: 1px solid var(--accent-green);
+  border-bottom: 1px solid var(--accent-green);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crm-nav-tip, .crm-nav-tip.show { transition: none; transform: none; }
+}

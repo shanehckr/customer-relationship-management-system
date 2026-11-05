@@ -55,6 +55,13 @@
             display: none !important;
         }
 
+        /* Customer sees only "all" items and items whose data-role is exactly "customer".
+           (Exact match on purpose: *="customer" would also match "customer service".)
+           Staff rules above already hide data-role="customer" items from staff. */
+        html.role-customer .nav-item:not([data-role="all"]):not([data-role="customer"]) {
+            display: none !important;
+        }
+
         /* navbar.js fills in the subtitle, user name, and role. */
         html:not(.role-ready) .brand-subtitle,
         html:not(.role-ready) #dropdownUserName,
@@ -73,10 +80,12 @@
 
     
     <link rel="stylesheet" href="css-InAllPages/stylesheet-login.css">
-    <link rel="stylesheet" href="css-InAllPages/navbar.css">
-    <link rel="stylesheet" href="css-InAllPages/adminpages.css?v=3">
+    <link rel="stylesheet" href="css-InAllPages/navbar.css?v=3">
+        <link rel="stylesheet" href="css-InAllPages/adminpages.css?v=33">
     <link rel="stylesheet" href="css-InAllPages/Notification.css">
-    <link rel="stylesheet" href="css-InAllPages/settings.css?v=4">
+    
+    
+   
     <script src="js-InAllPages/theme.js"></script>
 </head>
 
@@ -102,21 +111,136 @@
             <!-- data-role controls sidebar visibility; dashboard and report files are role-specific. -->
             <nav class="sidebar-nav px-2">
                 <ul class="nav flex-column">
-                    <li class="nav-item" data-role="all">
+                    <li class="nav-item" data-role="admin, manager, customer service, sales staff">
                         <a href="#" onclick="loadPage('dashboard', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/dashboard-icon.svg" class="sidebar-icon" alt="Dashboard Icon">
                             <span class="nav-text ms-3">Dashboard</span>
                         </a>
                     </li>
-                    <li class="nav-item" data-role="admin, manager, customer service, sales staff">
+
+                    <!-- Customer menu: only visible to the Customer role.
+                         Icon files go in the icons/ folder with these exact names. -->
+                         <li class="nav-item" data-role="customer">
+                        <a href="#" onclick="loadPage('customer-home.html', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/home-icon.svg" class="sidebar-icon" alt="Home Icon">
+                            <span class="nav-text ms-3">Home</span>
+                        </a>
+
+                    <li class="nav-item" data-role="customer">
+                        <a href="#" onclick="loadPage('customer-inquiries.html', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/inquiries-icon.svg" class="sidebar-icon" alt="Inquiries Icon">
+                            <span class="nav-text ms-3">My Inquiries</span>
+                        </a>
+                        </li>
+                    <li class="nav-item" data-role="customer">
+                        <a href="#" onclick="loadPage('customer-bookings.html', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/bookings-icon.svg" class="sidebar-icon" alt="Bookings Icon">
+                            <span class="nav-text ms-3">My Bookings</span>
+                        </a>
+                    </li>
+                    <li class="nav-item" data-role="customer">
+                        <a href="#" onclick="loadPage('customer-inbox.html', this); return false;" class="nav-link d-flex align-items-center">
+                             <img src="icons/inbox-icon.svg" class="sidebar-icon" alt="Inbox Icon">
+                                <span class="nav-text ms-3">Inbox</span>
+                    </a>
+                </li>
+
+                    <!-- Sales Staff menu: two dropdown groups (Catering Operations, Inquiries).
+                         Page files go in html-contentLoadsInNavbar/ with these exact names. -->
+                    <li class="nav-item nav-group" data-role="sales staff">
+                        <button type="button" class="nav-link nav-group-toggle" title="Catering Operations"
+                            aria-expanded="false" aria-controls="navGroupCatering">
+                            <img src="icons/catering-operations-icon.svg" class="sidebar-icon" alt="Catering Operations Icon">
+                            <span class="nav-text ms-3">Catering Operations</span>
+                            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
+                        </button>
+                        <div class="nav-submenu" id="navGroupCatering">
+                            <ul class="nav-submenu-list">
+                                <li class="nav-item" data-role="sales staff">
+                                    <a href="#" onclick="loadPage('sales-available-inquiries.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Available</span></a>
+                                </li>
+                            </ul>
+                        </div>
+                    </li>
+                    <li class="nav-item nav-group" data-role="sales staff">
+                        <button type="button" class="nav-link nav-group-toggle" title="Inquiries"
+                            aria-expanded="false" aria-controls="navGroupInquiries">
+                            <img src="icons/inquiries-icon.svg" class="sidebar-icon" alt="Inquiries Icon">
+                            <span class="nav-text ms-3">Inquiries</span>
+                            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
+                        </button>
+                        <div class="nav-submenu" id="navGroupInquiries">
+                            <ul class="nav-submenu-list">
+                                <li class="nav-item" data-role="sales staff">
+                                    <a href="#" onclick="loadPage('sales-my-inquiries.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">My Inquiries</span></a>
+                                </li>
+                                <li class="nav-item" data-role="sales staff">
+                                    <a href="#" onclick="loadPage('sales-bookings.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Bookings</span></a>
+                                </li>
+                                <li class="nav-item" data-role="sales staff">
+                                    <a href="#" onclick="loadPage('sales-calendar.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Calendar</span></a>
+                                </li>
+                            </ul>
+                        </div>
+                    </li>
+                    <!-- Admin + Manager menu: Customers, Catering Operations (dropdown), Inbox, then the shared Tickets / Reports,
+                         then Menu Management. Page files go in html-contentLoadsInNavbar/ with these exact names. -->
+                    <li class="nav-item" data-role="admin, manager">
+                        <a href="#" onclick="loadPage('customers.html', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/contacts-icon.svg" class="sidebar-icon" alt="Customers Icon">
+                            <span class="nav-text ms-3">Customers</span>
+                        </a>
+                    </li>
+                    <li class="nav-item nav-group" data-role="admin, manager">
+                        <button type="button" class="nav-link nav-group-toggle" title="Catering Operations"
+                            aria-expanded="false" aria-controls="navGroupManagerCatering">
+                            <img src="icons/catering-operations-icon.svg" class="sidebar-icon" alt="Catering Operations Icon">
+                            <span class="nav-text ms-3">Catering Operations</span>
+                            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
+                        </button>
+                        <div class="nav-submenu" id="navGroupManagerCatering">
+                            <ul class="nav-submenu-list">
+                                <li class="nav-item" data-role="admin, manager">
+                                    <a href="#" onclick="loadPage('manager-inquiries.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Inquiries</span></a>
+                                </li>
+                                <li class="nav-item" data-role="admin, manager">
+                                    <a href="#" onclick="loadPage('manager-bookings.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Bookings</span></a>
+                                </li>
+                                <li class="nav-item" data-role="admin, manager">
+                                    <a href="#" onclick="loadPage('manager-calendar.html', this); return false;"
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Calendar</span></a>
+                                </li>
+                            </ul>
+                        </div>
+                    </li>
+                    <!-- Manager Inbox sits before Tickets; the Sales / CS Inbox sits after Tickets. -->
+                    <li class="nav-item" data-role="admin, manager">
+                        <a href="#" onclick="loadPage('inbox', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/inbox-icon.svg" class="sidebar-icon" alt="Inbox Icon">
+                            <span class="nav-text ms-3">Inbox</span>
+                        </a>
+                    </li>
+
+                    <li class="nav-item" data-role="none">
                         <a href="#" onclick="loadPage('contact.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/contacts-icon.svg" class="sidebar-icon" alt="Contacts Icon">
                             <span class="nav-text ms-3">Contacts</span>
                         </a>
                     </li>
-                    <li class="nav-item" data-role="admin, manager, sales staff">
+                    <li class="nav-item" data-role="none">
                         <a href="#" onclick="loadPage('leadsanddeals.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/leads-and-deals-icon.svg" class="sidebar-icon" alt="Leads & Deals Icon">
@@ -130,18 +254,34 @@
                             <span class="nav-text ms-3">Tickets</span>
                         </a>
                     </li>
-                    <li class="nav-item" data-role="admin, manager, customer service, sales staff">
+                    <!-- Staff Inbox: shared by Sales Staff and Customer Service, role-specific page file. -->
+                    <li class="nav-item" data-role="sales staff, customer service">
+                        <a href="#" onclick="loadPage('inbox', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/inbox-icon.svg" class="sidebar-icon" alt="Inbox Icon">
+                            <span class="nav-text ms-3">Inbox</span>
+                        </a>
+                    </li>
+
+                    <li class="nav-item" data-role="none">
                         <a href="#" onclick="loadPage('activities.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/activity-icon.svg" class="sidebar-icon" alt="Activities Icon">
                             <span class="nav-text ms-3">Activities</span>
                         </a>
                     </li>
-                    <li class="nav-item" data-role="admin, manager, customer service, sales staff">
+                    <li class="nav-item" data-role="admin, manager, sales staff">
                         <a href="#" onclick="loadPage('reports', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/report-icon.svg" class="sidebar-icon" alt="Reports Icon">
                             <span class="nav-text ms-3">Reports</span>
+                        </a>
+                    </li>
+                    <li class="nav-item" data-role="admin, manager">
+                        <a href="#" onclick="loadPage('menu-management.html', this); return false;"
+                            class="nav-link d-flex align-items-center">
+                            <img src="icons/menu-management-icon.svg" class="sidebar-icon" alt="Menu Management Icon">
+                            <span class="nav-text ms-3">Menu Management</span>
                         </a>
                     </li>
                     <li class="nav-item" data-role="admin">
@@ -216,46 +356,33 @@
     </div>
 
     
-    <div class="modal fade" id="logoutConfirmationModal" tabindex="-1" aria-labelledby="logoutConfirmationTitle"
-        aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content border-0 rounded-4 shadow">
-
-                
-                <div class="modal-header border-0 pb-0">
-                    <h5 class="modal-title fw-bold" id="logoutConfirmationTitle">
-                        Confirm Logout
-                    </h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-
-                
-                <div class="modal-body pt-3">
-                    Are you sure you want to log out of your account?
-                </div>
-
-                
-                <div class="modal-footer border-0 pt-0">
-                    <button type="button" class="btn modal-btn-white px-4 py-2" data-bs-dismiss="modal">
-                        Cancel
-                    </button>
-
-                    <a href="logout.php" id="logoutConfirmBtn" class="btn modal-btn-danger px-4 py-2">
-                        Yes, Log Out
-                    </a>
-                </div>
-
+   <div class="modal fade" id="logoutConfirmationModal" tabindex="-1" aria-labelledby="logoutConfirmationTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content custom-modal-card">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold" id="logoutConfirmationTitle">Confirm Logout</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body pt-3 modal-delete-text">
+                Are you sure you want to log out of your account?
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn modal-btn-cancel px-4" data-bs-dismiss="modal">Cancel</button>
+                <a href="logout.php" id="logoutConfirmBtn" class="btn modal-btn-danger px-4">Yes, Log Out</a>
             </div>
         </div>
     </div>
+</div>
 
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     <script src="js-InAllPages/loading.js"></script>
-    <script src="js-InAllPages/settings.js?v=3"></script>
-    <script src="js-InAllPages/navbar.js?v=4"></script>
-    <script src="js-InAllPages/pages.js?v=18"></script>
+    <script src="js-InAllPages/navbar.js?v=8"></script>
+    <script src="js-InAllPages/pages.js?v=22"></script>
+   <script src="js-InAllPages/customerPages.js?v=13"></script>
+    <script src="js-InAllPages/settings.js?v=2"></script>
     <script src="js-InAllPages/notification.js"></script>
+    <script src="js-InAllPages/downloadExport.js"></script>
 
     <!-- Handle sidebar collapse state. -->
     <script>

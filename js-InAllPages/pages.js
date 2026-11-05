@@ -1,4 +1,4 @@
-/** Handles frontend behavior and data interactions for the CRM modules.*/
+/** Combined API-driven CRM behavior and Reports interactions. */
 
 window.crmSelected = null; // Remember the selected record and its type.
 function crmEscape(value) {
@@ -28,6 +28,70 @@ function crmEmptyRow(colspan, message) {
     <tr class="empty-data-row">
       <td colspan="${colspan}" class="text-center py-5 text-muted fw-medium fs-6">${crmEscape(message)}</td>
     </tr>`;
+}
+
+// Shared no-results component for module tables, Reports, and Settings.
+function crmConfigureNoResultsRow(tbody, colspan, options = {}) {
+  if (!tbody) return null;
+
+  const columnCount = Math.max(1, Number.parseInt(colspan, 10) || 1);
+  let row = tbody.querySelector(".no-results-row");
+  if (!row) {
+    row = document.createElement("tr");
+    row.className = "no-results-row crm-no-results-row";
+    row.innerHTML = `
+      <td colspan="${columnCount}" class="crm-no-results-cell" role="status">
+        <div class="crm-no-results-state">
+          <i class="bi bi-search" aria-hidden="true"></i>
+          <p class="crm-no-results-title">No results found</p>
+          <p class="crm-no-results-description">Try changing your search or filters.</p>
+        </div>
+      </td>`;
+    tbody.appendChild(row);
+  }
+
+  row.classList.add("crm-no-results-row");
+  let cell = row.querySelector("td");
+  if (!cell || !cell.querySelector(".crm-no-results-state")) {
+    row.innerHTML = `
+      <td colspan="${columnCount}" class="crm-no-results-cell" role="status">
+        <div class="crm-no-results-state">
+          <i class="bi bi-search" aria-hidden="true"></i>
+          <p class="crm-no-results-title">No results found</p>
+          <p class="crm-no-results-description">Try changing your search or filters.</p>
+        </div>
+      </td>`;
+    cell = row.querySelector("td");
+  }
+
+  if (cell) {
+    cell.colSpan = columnCount;
+    cell.setAttribute("role", "status");
+  }
+
+  const icon = row.querySelector(".crm-no-results-state > i");
+  const title = row.querySelector(".crm-no-results-title");
+  const description = row.querySelector(".crm-no-results-description");
+  const descriptionText = options.description === undefined
+    ? "Try changing your search or filters."
+    : options.description;
+  if (icon) icon.className = `bi bi-${options.icon || "search"}`;
+  if (title) title.textContent = options.title || "No results found";
+  if (description) {
+    description.textContent = descriptionText;
+    description.hidden = !descriptionText;
+  }
+
+  return row;
+}
+
+function crmSetNoResultsRow(tbody, colspan, visible, options = {}) {
+  const row = crmConfigureNoResultsRow(tbody, colspan, options);
+  if (row) {
+    row.hidden = false;
+    row.style.display = visible ? "" : "none";
+  }
+  return row;
 }
 
 function crmFormatPhone(raw) {
@@ -365,6 +429,7 @@ window.loadCrmPageData = function () {
   const dashCustomers = document.getElementById("recentCustomersTable");
   const ticketsTable = document.getElementById("ticketsTable");
   const activitiesTable = document.getElementById("activitiesTable");
+  const reportsPage = document.getElementById("reportsPage");
 
   renderStaticStatusBadges();
   crmInitModalDefaults();
@@ -389,6 +454,9 @@ window.loadCrmPageData = function () {
     return;
   } else if (activitiesTable) {
     crmLoadActivities(activitiesTable);
+    return;
+  } else if (reportsPage) {
+    crmRenderReports();
     return;
   } else if (dashActivities || dashCustomers) {
     crmSetDashboardDate();
@@ -1803,31 +1871,16 @@ window.initTableSearchAndFilters = function () {
     priority: "all",
   };
 
-  function ensureNoResultsRow() {
-    let noResultsRow = tbody.querySelector(".no-results-row");
-    if (!noResultsRow) {
-      const colCount = table.querySelectorAll("thead th").length || 6;
-      noResultsRow = document.createElement("tr");
-      noResultsRow.className = "no-results-row";
-      noResultsRow.style.display = "none";
-      noResultsRow.innerHTML = `
-        <td colspan="${colCount}" class="text-center py-5 text-muted fw-medium fs-6">
-          <div class="d-flex flex-column align-items-center justify-content-center gap-2">
-            <i class="bi bi-search fs-3 opacity-50"></i>
-            <span>No results found</span>
-          </div>
-        </td>
-      `;
-      tbody.appendChild(noResultsRow);
-    }
-    return noResultsRow;
+  function ensureNoResultsRow(visible = false) {
+    const colCount = table.querySelectorAll("thead th").length || 6;
+    return crmSetNoResultsRow(tbody, colCount, visible);
   }
 
   function applyFilters() {
     const dataRows = tbody.querySelectorAll(
       "tr:not(.no-results-row):not(.empty-data-row)",
     );
-    const noResultsRow = ensureNoResultsRow();
+    ensureNoResultsRow();
     const filters = window.activeTableFilters;
     let visibleCount = 0;
 
@@ -1888,8 +1941,7 @@ window.initTableSearchAndFilters = function () {
       }
     });
 
-    noResultsRow.style.display =
-      dataRows.length > 0 && visibleCount === 0 ? "" : "none";
+    ensureNoResultsRow(dataRows.length > 0 && visibleCount === 0);
   }
 
   if (searchInput) {
@@ -2358,6 +2410,391 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
+
+// ==========================================================================
+// SHARED REPORTS CODE
+//
+// ONE code path for every Reports page: Sales Staff, Customer Service Staff,
+// Manager, Admin ... Each report page only needs this HTML contract:
+//
+//   <main id="reportsPage" data-report-type="tickets" data-report-title="Customer Service Staff Report">
+//   - summary cards   : <span class="stat-label">..</span> + <div class="stat-number">..</div> inside a .card
+//   - vertical charts : <div class="rp-chart"  id=".." data-report-chart="Tickets by Status" data-items='[{"label":"Open","count":4}]'>
+//   - horizontal chart: <div class="rp-hchart" id=".." data-report-chart="Tickets by Assigned Staff" data-items='[{"label":"Jordan Lee","count":1}]'>
+//   - the table       : <table data-report-table="Customer Service Tickets"> (optional data-empty-text="...")
+//   - date label      : <span id="reportDateLabel">This Year</span>
+//   - buttons         : #exportCsvBtn (Excel) and #downloadPdfBtn
+//
+// data-report-type is only used by the console number check:
+//   "tickets"        -> Total Tickets / Open / Pending / Resolved
+//   anything else    -> sales: Total Leads / Total Deals / Confirmed Deals
+// ==========================================================================
+
+// Exact colors (same name on every page = same color)
+const CRM_REPORT_COLORS = {
+  // sales
+  'new inquiry': '#6B7280',
+  'in progress': '#93C5FD',
+  'in discussion': '#F97316',
+  'quotation preparation': '#1E40AF',
+  'quotation sent': '#FEF08A',
+  'negotiation': '#7C3AED',
+  'confirmed': '#10B981',
+  'declined': '#EF4444',
+  // customer service: status
+  'open': '#E9455A',
+  'pending': '#F8DF70',
+  'resolved': '#48B68E',
+  // customer service: priority
+  'high': '#E9455A',
+  'medium': '#F8DF70',
+  'low': '#48B68E'
+};
+
+// ---- vertical chart markup (used by the page, the PDF and the Excel pictures) ----
+function crmChartHTML(items) {
+  items = items || [];
+  const top = Math.max(4, ...items.map(i => Number(i.count) || 0));
+  const step = Math.ceil(top / 4);
+  const max = step * 4;
+  const ticks = [0, 1, 2, 3, 4].map(n => n * step);
+  const n = Math.max(items.length, 1);
+  return '<div class="rp-ytitle">Count</div><div class="rp-area">' +
+    ticks.map(t => '<i class="rp-grid" style="bottom:' + (t / max * 100) + '%"></i>' +
+                   '<span class="rp-ytick" style="bottom:' + (t / max * 100) + '%">' + t + '</span>').join('') +
+    '<div class="rp-cols" style="--n:' + n + '">' +
+      items.map(i => {
+        const c = Number(i.count) || 0;
+        const color = i.color || CRM_REPORT_COLORS[String(i.label).toLowerCase()] || '#6B7280';
+        return '<div class="rp-col"><span class="rp-val">' + c + '</span>' +
+               '<div class="rp-bar" style="height:' + (c / max * 100) + '%;background:' + color + '"></div></div>';
+      }).join('') +
+    '</div></div>' +
+    '<div class="rp-xlabels" style="--n:' + n + '">' +
+      items.map(i => '<span>' + crmEscape(i.label) + '</span>').join('') + '</div>';
+}
+
+// ---- horizontal chart markup (Tickets by Assigned Staff) ----
+// One green bar per staff member, the number sits at the end of the bar.
+function crmHChartHTML(items) {
+  items = items || [];
+  const top = Math.max(4, ...items.map(i => Number(i.count) || 0));
+  const step = Math.ceil(top / 4);
+  const max = step * 4;
+  const ticks = [0, 1, 2, 3, 4].map(n => n * step);
+  return items.map(i => {
+    const c = Number(i.count) || 0;
+    const color = i.color || '#48B68E';
+    return '<div class="rp-hrow"><div class="rp-hname">' + crmEscape(i.label) + '</div>' +
+           '<div class="rp-htrack"><div class="rp-hbar" style="width:calc((100% - 30px) * ' + (c / max) + ');background:' + color + '"></div>' +
+           '<span class="rp-hval">' + c + '</span></div></div>';
+  }).join('') +
+  '<div class="rp-haxis">' + ticks.map(t => '<span>' + t + '</span>').join('') + '</div>';
+}
+
+// Default colors for the Activities by Status chart (its names clash with the Sales colors,
+// e.g. "In Progress" is light blue for leads but yellow for activities).
+// An explicit "color" in an item always wins over these defaults.
+const CRM_ACTIVITY_COLORS = { 'upcoming': '#5B93E8', 'in progress': '#F8DF70', 'completed': '#48B68E', 'cancelled': '#E9455A' };
+
+// Draw a bar chart. boxIdOrElement = 'ticketsByStatusChart' or the element itself.
+// items = [{ label: 'Open', count: 4 }, ...]   (a backend can call this after a date change)
+// A box with class "rp-hchart" is drawn horizontally, a box with class "rp-chart" vertically.
+//
+// COLORS: the color is decided HERE and saved into box._items, so the page, the PDF and the
+// Excel all use the same color. Order:
+//   1. an explicit "color" in the item
+//   2. Activities by Status colors (CRM_ACTIVITY_COLORS)
+//   3. a known status / stage / priority name (CRM_REPORT_COLORS)
+//   4. anything else (staff names, activity types ...) = green, never grey
+function crmDrawChart(boxIdOrElement, items) {
+  const box = typeof boxIdOrElement === 'string' ? document.getElementById(boxIdOrElement) : boxIdOrElement;
+  if (!box) return;
+  box._items = (items || []).map(i => {
+    const key = String(i.label).toLowerCase();
+    let c = i.color;
+    if (!c && box.id === 'activitiesByStatusChart') c = CRM_ACTIVITY_COLORS[key];
+    if (!c && !CRM_REPORT_COLORS[key]) c = '#48B68E';
+    return c ? Object.assign({}, i, { color: c }) : i;
+  });
+  box.innerHTML = box.classList.contains('rp-hchart') ? crmHChartHTML(box._items) : crmChartHTML(box._items);
+}
+window.crmDrawChart = crmDrawChart;
+
+// Runs when a Reports page is shown: draws EVERY chart on the page from its data-items,
+// adds the "no rows" message to empty tables, then checks the numbers.
+function crmRenderReports() {
+  const page = document.getElementById('reportsPage');
+  if (!page) return;
+
+  page.querySelectorAll('.rp-chart, .rp-hchart').forEach(box => {
+    let items = [];
+    try { items = JSON.parse(box.getAttribute('data-items') || '[]'); }
+    catch (err) { console.warn('[Reports] Bad data-items on', box.id || box); }
+    crmDrawChart(box, items);
+  });
+
+  page.querySelectorAll('table').forEach(t => {
+    const cols = t.querySelectorAll('thead th').length || 6;
+    const msg = t.dataset.emptyText || (t.id === 'confirmedDealsTable' ? 'No confirmed deals yet' : 'No records for this period yet');
+    crmEnsureEmptyMessage(t.querySelector('tbody'), cols, msg);
+  });
+
+  crmBadgeReportTables(page);
+  crmUpdateCompletionRate();   // Activity tab donut
+  crmCheckReportNumbers();
+}
+window.crmRenderReports = crmRenderReports;
+
+// Status / Priority cells get the same colored pills as the Tickets page.
+// Plain text is enough in the HTML: <td>Open</td>. Only known values are colored
+// (Open, Pending, Resolved / High, Medium, Low). Call it again after rows are added later:
+//   crmBadgeReportTables();
+function crmBadgeReportTables(root) {
+  const STATUS = ['open', 'pending', 'resolved'], PRIORITY = ['high', 'medium', 'low'];
+  (root || document).querySelectorAll('table').forEach(table => {
+    const heads = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent.trim().toLowerCase());
+    const sCol = heads.indexOf('status'), pCol = heads.indexOf('priority');
+    if (sCol < 0 && pCol < 0) return;
+    table.querySelectorAll('tbody tr:not(.empty-data-row):not(.no-results-row)').forEach(tr => {
+      [[sCol, STATUS], [pCol, PRIORITY]].forEach(pair => {
+        const td = pair[0] >= 0 ? tr.cells[pair[0]] : null;
+        if (!td || td.querySelector('.ticket-badge')) return;
+        const v = td.textContent.trim();
+        if (pair[1].includes(v.toLowerCase())) td.innerHTML = crmTicketBadgeHTML(v);
+      });
+    });
+  });
+}
+window.crmBadgeReportTables = crmBadgeReportTables;
+
+// ==========================================================================
+// ACTIVITY TAB: COMPLETION RATE DONUT
+// Completion rate = Completed / Total Activities, read from the two summary cards.
+// Updates the donut ring (--pct), the % inside it and the big % next to it.
+// Called automatically by crmRenderReports() and crmApplyReportData().
+// ==========================================================================
+function crmUpdateCompletionRate() {
+  const donut = document.getElementById('completionDonut');
+  if (!donut) return;
+  const read = id => {
+    const el = document.getElementById(id);
+    return el ? (Number(el.textContent.replace(/[^0-9.]/g, '')) || 0) : 0;
+  };
+  const total = read('totalActivities');
+  const pct = total ? Math.round(read('completedActivities') / total * 100) : 0;
+  donut.style.setProperty('--pct', pct);
+  ['completionDonutText', 'completionRate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = pct + '%';
+  });
+}
+window.crmUpdateCompletionRate = crmUpdateCompletionRate;
+
+// ==========================================================================
+// REFRESH A REPORT WITH NEW NUMBERS (this is what makes the Date filter "work")
+// The Date dropdown only changes the label and calls window.onReportRangeChange(rangeText).
+// Whoever defines that function (your backend) loads the numbers for that range and calls:
+//
+//   crmApplyReportData({
+//     stats:  ['8', '4', '2', '2'],                 // same order as the cards (or { 'Total Tickets': 8, ... })
+//     charts: { ticketsByStatusChart: [{label:'Open',count:4}, ...], ticketsByPriorityChart: [...] },   // by chart id (or data-report-chart title)
+//     rows:   [['T-001','Late delivery','Lara Cruz','Open','High','Ana Reyes'], ...]    // "#" column is added automatically
+//   });
+//
+//   window.onReportRangeChange = function (range) {
+//     fetch('report_data.php?range=' + encodeURIComponent(range)).then(r => r.json()).then(crmApplyReportData);
+//   };
+// ==========================================================================
+function crmApplyReportData(data) {
+  const page = document.getElementById('reportsPage');
+  if (!page || !data) return;
+
+  // summary cards
+  page.querySelectorAll('.stat-number').forEach((n, i) => {
+    let v;
+    if (Array.isArray(data.stats)) v = data.stats[i];
+    else if (data.stats) {
+      const lab = (n.closest('.card') || document).querySelector('.stat-label');
+      v = data.stats[lab ? lab.textContent.trim() : ''];
+    }
+    if (v !== undefined && v !== null) n.textContent = v;
+  });
+
+  // charts (vertical AND horizontal)
+  page.querySelectorAll('.rp-chart, .rp-hchart').forEach(box => {
+    const c = data.charts || {};
+    const items = c[box.id] || c[box.getAttribute('data-report-chart')];
+    if (items) crmDrawChart(box, items);
+  });
+
+  // table rows
+  if (Array.isArray(data.rows)) {
+    const table = page.querySelector('table[data-report-table]') || page.querySelector('#confirmedDealsTable') || page.querySelector('table');
+    const tbody = table && table.querySelector('tbody');
+    if (tbody) {
+      const cols = table.querySelectorAll('thead th').length;
+      const numbered = (table.querySelector('thead th') || {}).textContent === '#';
+      tbody.innerHTML = data.rows.map((r, i) => {
+        const cells = (numbered && r.length === cols - 1) ? [i + 1].concat(r) : r;
+        return '<tr>' + cells.map(v => '<td>' + crmEscape(v) + '</td>').join('') + '</tr>';
+      }).join('');
+      page.querySelectorAll('.table-search-input').forEach(inp => { inp.value = ''; });
+      crmEnsureEmptyMessage(tbody, cols || 6, table.dataset.emptyText || 'No records for this period yet');
+    }
+  }
+
+  crmBadgeReportTables(page);
+  crmUpdateCompletionRate();   // Activity tab donut
+  crmCheckReportNumbers();
+}
+window.crmApplyReportData = crmApplyReportData;
+
+// ---- everything the PDF and the Excel need, read from the page ----
+// crmReportData()      -> everything on the page (old behaviour)
+// crmReportData(pane)  -> only ONE tab (a .tab-pane): its cards, charts and table.
+//                         Used by DownloadExport.js to export every tab separately.
+function crmReportData(pane) {
+  const el = id => document.getElementById(id);
+  const text = n => (n ? n.textContent.trim() : '');
+  const page = el('reportsPage');
+  const scope = pane || page;
+  const user = el('dropdownUserName');
+  const num = s => Number(String(s).replace(/[^0-9.]/g, '')) || 0;
+
+  // summary cards: [label, value]
+  const stats = Array.from(scope ? scope.querySelectorAll('.stat-number') : []).map(n => {
+    const card = n.closest('.card');
+    return [text(card && card.querySelector('.stat-label')), text(n)];
+  });
+  // Activity tab: the completion rate (donut) is exported as one more summary card
+  const rateEl = scope && scope.querySelector('#completionRate');
+  if (rateEl) stats.push(['Completion Rate', text(rateEl)]);
+
+  // charts: { title, items }  (vertical AND horizontal)
+  const charts = Array.from(scope ? scope.querySelectorAll('.rp-chart, .rp-hchart') : []).map(box => {
+    const card = box.closest('.card');
+    return {
+      id: box.id,
+      title: box.getAttribute('data-report-chart') || text(card && card.querySelector('h5')) || 'Chart',
+      items: box._items || []
+    };
+  });
+
+  // the table: { title, headers, rows, amountCol }
+  const tableEl = scope && (scope.querySelector('table[data-report-table]') || scope.querySelector('#confirmedDealsTable') || scope.querySelector('table'));
+  const tableCard = tableEl && tableEl.closest('.card');
+  const headers = tableEl ? Array.from(tableEl.querySelectorAll('thead th')).map(th => th.textContent.trim()) : [];
+  const footRow = tableEl && tableEl.querySelector('tfoot tr');       // e.g. the Customer "Total" row
+  const footCells = footRow ? Array.from(footRow.cells).map(td => td.textContent.trim()) : null;
+  const table = {
+    title: (tableEl && (tableEl.getAttribute('data-report-table') ||
+            (tableEl.id === 'confirmedDealsTable' ? 'Confirmed Deals' : text(tableCard && tableCard.querySelector('h5'))))) || 'Records',
+    headers: headers,
+    foot: footCells,
+    amountCol: headers.findIndex(h => /amount/i.test(h)),          // -1 = no money column
+    rows: tableEl
+      ? Array.from(tableEl.querySelectorAll('tbody tr:not(.empty-data-row):not(.no-results-row)'))   // ALL rows, even if the search hides some
+          .map(tr => Array.from(tr.cells).map(td => td.textContent.trim()))
+      : []
+  };
+
+  return {
+    title: (pane && pane.dataset.reportTitle) || (page && page.dataset.reportTitle) || 'Report',
+    type: (pane && pane.dataset.reportType) || (page && page.dataset.reportType) || 'sales',
+    dateLabel: (pane && pane.dataset.dateLabel) || '',
+    range: text(el('reportDateLabel')) || text(document.querySelector('#reportDateDropdown .custom-dropdown-toggle')) || 'All dates',
+    today: new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }),
+    user: localStorage.getItem('userName') || text(user) || 'Unknown',   // saves the real name as localStorage 'userName' at login
+    stats: stats,
+    charts: charts,
+    table: table,
+    num: num
+  };
+}
+
+const crmSum = items => items.reduce((s, i) => s + (Number(i.count) || 0), 0);
+const crmSlug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+// ==========================================================================
+// NUMBER CHECK
+// The cards, the charts and the table must tell the same story.
+// This only WARNS in the console (F12) so the wrong number is easy to find.
+// ==========================================================================
+function crmCheckReportNumbers() {
+  const panes = Array.from(document.querySelectorAll('#reportsPage .tab-pane[data-report-type]'));
+  if (!panes.length) return crmCheckOneReport(crmReportData());
+  panes.forEach(p => crmCheckOneReport(crmReportData(p)));   // each tab is checked with its own type
+}
+
+function crmCheckOneReport(d) {
+  const card = label => {
+    const s = d.stats.find(x => x[0].toLowerCase() === label.toLowerCase());
+    return s ? d.num(s[1]) : null;
+  };
+  const chart = re => d.charts.find(c => re.test(c.title));
+  const bar = (c, label) => {
+    const b = c && c.items.find(i => String(i.label).toLowerCase() === label.toLowerCase());
+    return b ? Number(b.count) : null;
+  };
+  const rows = d.table.rows.length;
+  const msgs = [];
+  const same = (what, a, b, whatB) => {
+    if (a !== null && b !== null && a !== b) msgs.push(what + ' = ' + a + ' but ' + whatB + ' = ' + b);
+  };
+
+  if (d.type === 'tickets') {
+    const status = chart(/status/i), priority = chart(/priority/i);
+    same('Total Tickets card', card('Total Tickets'), status ? crmSum(status.items) : null, 'Tickets by Status adds up to');
+    same('Total Tickets card', card('Total Tickets'), priority ? crmSum(priority.items) : null, 'Tickets by Priority adds up to');
+    same('Open Tickets card', card('Open Tickets'), bar(status, 'Open'), 'the Open bar');
+    same('Pending Tickets card', card('Pending Tickets'), bar(status, 'Pending'), 'the Pending bar');
+    same('Resolved Tickets card', card('Resolved Tickets'), bar(status, 'Resolved'), 'the Resolved bar');
+    if (rows) same('Total Tickets card', card('Total Tickets'), rows, 'the table rows');
+  } else {
+    const leads = chart(/lead/i), deals = chart(/deal/i);
+    same('Total Leads card', card('Total Leads'), leads ? crmSum(leads.items) : null, 'Leads by Stage adds up to');
+    same('Total Deals card', card('Total Deals'), deals ? crmSum(deals.items) : null, 'Deals by Stage adds up to');
+    same('Confirmed Deals card', card('Confirmed Deals'), bar(deals, 'Confirmed'), 'the Confirmed bar');
+    same('Confirmed Deals card', card('Confirmed Deals'), rows, 'the Confirmed Deals table rows');
+  }
+  msgs.forEach(m => console.warn('[Reports] ' + d.title + ': ' + m));
+}
+
+// ==========================================================================
+// REPORT INTERACTIONS (date range hook + table search), shared by every report page.
+// Delegated handlers keep working when navbar.js replaces the page content.
+// ==========================================================================
+if (!window.__crmReportInteractionsBound) {
+  window.__crmReportInteractionsBound = true;
+
+  document.addEventListener('click', function (e) {
+    // Backend hook: define window.onReportRangeChange = function (rangeText) { ... reload numbers + charts ... }
+    const range = e.target.closest('#reportDateMenu .custom-dropdown-item');
+    if (range && typeof window.onReportRangeChange === 'function') {
+      window.onReportRangeChange(range.textContent.trim());
+    }
+  });
+
+  // Any search box inside a report card filters the table of that same card
+  document.addEventListener('input', function (e) {
+    const input = e.target;
+    if (!input.matches || !input.matches('#reportsPage .table-search-input, #confirmedSearchInput')) return;
+    const card = input.closest('.card');
+    const table = card && card.querySelector('table');
+    if (!table) return;
+    const q = input.value.trim().toLowerCase();
+    const rows = Array.from(table.querySelectorAll('tbody tr:not(.empty-data-row):not(.no-results-row)'));
+    let visible = 0;
+    rows.forEach(tr => {
+      const show = tr.textContent.toLowerCase().includes(q);
+      tr.style.display = show ? '' : 'none';
+      if (show) visible++;
+    });
+    const colspan = table.querySelectorAll('thead th').length || 6;
+    crmSetNoResultsRow(table.querySelector('tbody'), colspan, rows.length > 0 && visible === 0);
+  });
+}
 
 // Restrict numeric input to digits and an optional decimal point.
 function crmCleanNumber(value, integerOnly) {
@@ -3481,3 +3918,599 @@ if (!window.__crmDropdownAutoScrollBound) {
     });
   });
 }
+
+;
+/** Handles frontend interactions for administrative settings and user management.*/
+
+(() => {
+  const roles = [
+    { value: "admin", label: "Admin" },
+    { value: "manager", label: "Manager" },
+    { value: "sales staff", label: "Sales Staff" },
+    { value: "customer service", label: "Customer Service Staff" }
+  ];
+
+  function normalizeRole(role) {
+    const normalized = role.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    if (normalized === "cs" || normalized === "cs staff" || normalized === "customer service staff") {
+      return "customer service";
+    }
+    if (normalized === "sales") return "sales staff";
+    return normalized;
+  }
+
+  function getModulePermissions() {
+    return Array.from(document.querySelectorAll("#crmSidebar .sidebar-nav .nav-item[data-role]"))
+      .map((item) => {
+        const moduleName = item.querySelector(".nav-text")?.textContent.trim();
+        const rawRoles = item.getAttribute("data-role");
+        if (!moduleName || !rawRoles) return null;
+        return {
+          name: moduleName,
+          roles: rawRoles.split(",").map(normalizeRole)
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function renderPermissions(settingsRoot, modulePermissions, selectedRole) {
+    const rows = settingsRoot.querySelector("#settings-permission-rows");
+    if (!rows) return;
+
+    rows.replaceChildren();
+
+    if (modulePermissions.length === 0) {
+      const row = document.createElement("tr");
+      row.innerHTML = '<td colspan="2" class="text-center py-4">Role navigation rules are unavailable.</td>';
+      rows.append(row);
+      return;
+    }
+
+    modulePermissions.forEach((module) => {
+      const allowed = module.roles.includes("all") || module.roles.includes(selectedRole);
+      const row = document.createElement("tr");
+      const nameCell = document.createElement("td");
+      const accessCell = document.createElement("td");
+      const badge = document.createElement("span");
+
+      nameCell.textContent = module.name;
+      badge.className = allowed ? "settings-access-badge" : "settings-denied-badge";
+      badge.textContent = allowed ? "Allowed" : "Not allowed";
+      accessCell.append(badge);
+      row.append(nameCell, accessCell);
+      rows.append(row);
+    });
+  }
+
+  function showFormMessage(element, message) {
+    if (!element) return;
+    element.textContent = message;
+    element.classList.remove("d-none");
+  }
+
+  function setPasswordVisibility(button, visible, settingsRoot) {
+    const selector = button.getAttribute("data-password-toggle");
+    const input = selector ? settingsRoot.querySelector(selector) : null;
+    const icon = button.querySelector("i");
+    if (!input || !icon) return;
+
+    input.type = visible ? "text" : "password";
+    icon.classList.toggle("bi-eye", !visible);
+    icon.classList.toggle("bi-eye-slash", visible);
+    button.setAttribute("aria-label", visible ? "Hide password" : "Show password");
+    button.setAttribute("title", visible ? "Hide password" : "Show password");
+  }
+
+  function updateSettingsEmptyRow(settingsRoot, hasFilters) {
+    const rows = settingsRoot.querySelector("#settings-user-rows");
+    if (!rows) return;
+    crmSetNoResultsRow(rows, 6, true, {
+      icon: hasFilters ? "search" : "people",
+      title: hasFilters ? "No results found" : "No user accounts found",
+      description: hasFilters
+        ? "Try changing your search or filters."
+        : "User accounts will appear here when they are added."
+    });
+  }
+
+  function filterUsers(settingsRoot) {
+    const rows = settingsRoot.querySelector("#settings-user-rows");
+    if (!rows || rows.querySelector(".settings-loading-row, .settings-load-error-row")) return;
+
+    const searchValue = settingsRoot.querySelector("#settings-user-search")?.value.trim().toLowerCase() || "";
+    const roleValue = settingsRoot.querySelector("#settings-role-filter")?.value || "";
+    const statusValue = settingsRoot.querySelector("#settings-status-filter")?.value || "";
+    const userRows = Array.from(rows.querySelectorAll("tr[data-account-row]"));
+    const hasFilters = Boolean(searchValue || roleValue || statusValue);
+    let visibleCount = 0;
+
+    userRows.forEach((row) => {
+      const matchesSearch = `${row.dataset.name || ""} ${row.dataset.username || ""} ${row.dataset.email || ""}`
+        .toLowerCase()
+        .includes(searchValue);
+      const matchesRole = !roleValue || row.dataset.role === roleValue;
+      const matchesStatus = !statusValue || row.dataset.status === statusValue;
+      const visible = matchesSearch && matchesRole && matchesStatus;
+      row.hidden = !visible;
+      if (visible) visibleCount += 1;
+    });
+
+    if (visibleCount === 0) {
+      updateSettingsEmptyRow(settingsRoot, hasFilters);
+      return;
+    }
+
+    rows.querySelector(".no-results-row")?.remove();
+  }
+
+  function clearPasswordFields(settingsRoot) {
+    settingsRoot.querySelectorAll("#createAccountModal [data-password-toggle]").forEach((button) => {
+      setPasswordVisibility(button, false, settingsRoot);
+    });
+    const form = settingsRoot.querySelector("#create-account-form");
+    if (form) form.reset();
+
+    const message = settingsRoot.querySelector("#create-account-message");
+    if (message) {
+      message.textContent = "";
+      message.classList.add("d-none");
+    }
+  }
+
+  function fillAccountDetails(settingsRoot, row) {
+    const fields = {
+      name: row.dataset.name || "",
+      email: row.dataset.email || "",
+      role: row.dataset.role || "",
+      status: row.dataset.status || ""
+    };
+
+    Object.entries(fields).forEach(([field, value]) => {
+      const element = settingsRoot.querySelector(`[data-account-detail="${field}"]`);
+      if (element) element.textContent = value;
+    });
+
+    const editForm = settingsRoot.querySelector("#edit-account-form");
+    if (!editForm) return;
+    editForm.elements.user_id.value = row.dataset.userId || "";
+    editForm.elements.full_name.value = fields.name;
+    editForm.elements.email.value = fields.email;
+    editForm.elements.role.value = fields.role;
+    editForm.elements.status.value = fields.status;
+    [editForm.elements.role, editForm.elements.status].forEach((select) => {
+      const dropdown = select.closest(".dropdown");
+      const label = dropdown?.querySelector("[data-select-label]");
+      if (label) label.textContent = select.selectedOptions[0]?.textContent.trim() || "";
+      dropdown?.querySelectorAll("[data-settings-select]").forEach((item) => {
+        item.setAttribute("aria-selected", item.dataset.value === select.value ? "true" : "false");
+      });
+    });
+  }
+
+  const SETTINGS_API_URL = "settings-api.php";
+
+  async function loadSettingsUsers(settingsRoot) {
+    const rows = settingsRoot.querySelector("#settings-user-rows");
+    const notice = settingsRoot.querySelector(".settings-ui-notice");
+
+    if (!rows) return;
+
+    rows.replaceChildren();
+
+    const loadingRow = document.createElement("tr");
+    const loadingCell = document.createElement("td");
+    loadingCell.colSpan = 6;
+    loadingCell.className = "text-center py-4";
+    loadingCell.textContent = "Loading user accounts...";
+    loadingRow.className = "settings-loading-row";
+    loadingRow.append(loadingCell);
+    rows.append(loadingRow);
+
+    try {
+      const response = await fetch(
+        `${SETTINGS_API_URL}?action=list`,
+        {
+          method: "GET",
+          credentials: "same-origin",
+          headers: { Accept: "application/json" }
+        }
+      );
+
+      const data = await response.json();
+
+      if (
+        !response.ok ||
+        !data.success ||
+        !Array.isArray(data.users) ||
+        typeof data.csrf_token !== "string"
+      ) {
+        throw new Error(data.message || "Unable to load user accounts.");
+      }
+
+      settingsRoot.dataset.csrfToken = data.csrf_token;
+      rows.replaceChildren();
+
+      if (notice) notice.classList.add("d-none");
+
+      if (data.users.length === 0) {
+        filterUsers(settingsRoot);
+        return;
+      }
+
+      data.users.forEach((user) => {
+        const row = document.createElement("tr");
+
+        row.dataset.accountRow = "";
+        row.dataset.userId = String(user.user_id);
+        row.dataset.name = user.full_name || "";
+        row.dataset.username = user.username || "";
+        row.dataset.email = user.email || "";
+        row.dataset.role = user.role_name || "";
+        row.dataset.status = user.status || "";
+
+        [user.username, user.full_name, user.email, user.role_name, user.status]
+          .forEach((value, index) => {
+            const cell = document.createElement("td");
+            cell.textContent = value ?? "";
+
+            if (index === 4) {
+              const badge = document.createElement("span");
+              badge.className =
+                user.status === "Active"
+                  ? "badge text-bg-success"
+                  : "badge text-bg-secondary";
+              badge.textContent = user.status || "Unknown";
+              cell.replaceChildren(badge);
+            }
+
+            row.append(cell);
+          });
+
+        const actionsCell = document.createElement("td");
+        actionsCell.className = "text-end";
+
+        const viewButton = document.createElement("button");
+        viewButton.type = "button";
+        viewButton.className = "btn btn-sm btn-outline-secondary me-2";
+        viewButton.dataset.accountAction = "view";
+        viewButton.textContent = "View";
+        viewButton.setAttribute("aria-label", `View ${user.full_name || user.username}`);
+
+        const editButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "btn btn-sm btn-outline-success";
+        editButton.dataset.accountAction = "edit";
+        editButton.textContent = "Edit";
+        editButton.setAttribute("aria-label", `Edit ${user.full_name || user.username}`);
+
+        actionsCell.append(viewButton, editButton);
+        row.append(actionsCell);
+        rows.append(row);
+      });
+
+      filterUsers(settingsRoot);
+
+    } catch (error) {
+      console.error("Settings user loading failed:", error);
+
+      rows.replaceChildren();
+
+      const errorRow = document.createElement("tr");
+      const errorCell = document.createElement("td");
+
+      errorRow.className = "settings-load-error-row";
+      errorCell.colSpan = 6;
+      errorCell.className = "text-center text-danger py-4";
+      errorCell.textContent =
+        "Unable to load user accounts. Refresh the page and try again.";
+
+      errorRow.append(errorCell);
+      rows.append(errorRow);
+    }
+  }
+
+  function initCrmSettingsPage() {
+    const settingsRoot = document.getElementById("crmSettingsPage");
+    if (!settingsRoot || settingsRoot.dataset.initialized === "true") return;
+    settingsRoot.dataset.initialized = "true";
+
+    const modulePermissions = getModulePermissions();
+    const roleSelect = settingsRoot.querySelector("#settings-permission-role");
+    renderPermissions(settingsRoot, modulePermissions, normalizeRole(roleSelect?.value || "admin"));
+    loadSettingsUsers(settingsRoot);
+
+    roleSelect?.addEventListener("change", () => {
+      renderPermissions(settingsRoot, modulePermissions, normalizeRole(roleSelect.value));
+    });
+
+    // Keep the styled dropdowns and filter selects in sync.
+    settingsRoot.querySelectorAll("[data-settings-filter]").forEach((item) => {
+      const select = settingsRoot.querySelector(`#${item.dataset.settingsFilter}`);
+      const dropdown = item.closest(".settings-filter-dropdown");
+      const toggleLabel = dropdown?.querySelector("[data-settings-filter-label]");
+      if (item.dataset.filterValue === select?.value) {
+        item.setAttribute("aria-selected", "true");
+      }
+      if (select && toggleLabel && item.dataset.filterValue === select.value) {
+        toggleLabel.textContent = item.textContent.trim();
+      }
+    });
+
+    settingsRoot.querySelectorAll(".settings-filter-value").forEach((select) => {
+      select.addEventListener("change", () => {
+        const dropdown = select.closest(".settings-filter-dropdown");
+        const toggleLabel = dropdown?.querySelector("[data-settings-filter-label]");
+        if (toggleLabel) {
+          toggleLabel.textContent = select.selectedOptions[0]?.textContent.trim() || "";
+        }
+
+        dropdown?.querySelectorAll("[data-settings-filter]").forEach((item) => {
+          item.setAttribute(
+            "aria-selected",
+            item.dataset.filterValue === select.value ? "true" : "false"
+          );
+        });
+      });
+    });
+
+    settingsRoot.querySelector("#settings-user-search")?.addEventListener("input", () => filterUsers(settingsRoot));
+    settingsRoot.querySelector("#settings-role-filter")?.addEventListener("change", () => filterUsers(settingsRoot));
+    settingsRoot.querySelector("#settings-status-filter")?.addEventListener("change", () => filterUsers(settingsRoot));
+
+    settingsRoot.addEventListener("click", (event) => {
+      const filterItem = event.target.closest("[data-settings-filter]");
+      if (filterItem) {
+        const select = settingsRoot.querySelector(`#${filterItem.dataset.settingsFilter}`);
+        if (select && select.value !== filterItem.dataset.filterValue) {
+          select.value = filterItem.dataset.filterValue;
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        return;
+      }
+
+      const toggleButton = event.target.closest("[data-password-toggle]");
+      if (toggleButton) {
+        const selector = toggleButton.getAttribute("data-password-toggle");
+        const input = selector ? settingsRoot.querySelector(selector) : null;
+        if (input) setPasswordVisibility(toggleButton, input.type === "password", settingsRoot);
+        return;
+      }
+
+      const selectItem = event.target.closest("[data-settings-select]");
+      if (selectItem) {
+        const select = settingsRoot.querySelector(`#${selectItem.dataset.settingsSelect}`);
+        if (select && select.value !== selectItem.dataset.value) {
+          select.value = selectItem.dataset.value;
+          const dropdown = select.closest(".dropdown");
+          const label = dropdown?.querySelector("[data-select-label]");
+          if (label) label.textContent = select.selectedOptions[0]?.textContent.trim() || "";
+          dropdown?.querySelectorAll("[data-settings-select]").forEach((item) => {
+            item.setAttribute("aria-selected", item.dataset.value === select.value ? "true" : "false");
+          });
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        return;
+      }
+
+      const actionButton = event.target.closest("[data-account-action]");
+      if (!actionButton) return;
+
+      const row = actionButton.closest("[data-account-row]");
+      if (!row) return;
+      fillAccountDetails(settingsRoot, row);
+
+      const modalId = actionButton.dataset.accountAction === "view" ? "#viewAccountModal" : "#editAccountModal";
+      const modalElement = settingsRoot.querySelector(modalId);
+      if (modalElement && window.bootstrap?.Modal) {
+        if (modalElement.id === "editAccountModal") {
+          const discardName = settingsRoot.querySelector("#discardAccountChangesModal strong.text-highlight");
+          if (discardName) discardName.textContent = row.dataset.name || row.dataset.username || "this account";
+          if (typeof window.crmTakeSnapshot === "function") window.crmTakeSnapshot(modalElement.id);
+        }
+        window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
+      }
+    });
+
+    settingsRoot.querySelector("#create-account-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const password = form.elements.password;
+      const confirmPassword = form.elements.confirm_password;
+      const message = settingsRoot.querySelector("#create-account-message");
+      const submitButton = form.querySelector('[type="submit"]');
+
+      confirmPassword.setCustomValidity("");
+      confirmPassword.setCustomValidity(
+        password.value === confirmPassword.value ? "" : "Passwords must match."
+      );
+
+      if (!form.reportValidity()) return;
+
+      if (!settingsRoot.dataset.csrfToken) {
+        message.className = "alert alert-danger";
+        showFormMessage(message, "Security token is unavailable. Refresh Settings and try again.");
+        return;
+      }
+
+      if (submitButton) submitButton.disabled = true;
+      message.className = "alert alert-info";
+      showFormMessage(message, "Creating account...");
+
+      try {
+        const response = await fetch(`${SETTINGS_API_URL}?action=create`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "X-CSRF-Token": settingsRoot.dataset.csrfToken
+          },
+          body: new FormData(form)
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || "Unable to create the account.");
+        }
+
+        form.reset();
+        message.className = "alert alert-success";
+        showFormMessage(message, data.message || "Account created successfully.");
+        await loadSettingsUsers(settingsRoot);
+      } catch (error) {
+        console.error("Settings account creation failed:", error);
+        message.className = "alert alert-danger";
+        showFormMessage(
+          message,
+          error instanceof Error ? error.message : "Unable to create the account. Please try again."
+        );
+      } finally {
+        if (submitButton) submitButton.disabled = false;
+      }
+    });
+
+    settingsRoot.querySelector("#edit-account-form")?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const message = settingsRoot.querySelector("#edit-account-message");
+      const submitButton = form.querySelector('[type="submit"]');
+
+      if (!form.reportValidity()) return;
+
+      if (!settingsRoot.dataset.csrfToken) {
+        message.className = "alert alert-danger";
+        showFormMessage(message, "Security token is unavailable. Refresh Settings and try again.");
+        return;
+      }
+
+      if (submitButton) submitButton.disabled = true;
+      message.className = "alert alert-info";
+      showFormMessage(message, "Saving account changes...");
+
+      try {
+        const response = await fetch(`${SETTINGS_API_URL}?action=edit`, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "X-CSRF-Token": settingsRoot.dataset.csrfToken
+          },
+          body: new FormData(form)
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.message || "Unable to update the account.");
+        }
+
+        message.className = "alert alert-success";
+        showFormMessage(message, data.message || "Account updated successfully.");
+        if (typeof window.crmTakeSnapshot === "function") window.crmTakeSnapshot("editAccountModal");
+        await loadSettingsUsers(settingsRoot);
+      } catch (error) {
+        console.error("Settings account update failed:", error);
+        message.className = "alert alert-danger";
+        showFormMessage(
+          message,
+          error instanceof Error ? error.message : "Unable to update the account. Please try again."
+        );
+      } finally {
+        if (submitButton) submitButton.disabled = false;
+      }
+    });
+
+    settingsRoot.querySelector("#createAccountModal")?.addEventListener("hidden.bs.modal", () => {
+      clearPasswordFields(settingsRoot);
+    });
+
+    settingsRoot.querySelectorAll("#createAccountModal [data-password-toggle]").forEach((button) => {
+      button.setAttribute("aria-label", "Show password");
+      button.setAttribute("title", "Show password");
+    });
+  }
+
+  window.initCrmSettingsPage = initCrmSettingsPage;
+})();
+
+// ==========================================================================
+// SEARCH BARS: every search box gets the same green "X" clear button
+// (Contacts, Leads & Deals, Tickets, Activities, Reports, Settings).
+// Pages are swapped in by navbar.js, so new search boxes are upgraded as they appear.
+// The look of the X is in adminpages.css (::-webkit-search-cancel-button).
+// ==========================================================================
+(function () {
+  if (window.__crmSearchClearBound) return;
+  window.__crmSearchClearBound = true;
+
+  const SELECTOR = ".table-search-input, #confirmedSearchInput, #settings-user-search";
+  let queued = false;
+
+  function upgradeSearchInputs() {
+    queued = false;
+    document.querySelectorAll(SELECTOR).forEach((input) => {
+      // type="search" is what makes the browser show the X once something is typed.
+      if (input.tagName === "INPUT" && input.type !== "search") input.type = "search";
+    });
+  }
+
+  function queueUpgrade() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(upgradeSearchInputs);
+  }
+
+  function start() {
+    upgradeSearchInputs();
+    new MutationObserver(queueUpgrade).observe(document.body, { childList: true, subtree: true });
+  }
+
+  if (document.body) start();
+  else document.addEventListener("DOMContentLoaded", start);
+})();
+
+// ==========================================================================
+// NO BROWSER AUTOFILL: removes Chrome's saved-address / email dropdown
+// from every form field on every page and modal.
+// ==========================================================================
+(function () {
+  if (window.__crmNoAutofillBound) return;
+  window.__crmNoAutofillBound = true;
+
+  const SKIP = ["hidden", "checkbox", "radio", "submit", "button", "reset", "file", "range", "color"];
+  // Chrome often ignores autocomplete="off" on name / email / phone fields,
+  // so those get a value it does not treat as an address field.
+  const ADDRESS_LIKE = /name|email|phone|tel|address|username/i;
+  let queued = false;
+
+  function applyNoAutofill() {
+    queued = false;
+    document.querySelectorAll("form").forEach((form) => {
+      if (form.getAttribute("autocomplete") !== "off") form.setAttribute("autocomplete", "off");
+    });
+    document.querySelectorAll("input, textarea").forEach((el) => {
+      if (SKIP.includes(el.type)) return;
+      let value;
+      if (el.type === "password") value = "new-password";
+      else if (el.type === "email" || el.type === "tel" || ADDRESS_LIKE.test((el.name || "") + " " + (el.id || ""))) value = "new-password";
+      else value = "off";
+      if (el.getAttribute("autocomplete") !== value) el.setAttribute("autocomplete", value);
+      el.setAttribute("autocorrect", "off");
+      el.setAttribute("spellcheck", "false");
+    });
+  }
+
+  function queue() {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(applyNoAutofill);
+  }
+
+  function start() {
+    applyNoAutofill();
+    new MutationObserver(queue).observe(document.body, { childList: true, subtree: true });
+    document.addEventListener("shown.bs.modal", applyNoAutofill);
+  }
+
+  if (document.body) start();
+  else document.addEventListener("DOMContentLoaded", start);
+})();
+

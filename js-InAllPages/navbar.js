@@ -16,10 +16,10 @@ document.documentElement.classList.add("role-" + CRM_ROLE.replace(/\s+/g, "-"));
 
 // Map dashboard and report pages to their role-specific files.
 const CRM_ROLE_FILES = {
-  "admin":            { dashboard: "admindashboard.html",   reports: "reports.html" },
-  "manager":          { dashboard: "managerDashboard.html", reports: "managerReports.html" },
-  "customer service": { dashboard: "csDashboard.html",      reports: "csReports.html" },
-  "sales staff":      { dashboard: "salesDashboard.html",   reports: "salesReports.html" }
+  "admin":            { dashboard: "admindashboard.html",   reports: "managerAdminReport.html", inbox: "manager-inbox.html" },
+  "manager":          { dashboard: "managerDashboard.html", reports: "managerReports.html", inbox: "manager-inbox.html" },
+  "customer service": { dashboard: "csDashboard.html",      reports: "csReport.html",    inbox: "cs-inbox.html" },
+  "sales staff":      { dashboard: "salesDashboard.html",   reports: "salesReport.html", inbox: "sales-inbox.html" },
 };
 
 // Convert a role-specific filename back to its shared page key.
@@ -67,12 +67,49 @@ function crmApplyRoleToSidebar() {
   document.documentElement.classList.add("role-ready");
 }
 
+// ---- Dropdown groups in the sidebar (e.g. Sales Staff > Catering Operations) ----
+
+// True when the sidebar shows icons only (collapsed, or a phone-size screen).
+function crmSidebarIsCompact() {
+  const sidebar = document.getElementById("crmSidebar");
+  return !!(sidebar && sidebar.classList.contains("collapsed")) ||
+    document.documentElement.classList.contains("sidebar-is-collapsed") ||
+    window.matchMedia("(max-width: 768px)").matches;
+}
+
+// Open or close one group. In icon-only mode the list is a flyout next to the icon.
+function crmSetGroupOpen(group, open) {
+  group.classList.toggle("open", open);
+  const toggle = group.querySelector(".nav-group-toggle");
+  if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  if (open && toggle && crmSidebarIsCompact()) {
+    const menu = group.querySelector(".nav-submenu");
+    if (menu) menu.style.setProperty("--flyout-top", toggle.getBoundingClientRect().top + "px");
+  }
+}
+
+function crmCloseAllGroups() {
+  document.querySelectorAll(".sidebar-nav .nav-group.open").forEach((group) => crmSetGroupOpen(group, false));
+}
+
+// Mark the group that holds the active page. Full-width sidebar: only that group stays open,
+// so opening any main tab (Dashboard, Inbox, Reports...) closes every dropdown.
+function crmSyncNavGroups() {
+  const compact = crmSidebarIsCompact();
+  document.querySelectorAll(".sidebar-nav .nav-group").forEach((group) => {
+    const hasActive = !!group.querySelector(".nav-sublink.active");
+    group.classList.toggle("has-active", hasActive);
+    crmSetGroupOpen(group, compact ? false : hasActive);
+  });
+}
+
 // Labels used in the sidebar and profile menu.
 const CRM_ROLE_LABELS = {
   "admin": "Admin",
   "manager": "Manager",
   "customer service": "Customer Service",
-  "sales staff": "Sales Staff"
+  "sales staff": "Sales Staff",
+  "customer": "Customer"
 };
 
 // Fill the sidebar subtitle and profile details from local storage.
@@ -119,6 +156,29 @@ document.addEventListener("DOMContentLoaded", () => {
     loadPage(href);
   });
 
+  // Dropdown groups: click the group to open or close it.
+  document.querySelectorAll(".sidebar-nav .nav-group-toggle").forEach((toggle) => {
+    toggle.addEventListener("click", () => {
+      const group = toggle.closest(".nav-group");
+      const willOpen = !group.classList.contains("open");
+      crmCloseAllGroups(); /* only one dropdown open at a time */
+      crmSetGroupOpen(group, willOpen);
+    });
+  });
+
+  // Icon-only mode: close the flyout when clicking elsewhere or pressing Escape.
+  document.addEventListener("click", (e) => {
+    if (crmSidebarIsCompact() && !e.target.closest(".nav-group")) crmCloseAllGroups();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && crmSidebarIsCompact()) crmCloseAllGroups();
+  });
+
+  // Re-sync after the sidebar is collapsed/expanded or the window is resized.
+  const burger = document.getElementById("burgerToggle");
+  if (burger) burger.addEventListener("click", () => setTimeout(crmSyncNavGroups, 0));
+  window.addEventListener("resize", crmSyncNavGroups);
+
   // Set allowed pages before applying the page guard.
   crmApplyRoleToSidebar();
 
@@ -162,6 +222,13 @@ function loadPage(pageUrl, clickedElement = null) {
     clickedElement = null;
   }
 
+  // Customers have no separate dashboard file: their "dashboard" is the Home page.
+  // This also covers a first login or an old saved page that this role cannot open.
+  if (CRM_ROLE === "customer" && key === "dashboard") {
+    key = "customer-home.html";
+    clickedElement = null;
+  }
+
   const file = crmResolvePage(key);
   const fallbackFile = key === "dashboard"
     ? null
@@ -178,6 +245,9 @@ function loadPage(pageUrl, clickedElement = null) {
       link.classList.add("active");
     }
   });
+
+  // Keep dropdown groups in step with the active page.
+  crmSyncNavGroups();
 
   // Save the shared key so it remains valid if the role changes.
   localStorage.setItem("activePage", key);
@@ -220,3 +290,96 @@ container.innerHTML = doc.body.innerHTML;
       }
     });
 }
+
+// ---- Tooltip for the icon-only sidebar (and the burger when collapsed) ----
+// Shown on hover / keyboard focus, or on tap / long-press for touch screens.
+// It is one fixed-position bubble, so the sidebar's overflow: hidden cannot clip it.
+(function () {
+  let tip = null;
+  let hideTimer = null;
+  const TARGETS = ".sidebar-nav .nav-link:not(.nav-sublink), #burgerToggle";
+
+  function getTip() {
+    if (!tip) {
+      tip = document.createElement("div");
+      tip.className = "crm-nav-tip";
+      tip.setAttribute("role", "tooltip");
+      document.body.appendChild(tip);
+    }
+    return tip;
+  }
+
+  function hasCollapsedClass() {
+    const sidebar = document.getElementById("crmSidebar");
+    return !!(sidebar && sidebar.classList.contains("collapsed")) ||
+      document.documentElement.classList.contains("sidebar-is-collapsed");
+  }
+
+  // Text for one target. Group toggles keep their title in data-tip so the browser's own
+  // tooltip does not appear on top of ours.
+  function labelFor(el) {
+    if (el.id === "burgerToggle") return hasCollapsedClass() ? "Expand menu" : "";
+    if (!crmSidebarIsCompact()) return "";
+    if (el.hasAttribute("title")) {
+      el.dataset.tip = el.getAttribute("title");
+      el.removeAttribute("title");
+    }
+    const text = el.querySelector(".nav-text");
+    return (el.dataset.tip || (text ? text.textContent : "") || "").trim();
+  }
+
+  function hideTip() {
+    clearTimeout(hideTimer);
+    if (tip) tip.classList.remove("show");
+  }
+
+  function showTip(el, autoHideMs) {
+    const label = labelFor(el);
+    if (!label) return hideTip();
+
+    // do not cover an open flyout list
+    const group = el.closest(".nav-group");
+    if (group && group.classList.contains("open") && crmSidebarIsCompact()) return hideTip();
+
+    const t = getTip();
+    t.textContent = label;
+    const r = el.getBoundingClientRect();
+    const tr = t.getBoundingClientRect();
+    const top = Math.max(8, Math.min(window.innerHeight - tr.height - 8, r.top + r.height / 2 - tr.height / 2));
+    t.style.top = top + "px";
+    t.style.left = (r.right + 12) + "px";
+    t.classList.add("show");
+
+    clearTimeout(hideTimer);
+    if (autoHideMs) hideTimer = setTimeout(hideTip, autoHideMs);
+  }
+
+  document.addEventListener("pointerover", (e) => {
+    if (e.pointerType === "touch") return;
+    const el = e.target.closest(TARGETS);
+    if (el) showTip(el);
+  });
+  document.addEventListener("pointerout", (e) => {
+    if (e.pointerType === "touch") return;
+    if (e.target.closest(TARGETS)) hideTip();
+  });
+  document.addEventListener("focusin", (e) => {
+    const el = e.target.closest && e.target.closest(TARGETS);
+    if (el && el.matches(":focus-visible")) showTip(el);
+  });
+  document.addEventListener("focusout", hideTip);
+
+  // Touch: a tap shows the label for a moment (the tap still opens the page).
+  document.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "touch") return;
+    const el = e.target.closest(TARGETS);
+    if (el) showTip(el, 1400);
+    else hideTip();
+  });
+
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") hideTip(); });
+  window.addEventListener("resize", hideTip);
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#burgerToggle")) hideTip();
+  });
+})();

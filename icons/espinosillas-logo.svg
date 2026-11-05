@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" role="img" aria-labelledby="title description">
+  <title id="title">Espinosilla's Kainan — Luxury Logo</title>
+  <desc id="description">A premium typography logo with a gold E monogram and leaf detail on a dark forest green textured background.</desc>
+  <defs>
+    <radialGradient id="background" cx="50%" cy="42%" r="78%">
+      <stop offset="0" stop-color="#1D3026"/>
+      <stop offset=".58" stop-color="#14231B"/>
+      <stop offset="1" stop-color="#101513"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E2C982"/>
+      <stop offset=".5" stop-color="#B99A59"/>
+      <stop offset="1" stop-color="#E2CD91"/>
+    </linearGradient>
+    <pattern id="grain" width="17" height="17" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="4" r=".55" fill="#D8C58B" opacity=".10"/>
+      <circle cx="12" cy="13" r=".45" fill="#C5D0C4" opacity=".07"/>
+    </pattern>
+    <clipPath id="roundBadge"><circle cx="500" cy="500" r="474"/></clipPath>
+  </defs>
+
+  <!-- Circular dark forest badge with a fine-grain texture and matte-gold rings. -->
+  <circle cx="500" cy="500" r="486" fill="#B99A59"/>
+  <circle cx="500" cy="500" r="476" fill="#14231B"/>
+  <g clip-path="url(#roundBadge)">
+    <rect width="1000" height="1000" fill="url(#background)"/>
+    <rect width="1000" height="1000" fill="url(#grain)"/>
+  </g>
+  <circle cx="500" cy="500" r="447" fill="none" stroke="#B99A59" stroke-width="2" opacity=".75"/>
+  <circle cx="500" cy="500" r="430" fill="none" stroke="#D9C27F" stroke-width="1" opacity=".35"/>
+
+  <!-- E monogram with a fine leaf flourish integrated into its middle stroke. -->
+  <text x="500" y="474" text-anchor="middle" fill="url(#gold)"
+        font-family="Baskerville, 'Times New Roman', Georgia, serif" font-size="310" font-weight="400">E</text>
+  <g fill="none" stroke="#D9C27F" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M537 348c44-45 93-47 127-31-17 42-63 66-127 31Z" stroke-width="4"/>
+    <path d="M543 346c36-10 70-22 103-29" stroke-width="3"/>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="500" y="609" text-anchor="middle" fill="#F3EAD3"
+        font-family="'Segoe Script', 'Snell Roundhand', 'URW Chancery L', cursive" font-size="74" font-style="italic" font-weight="400">Espinosilla's</text>
+  <text x="500" y="683" text-anchor="middle" fill="url(#gold)"
+        font-family="'Avenir Next', Avenir, Montserrat, Arial, sans-serif" font-size="25" font-weight="500" letter-spacing="13">KAINAN</text>
+</svg>

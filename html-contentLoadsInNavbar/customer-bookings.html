@@ -1,0 +1,168 @@
+<!-- Customer My Bookings view. Booking records are loaded from customer-bookings-api.php. -->
+<div class="cb-page" id="cbPage" data-cb-view="empty">
+  <header class="cb-page-header">
+    <h2>MY BOOKINGS</h2>
+  </header>
+
+  <div class="cb-layout" id="cbLayout">
+    <aside class="cb-sidebar" aria-label="My bookings">
+      <header class="cb-list-header">
+        <h3>Bookings</h3>
+        <span class="cb-count" id="cbBookingCount">0 bookings</span>
+      </header>
+      <p class="cb-list-state" id="cbListState" role="status" aria-live="polite">
+        0 bookings. Your bookings will appear here when available.
+      </p>
+      <ul class="cb-booking-list" id="cbBookingList"></ul>
+    </aside>
+
+    <main class="cb-main" id="cbMain">
+      <button type="button" class="cb-back" id="cbBack" aria-label="Back to main menu">
+        <i class="bi bi-arrow-left" aria-hidden="true"></i> Back to main menu
+      </button>
+
+      <header class="cb-banner">
+        <div>
+          <h3 class="cb-booking-title" id="cbBookingTitle">Booking overview</h3>
+          <span class="cb-status" id="cbBookingStatus">—</span>
+        </div>
+      </header>
+
+      <ol class="cb-stepper" id="cbStepper" aria-label="Booking progress">
+        <li class="cb-step is-todo"><span class="cb-step-node">1</span><span>Inquiry Received</span></li>
+        <li class="cb-step is-todo"><span class="cb-step-node">2</span><span>In Progress</span></li>
+        <li class="cb-step is-todo"><span class="cb-step-node">3</span><span>Quotation Sent</span></li>
+        <li class="cb-step is-todo"><span class="cb-step-node">4</span><span>Awaiting Your Response</span></li>
+        <li class="cb-step is-todo"><span class="cb-step-node">5</span><span>Booking Confirmation</span></li>
+      </ol>
+
+      <div class="cb-tabs" role="tablist" aria-label="Booking sections">
+        <button type="button" class="cb-tab is-active" role="tab" id="cbTabDetails"
+                aria-selected="true" aria-controls="tab-booking-details"
+                data-tab-target="#tab-booking-details">
+          <i class="bi bi-calendar-event" aria-hidden="true"></i><span>Booking Details</span>
+        </button>
+        <button type="button" class="cb-tab" role="tab" id="cbTabPayment"
+                aria-selected="false" aria-controls="tab-payment-details"
+                data-tab-target="#tab-payment-details" tabindex="-1">
+          <i class="bi bi-file-earmark-text" aria-hidden="true"></i><span>Payment Details</span>
+        </button>
+        <button type="button" class="cb-tab" role="tab" id="cbTabFeedback"
+                aria-selected="false" aria-controls="tab-feedback"
+                data-tab-target="#tab-feedback" tabindex="-1">
+          <i class="bi bi-question-circle" aria-hidden="true"></i><span>Feedback</span>
+        </button>
+      </div>
+
+      <section class="cb-tab-panel" id="tab-booking-details" role="tabpanel" aria-labelledby="cbTabDetails">
+        <div class="cb-details-grid">
+          <article class="cb-card">
+            <h4>Event Information</h4>
+            <dl class="cb-key-values">
+              <div class="cb-key-value"><dt>Event Type</dt><dd id="cbEventType">—</dd></div>
+              <div class="cb-key-value"><dt>Expected Guests</dt><dd id="cbGuests">0</dd></div>
+              <div class="cb-key-value"><dt>Venue</dt><dd id="cbVenue">—</dd></div>
+              <div class="cb-key-value"><dt>Event Schedule</dt><dd id="cbSchedule">—</dd></div>
+              <div class="cb-key-value"><dt>Package</dt><dd id="cbPackage">—</dd></div>
+              <div class="cb-key-value"><dt>Special Requests</dt><dd id="cbRequests">—</dd></div>
+            </dl>
+          </article>
+          <article class="cb-card">
+            <h4>Contact Person</h4>
+            <dl class="cb-key-values">
+              <div class="cb-key-value"><dt>Name</dt><dd id="cbContactName">—</dd></div>
+              <div class="cb-key-value"><dt>Email</dt><dd id="cbContactEmail">—</dd></div>
+              <div class="cb-key-value"><dt>Phone</dt><dd id="cbContactPhone">—</dd></div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="cb-tab-panel" id="tab-payment-details" role="tabpanel"
+               aria-labelledby="cbTabPayment" hidden>
+        <div class="cb-payment-banner" id="cbPaymentBanner" role="status">
+          <span class="cb-payment-icon" id="cbPaymentIcon" aria-hidden="true">
+            <i class="bi bi-info-circle"></i>
+          </span>
+          <div>
+            <strong id="cbPaymentBannerTitle">Payment status unavailable</strong>
+            <p id="cbPaymentBannerText">No payment information is available yet.</p>
+          </div>
+          <time id="cbPaymentVerifiedAt"></time>
+        </div>
+        <div class="cb-payment-grid">
+          <article class="cb-card">
+            <h4>Payment Summary</h4>
+            <dl class="cb-payment-summary">
+              <div><dt>Deposit Amount (20%)</dt><dd id="cbDepositAmount">₱0.00</dd></div>
+              <div><dt>Payment Method</dt><dd id="cbPaymentMethod">—</dd></div>
+              <div><dt>Payment Date</dt><dd id="cbPaymentDate">—</dd></div>
+            </dl>
+          </article>
+          <article class="cb-card cb-full-payment">
+            <h4>Full Payment Status</h4>
+            <div class="cb-payment-progress">
+              <strong class="cb-payment-percent" id="cbPaymentPercent">0%</strong>
+              <span id="cbPaymentProgressLabel">No payment recorded</span>
+              <div class="cb-progress-track" role="progressbar" id="cbPaymentProgress"
+                   aria-label="Payment progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                <span id="cbPaymentProgressBar"></span>
+              </div>
+              <p><strong id="cbPaidAmount">₱0.00</strong> / <span id="cbTotalAmount">₱0.00</span></p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="cb-tab-panel" id="tab-feedback" role="tabpanel" aria-labelledby="cbTabFeedback" hidden>
+        <form class="cb-card cb-feedback-card" id="cbFeedbackForm" enctype="multipart/form-data" novalidate>
+          <input type="hidden" name="booking_id" id="cbFeedbackBookingId" value="">
+          <input type="hidden" name="rating" id="cbRatingInput" value="0">
+          <div class="cb-feedback-heading">
+            <h4>Event Feedback</h4>
+            <p id="cbFeedbackPrompt">Share your experience with us. Your feedback helps us improve our service.</p>
+          </div>
+          <fieldset class="cb-rating-field">
+            <legend>Overall event rating <span aria-hidden="true">*</span></legend>
+            <div class="cb-rating-row">
+              <div class="cb-stars" id="cbStars" role="group" aria-label="Rate this event from 1 to 5 stars">
+                <button type="button" class="cb-star" data-cb-rating="1" aria-label="1 star" aria-pressed="false">☆</button>
+                <button type="button" class="cb-star" data-cb-rating="2" aria-label="2 stars" aria-pressed="false">☆</button>
+                <button type="button" class="cb-star" data-cb-rating="3" aria-label="3 stars" aria-pressed="false">☆</button>
+                <button type="button" class="cb-star" data-cb-rating="4" aria-label="4 stars" aria-pressed="false">☆</button>
+                <button type="button" class="cb-star" data-cb-rating="5" aria-label="5 stars" aria-pressed="false">☆</button>
+              </div>
+              <output id="cbRatingLabel" aria-live="polite">0 of 5 · Select a rating</output>
+            </div>
+            <p class="cb-help-text">Select a star to rate your overall experience.</p>
+          </fieldset>
+          <label class="cb-comments-label" for="cbComments">Comments <span>(optional)</span></label>
+          <textarea class="cb-comments" id="cbComments" name="comments" maxlength="1000"
+                    rows="6" placeholder="Tell us what went well and what we could improve..."
+                    disabled></textarea>
+          <div class="cb-comments-footer">
+            <span class="cb-help-text">Share your thoughts about the food, service, or event arrangements.</span>
+            <output id="cbCommentsCount" aria-live="polite">0 / 1,000</output>
+          </div>
+          <div class="cb-image-upload-field">
+            <label class="cb-comments-label" for="cbFeedbackImages">Photos <span>(optional)</span></label>
+            <p class="cb-help-text" id="cbFeedbackImagesHelp">Add up to 4 JPG, PNG, or WebP photos. Maximum 25 MB per photo.</p>
+            <input class="cb-image-input" type="file" id="cbFeedbackImages" name="feedback_images[]"
+                   accept="image/jpeg,image/png,image/webp" multiple
+                   aria-describedby="cbFeedbackImagesHelp cbFeedbackImagesMessage" disabled>
+            <output class="cb-image-message" id="cbFeedbackImagesMessage" role="status" aria-live="polite"></output>
+            <div class="cb-image-preview-list" id="cbFeedbackImagePreviews" aria-label="Selected photo previews"></div>
+          </div>
+          <div class="cb-feedback-footer">
+            <p class="cb-feedback-message" id="cbFeedbackMessage" role="status" aria-live="polite">
+              Select a booking before submitting feedback.
+            </p>
+            <button type="submit" class="cb-primary-button" id="cbFeedbackSubmit" disabled>Submit Feedback</button>
+          </div>
+        </form>
+        <p class="cb-privacy-note"><i class="bi bi-lock" aria-hidden="true"></i>
+          Your feedback is shared with our team to help us improve future events.</p>
+      </section>
+    </main>
+  </div>
+</div>

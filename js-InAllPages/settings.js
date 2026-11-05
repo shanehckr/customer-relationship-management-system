@@ -1,3 +1,10 @@
+/**
+ * settings-page.js
+ * Load this AFTER pages.js. It defines window.initCrmSettingsPage, so pages.js
+ * no longer contains any Settings code.
+ * Adds: Deactivate / Activate with confirmation, and "Discard changes?" on Create Account.
+ */
+
 /** Handles frontend interactions for administrative settings and user management.*/
 
 (() => {
@@ -5,7 +12,8 @@
     { value: "admin", label: "Admin" },
     { value: "manager", label: "Manager" },
     { value: "sales staff", label: "Sales Staff" },
-    { value: "customer service", label: "Customer Service Staff" }
+    { value: "customer service", label: "Customer Service Staff" },
+    { value: "customer", label: "Customer" }
   ];
 
   function normalizeRole(role) {
@@ -14,6 +22,7 @@
       return "customer service";
     }
     if (normalized === "sales") return "sales staff";
+    if (normalized === "customer") return "customer";
     return normalized;
   }
 
@@ -66,6 +75,18 @@
     element.classList.remove("d-none");
   }
 
+  // Message at the top of the Settings page (used after Activate / Deactivate).
+  let pageNoticeTimer = null;
+  function showPageNotice(settingsRoot, message, type) {
+    const notice = settingsRoot.querySelector("#settings-page-notice");
+    if (!notice) return;
+    notice.className = `alert alert-${type} mb-3`;
+    notice.textContent = message;
+    clearTimeout(pageNoticeTimer);
+    pageNoticeTimer = setTimeout(() => notice.classList.add("d-none"), 5000);
+  }
+
+  // Same icons as the login page: slashed eye = password hidden, open eye = password visible.
   function setPasswordVisibility(button, visible, settingsRoot) {
     const selector = button.getAttribute("data-password-toggle");
     const input = selector ? settingsRoot.querySelector(selector) : null;
@@ -73,17 +94,33 @@
     if (!input || !icon) return;
 
     input.type = visible ? "text" : "password";
-    icon.classList.toggle("bi-eye", !visible);
-    icon.classList.toggle("bi-eye-slash", visible);
+    icon.classList.toggle("bi-eye", visible);          // password visible -> open eye
+    icon.classList.toggle("bi-eye-slash", !visible);   // password hidden  -> slashed eye
     button.setAttribute("aria-label", visible ? "Hide password" : "Show password");
     button.setAttribute("title", visible ? "Hide password" : "Show password");
   }
 
+  function updateSettingsEmptyRow(settingsRoot, hasFilters) {
+    const rows = settingsRoot.querySelector("#settings-user-rows");
+    if (!rows) return;
+    crmSetNoResultsRow(rows, 6, true, {
+      icon: hasFilters ? "search" : "people",
+      title: hasFilters ? "No results found" : "No user accounts found",
+      description: hasFilters
+        ? "Try changing your search or filters."
+        : "User accounts will appear here when they are added."
+    });
+  }
+
   function filterUsers(settingsRoot) {
+    const rows = settingsRoot.querySelector("#settings-user-rows");
+    if (!rows || rows.querySelector(".settings-loading-row, .settings-load-error-row")) return;
+
     const searchValue = settingsRoot.querySelector("#settings-user-search")?.value.trim().toLowerCase() || "";
     const roleValue = settingsRoot.querySelector("#settings-role-filter")?.value || "";
     const statusValue = settingsRoot.querySelector("#settings-status-filter")?.value || "";
-    const userRows = Array.from(settingsRoot.querySelectorAll("#settings-user-rows tr[data-account-row]"));
+    const userRows = Array.from(rows.querySelectorAll("tr[data-account-row]"));
+    const hasFilters = Boolean(searchValue || roleValue || statusValue);
     let visibleCount = 0;
 
     userRows.forEach((row) => {
@@ -97,20 +134,16 @@
       if (visible) visibleCount += 1;
     });
 
-    const emptyRow = settingsRoot.querySelector(".settings-empty-row");
-    if (emptyRow) {
-      emptyRow.hidden = userRows.length > 0 && visibleCount > 0;
-      const description = emptyRow.querySelector(".settings-empty-state p:last-child");
-      if (description && userRows.length > 0) {
-        description.textContent = visibleCount > 0
-          ? ""
-          : "No accounts match the selected search and filters.";
-      }
+    if (visibleCount === 0) {
+      updateSettingsEmptyRow(settingsRoot, hasFilters);
+      return;
     }
+
+    rows.querySelector(".no-results-row")?.remove();
   }
 
   function clearPasswordFields(settingsRoot) {
-    settingsRoot.querySelectorAll("#createAccountModal [data-password-toggle]").forEach((button) => {
+    settingsRoot.querySelectorAll("#addAccountModal [data-password-toggle]").forEach((button) => {
       setPasswordVisibility(button, false, settingsRoot);
     });
     const form = settingsRoot.querySelector("#create-account-form");
@@ -143,6 +176,14 @@
     editForm.elements.email.value = fields.email;
     editForm.elements.role.value = fields.role;
     editForm.elements.status.value = fields.status;
+    [editForm.elements.role, editForm.elements.status].forEach((select) => {
+      const dropdown = select.closest(".dropdown");
+      const label = dropdown?.querySelector("[data-select-label]");
+      if (label) label.textContent = select.selectedOptions[0]?.textContent.trim() || "";
+      dropdown?.querySelectorAll("[data-settings-select]").forEach((item) => {
+        item.setAttribute("aria-selected", item.dataset.value === select.value ? "true" : "false");
+      });
+    });
   }
 
   const SETTINGS_API_URL = "settings-api.php";
@@ -160,6 +201,7 @@
     loadingCell.colSpan = 6;
     loadingCell.className = "text-center py-4";
     loadingCell.textContent = "Loading user accounts...";
+    loadingRow.className = "settings-loading-row";
     loadingRow.append(loadingCell);
     rows.append(loadingRow);
 
@@ -190,16 +232,7 @@
       if (notice) notice.classList.add("d-none");
 
       if (data.users.length === 0) {
-        const emptyRow = document.createElement("tr");
-        const emptyCell = document.createElement("td");
-
-        emptyRow.className = "settings-empty-row";
-        emptyCell.colSpan = 6;
-        emptyCell.className = "text-center py-4";
-        emptyCell.textContent = "No user accounts found.";
-
-        emptyRow.append(emptyCell);
-        rows.append(emptyRow);
+        filterUsers(settingsRoot);
         return;
       }
 
@@ -249,7 +282,19 @@
         editButton.textContent = "Edit";
         editButton.setAttribute("aria-label", `Edit ${user.full_name || user.username}`);
 
-        actionsCell.append(viewButton, editButton);
+        // Deactivate (red) for active accounts, Activate (green) for inactive ones.
+        const isActive = user.status === "Active";
+        const statusButton = document.createElement("button");
+        statusButton.type = "button";
+        statusButton.className = `btn btn-sm ${isActive ? "action-btn-deactivate" : "action-btn-activate"}`;
+        statusButton.dataset.accountAction = "status";
+        statusButton.textContent = isActive ? "Deactivate" : "Activate";
+        statusButton.setAttribute(
+          "aria-label",
+          `${isActive ? "Deactivate" : "Activate"} ${user.full_name || user.username}`
+        );
+
+        actionsCell.append(viewButton, editButton, statusButton);
         row.append(actionsCell);
         rows.append(row);
       });
@@ -264,6 +309,7 @@
       const errorRow = document.createElement("tr");
       const errorCell = document.createElement("td");
 
+      errorRow.className = "settings-load-error-row";
       errorCell.colSpan = 6;
       errorCell.className = "text-center text-danger py-4";
       errorCell.textContent =
@@ -271,6 +317,112 @@
 
       errorRow.append(errorCell);
       rows.append(errorRow);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // ACTIVATE / DEACTIVATE ACCOUNT
+  // The row's Activate / Deactivate link opens #accountStatusModal.
+  // "Yes" sends the same fields the Edit form sends (action=edit) with the new status.
+  // ------------------------------------------------------------------
+  let pendingStatusRow = null;
+
+  function openStatusModal(settingsRoot, row) {
+    const modalElement = settingsRoot.querySelector("#accountStatusModal");
+    if (!modalElement || !window.bootstrap?.Modal) return;
+
+    const willActivate = row.dataset.status !== "Active";
+    pendingStatusRow = row;
+    modalElement.dataset.nextStatus = willActivate ? "Active" : "Inactive";
+
+    modalElement.querySelector("#accountStatusModalTitle").textContent =
+      willActivate ? "Activate account?" : "Deactivate account?";
+    modalElement.querySelector("[data-status-action-word]").textContent =
+      willActivate ? "activate" : "deactivate";
+    modalElement.querySelector("[data-status-name]").textContent =
+      row.dataset.name || row.dataset.username || "this account";
+    modalElement.querySelector("[data-status-note]").textContent = willActivate
+      ? "The account status will be set to Active."
+      : "The account status will be set to Inactive.";
+
+    // Green button to activate, red button to deactivate.
+    const confirmButton = modalElement.querySelector("#accountStatusConfirmBtn");
+    confirmButton.textContent = willActivate ? "Yes, Activate" : "Yes, Deactivate";
+    confirmButton.classList.toggle("modal-btn-save", willActivate);
+    confirmButton.classList.toggle("modal-btn-danger", !willActivate);
+    confirmButton.disabled = false;
+
+    const message = modalElement.querySelector("#account-status-message");
+    if (message) {
+      message.textContent = "";
+      message.classList.add("d-none");
+    }
+
+    window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
+  }
+
+  async function confirmStatusChange(settingsRoot) {
+    const modalElement = settingsRoot.querySelector("#accountStatusModal");
+    const confirmButton = settingsRoot.querySelector("#accountStatusConfirmBtn");
+    const message = settingsRoot.querySelector("#account-status-message");
+    const row = pendingStatusRow;
+    if (!modalElement || !confirmButton || !row) return;
+
+    const nextStatus = modalElement.dataset.nextStatus;
+
+    if (!settingsRoot.dataset.csrfToken) {
+      message.className = "alert alert-danger mb-3";
+      showFormMessage(message, "Security token is unavailable. Refresh Settings and try again.");
+      return;
+    }
+
+    confirmButton.disabled = true;
+
+    const formData = new FormData();
+    formData.set("user_id", row.dataset.userId || "");
+    formData.set("full_name", row.dataset.name || "");
+    formData.set("email", row.dataset.email || "");
+    formData.set("role", row.dataset.role || "");
+    formData.set("status", nextStatus);
+
+    try {
+      const response = await fetch(`${SETTINGS_API_URL}?action=edit`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-CSRF-Token": settingsRoot.dataset.csrfToken
+        },
+        body: formData
+      });
+
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(
+          data.message ||
+          (nextStatus === "Active"
+            ? "Unable to activate this account."
+            : "Unable to deactivate this account.")
+        );
+      }
+
+      window.bootstrap.Modal.getOrCreateInstance(modalElement).hide();
+      showPageNotice(
+        settingsRoot,
+        nextStatus === "Active"
+          ? "Account activated successfully."
+          : "Account deactivated successfully.",
+        "success"
+      );
+      await loadSettingsUsers(settingsRoot);
+    } catch (error) {
+      console.error("Settings account status change failed:", error);
+      message.className = "alert alert-danger mb-3";
+      showFormMessage(
+        message,
+        error instanceof Error ? error.message : "Unable to update this account. Please try again."
+      );
+      confirmButton.disabled = false;
     }
   }
 
@@ -341,16 +493,44 @@
         return;
       }
 
+      const selectItem = event.target.closest("[data-settings-select]");
+      if (selectItem) {
+        const select = settingsRoot.querySelector(`#${selectItem.dataset.settingsSelect}`);
+        if (select && select.value !== selectItem.dataset.value) {
+          select.value = selectItem.dataset.value;
+          const dropdown = select.closest(".dropdown");
+          const label = dropdown?.querySelector("[data-select-label]");
+          if (label) label.textContent = select.selectedOptions[0]?.textContent.trim() || "";
+          dropdown?.querySelectorAll("[data-settings-select]").forEach((item) => {
+            item.setAttribute("aria-selected", item.dataset.value === select.value ? "true" : "false");
+          });
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        return;
+      }
+
       const actionButton = event.target.closest("[data-account-action]");
       if (!actionButton) return;
 
       const row = actionButton.closest("[data-account-row]");
       if (!row) return;
+
+      // Activate / Deactivate: ask first.
+      if (actionButton.dataset.accountAction === "status") {
+        openStatusModal(settingsRoot, row);
+        return;
+      }
+
       fillAccountDetails(settingsRoot, row);
 
       const modalId = actionButton.dataset.accountAction === "view" ? "#viewAccountModal" : "#editAccountModal";
       const modalElement = settingsRoot.querySelector(modalId);
       if (modalElement && window.bootstrap?.Modal) {
+        if (modalElement.id === "editAccountModal") {
+          const discardName = settingsRoot.querySelector("#discardAccountChangesModal strong.text-highlight");
+          if (discardName) discardName.textContent = row.dataset.name || row.dataset.username || "this account";
+          if (typeof window.crmTakeSnapshot === "function") window.crmTakeSnapshot(modalElement.id);
+        }
         window.bootstrap.Modal.getOrCreateInstance(modalElement).show();
       }
     });
@@ -448,6 +628,7 @@
 
         message.className = "alert alert-success";
         showFormMessage(message, data.message || "Account updated successfully.");
+        if (typeof window.crmTakeSnapshot === "function") window.crmTakeSnapshot("editAccountModal");
         await loadSettingsUsers(settingsRoot);
       } catch (error) {
         console.error("Settings account update failed:", error);
@@ -461,13 +642,32 @@
       }
     });
 
-    settingsRoot.querySelector("#createAccountModal")?.addEventListener("hidden.bs.modal", () => {
-      clearPasswordFields(settingsRoot);
-    });
+    // Create account modal. Its ID starts with "add", so pages.js asks "Discard changes?" on Cancel.
+    const addAccountModal = settingsRoot.querySelector("#addAccountModal");
+    if (addAccountModal) {
+      // Closing clears the form, except while the "Discard changes?" prompt is open (Keep Editing needs the text).
+      addAccountModal.addEventListener("hidden.bs.modal", () => {
+        if (addAccountModal.dataset.keepState === "1") return;
+        clearPasswordFields(settingsRoot);
+      });
 
-    settingsRoot.querySelectorAll("#createAccountModal [data-password-toggle]").forEach((button) => {
+      // Fresh open (not "Keep Editing"): empty form, hidden passwords, no old message.
+      addAccountModal.addEventListener("shown.bs.modal", () => {
+        if (!addAccountModal.dataset.snapshot) clearPasswordFields(settingsRoot);
+      });
+    }
+
+    settingsRoot.querySelectorAll("#addAccountModal [data-password-toggle]").forEach((button) => {
       button.setAttribute("aria-label", "Show password");
       button.setAttribute("title", "Show password");
+    });
+
+    // Activate / Deactivate confirmation.
+    settingsRoot.querySelector("#accountStatusConfirmBtn")?.addEventListener("click", () => {
+      confirmStatusChange(settingsRoot);
+    });
+    settingsRoot.querySelector("#accountStatusModal")?.addEventListener("hidden.bs.modal", () => {
+      pendingStatusRow = null;
     });
   }
 

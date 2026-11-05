@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CRM Reports</title>
+  <!-- Instant Theme Sync -->
+  <script>
+    (function () {
+      const savedTheme = localStorage.getItem('theme');
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const themeToApply = savedTheme || (prefersDark ? 'dark-mode' : 'light-mode');
+      document.documentElement.className = themeToApply;
+      document.documentElement.style.backgroundColor = (themeToApply === 'light-mode') ? '#ffffff' : '#050d0a';
+    })();
+  </script>
+  <!-- Bootstrap 5 CSS & Icons CDN -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <!-- Custom Stylesheets (same CSS as every other page; fix the folder if yours differs) -->
+  <link rel="stylesheet" href="../css-InAllPages/stylesheet-login.css">
+  <link rel="stylesheet" href="../css-InAllPages/navbar.css">
+  <link rel="stylesheet" href="../css-InAllPages/adminpages.css">
+  <link rel="stylesheet" href="../css-InAllPages/Notification.css">
+</head>
+
+<body>
+
+  <main class="content-body p-3 p-md-4 flex-grow-1 rp-page" id="reportsPage"
+        data-report-type="sales" data-report-title="Sales Staff Report">
+
+    <div class="mb-3">
+      <h2 class="fw-bold m-0 text-uppercase">REPORTS</h2>
+    </div>
+
+    <!-- Date filter + export buttons -->
+    <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3 rp-actions">
+      <div>
+        <label class="small fw-semibold d-block mb-1">Date</label>
+        <div class="dropdown" id="reportDateDropdown">
+          <button class="btn custom-dropdown-toggle rp-date-btn d-flex align-items-center justify-content-between gap-3 px-3 py-2"
+            type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <span class="d-flex align-items-center gap-2"><i class="bi bi-calendar3 rp-green"></i><span id="reportDateLabel">This Year</span></span>
+            <i class="bi bi-chevron-down small"></i>
+          </button>
+          <ul class="dropdown-menu custom-dropdown-menu shadow-sm border-0 p-0 overflow-hidden" id="reportDateMenu">
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">This Month</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Last Month</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Last 3 Months</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Last 6 Months</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">This Year</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Last Year</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="d-flex gap-2">
+        <button type="button" class="btn modal-btn-cancel px-3 d-flex align-items-center gap-2" id="exportCsvBtn"><i class="bi bi-file-earmark-excel"></i> Export CSV</button>
+        <button type="button" class="btn modal-btn-save px-3 d-flex align-items-center gap-2" id="downloadPdfBtn"><i class="bi bi-printer"></i> Download PDF</button>
+      </div>
+    </div>
+
+    <!-- Summary cards. Backend: print the numbers here (they start at 0) -->
+    <div class="row g-3 mb-3">
+      <div class="col-6 col-xl-3"><div class="card border-0 shadow-sm rounded-4 p-3 h-100"><span class="stat-label d-block mb-1">Total Leads</span><div class="stat-number" id="totalLeads">0</div></div></div>
+      <div class="col-6 col-xl-3"><div class="card border-0 shadow-sm rounded-4 p-3 h-100"><span class="stat-label d-block mb-1">Total Deals</span><div class="stat-number" id="totalDeals">0</div></div></div>
+      <div class="col-6 col-xl-3"><div class="card border-0 shadow-sm rounded-4 p-3 h-100"><span class="stat-label d-block mb-1">Confirmed Deals</span><div class="stat-number" id="confirmedDeals">0</div></div></div>
+      <div class="col-6 col-xl-3"><div class="card border-0 shadow-sm rounded-4 p-3 h-100"><span class="stat-label d-block mb-1">Total Quotation Amount</span><div class="stat-number" id="totalQuotation">₱0</div></div></div>
+    </div>
+
+    <!-- Charts. Backend: print data-items as JSON, for example
+         data-items='[{"label":"New Inquiry","count":2},{"label":"In Progress","count":1}]'
+         Colors are chosen by pages.js from the stage name (no legend, values shown above the bars).
+         Leads: New Inquiry, In Progress, In Discussion, Declined
+         Deals: Quotation Preparation, Quotation Sent, Negotiation, Confirmed, Declined
+         To redraw after changing the date: crmDrawChart('leadsByStageChart', [{label:'New Inquiry', count:2}, ...]) -->
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-lg-6">
+        <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <h5 class="fw-bold mb-3">Leads by Stage</h5>
+          <div class="rp-chart" id="leadsByStageChart" data-report-chart="Leads by Stage"
+            data-items='[]'></div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <h5 class="fw-bold mb-3">Deals by Stage</h5>
+          <div class="rp-chart" id="dealsByStageChart" data-report-chart="Deals by Stage"
+            data-items='[]'></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Confirmed deals table -->
+    <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 w-100 mb-4">
+      <div class="mb-3">
+        <h5 class="fw-bold mb-1">Confirmed Deals</h5>
+        <p class="text-muted small m-0">List of confirmed deals with quotation information.</p>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle mb-0" id="confirmedDealsTable" data-report-table="Confirmed Deals">
+          <thead class="table-light text-uppercase small">
+            <tr>
+              <th>#</th><th>INQUIRY / EVENT NAME</th><th>CUSTOMER</th>
+              <th>ASSIGNED STAFF</th><th>QUOTATION AMOUNT</th><th>DATE CREATED</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Backend: print one <tr> per confirmed deal. Use this exact row structure:
+
+            <tr>
+              <td>1</td>
+              <td class="fw-semibold">EVENT NAME</td>
+              <td>CUSTOMER NAME</td>
+              <td>ASSIGNED STAFF</td>
+              <td>₱24,000</td>
+              <td>Aug 13, 2026</td>
+            </tr>
+            -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Page Scripts -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="../js-InAllPages/loading.js"></script>
+  <script src="../js-InAllPages/pages.js"></script>
+  <script src="../js-InAllPages/DownloadExport.js"></script>
+  <script src="../js-InAllPages/navbar.js"></script>
+  <script src="../js-InAllPages/notification.js"></script>
+</body>
+
+</html>

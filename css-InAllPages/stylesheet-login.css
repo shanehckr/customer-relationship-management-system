@@ -11,7 +11,7 @@
   --input-border: #2bb673;
   --input-text: #FFFAFA;
   --welcome-bg-image: url('../backgroundPicture/background-darkmode.png');
-  --welcome-label-color: #8faeal;
+  --welcome-label-color: #8faea1; /* fixed: was #8faeal (letter L) */
   --welcome-title-color: #ffffff;
   --welcome-desc-color: #c0d3cb;
   --mobile-dark-log: #ffffff;
@@ -35,7 +35,7 @@ html.light-mode {
   --input-border: #2bb673;
   --input-text: #0d1b17;
   --welcome-bg-image: url('../backgroundPicture/background-lightmode.png');
-  --welcome-label-color: #8faeal;
+  --welcome-label-color: #8faea1; /* fixed: was #8faeal (letter L) */
   --welcome-title-color: #ffffff;
   --welcome-desc-color: #c0d3cb;
 }
@@ -259,7 +259,10 @@ html.dark-mode .login-panel form input::placeholder {
     max-width: 420px;
     height: auto;
     border-radius: 20px !important;
-    background-image: var(--welcome-bg-image);
+    /* dark overlay on top of the banner so text stays readable */
+    background-image:
+      linear-gradient(rgba(3, 22, 15, 0.55), rgba(3, 22, 15, 0.55)),
+      var(--welcome-bg-image);
     background-size: cover;
     background-position: center;
     padding: 40px 24px 36px 24px;
@@ -431,4 +434,631 @@ html.light-mode .toggle-password img {
 
 html.dark-mode .toggle-password:hover img {
   opacity: 0.85 !important;
+}
+
+/* ==========================================================================
+   BROWSER AUTOFILL: keep inputs dark (no light-blue / white autofill background)
+   ========================================================================== */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--card-bg) inset !important;
+  -webkit-text-fill-color: var(--text-main) !important;
+  caret-color: var(--text-main) !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+
+/* ########################################################################
+   LOG IN + SIGN UP ADDITIONS (keep this block near the bottom of the file)
+   ######################################################################## */
+
+/* ==========================================================================
+   stylesheet-signup.css
+   Load AFTER stylesheet-login.css on login.php and signup.php.
+   Theme: dark #0D1712 surface with the #2BB673 accent (light mode keeps the same green family).
+   ========================================================================== */
+
+:root {
+  --auth-card-bg: #0D1712;
+  --auth-link: #2bb673;          /* contrast on #0D1712 is about 7:1 */
+  --auth-error: #ff6b6b;
+}
+
+html.light-mode {
+  --auth-card-bg: #ffffff;
+  --auth-link: #167a4a;          /* the lighter green is too faint on white; this one is about 5.5:1 */
+  --auth-error: #c62828;
+}
+
+/* stylesheet-login.css uses var(--card-bg) for the autofill color, but only the app defines it.
+   Define it here so autofilled fields stay dark on the login / sign-up pages too. */
+.login-container {
+  --card-bg: var(--input-bg);
+}
+
+/* ---------- links: always readable ---------- */
+.forgot,
+.auth-switch a,
+.su-link,
+.su-terms a {
+  color: var(--auth-link) !important;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.forgot:hover,
+.auth-switch a:hover,
+.su-link:hover:not(:disabled),
+.su-terms a:hover {
+  text-decoration: underline;
+  opacity: 1;
+}
+
+.forgot:focus-visible,
+.auth-switch a:focus-visible,
+.su-link:focus-visible,
+.su-terms a:focus-visible,
+.btn-su-secondary:focus-visible,
+.otp-input:focus-visible {
+  outline: 2px solid #2bb673;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.auth-switch {
+  font-size: 14px;
+  color: var(--label-color);
+}
+
+/* ---------- alerts inside the card ---------- */
+.login-panel .alert {
+  font-size: 13px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+
+/* ==========================================================================
+   SIGN-UP WIZARD
+   ========================================================================== */
+
+/* the form is taller than the log in form, so let the card grow */
+.signup-container {
+  height: auto;
+  min-height: 600px;
+}
+
+.signup-container .login-panel {
+  height: auto;
+  min-height: 600px;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+/* theme toggle sits over the branding panel on desktop */
+.signup-container .theme-toggle {
+  top: 28px;
+}
+
+/* ---------- progress ---------- */
+.su-progress {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.su-dot {
+  flex: 1 1 0;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.3);
+  transition: background-color 0.25s ease;
+}
+
+.su-dot.is-done,
+.su-dot.is-current {
+  background: #2bb673;
+}
+
+.su-dot.is-current {
+  box-shadow: 0 0 0 3px rgba(43, 182, 115, 0.25);
+}
+
+.su-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+/* ---------- steps ---------- */
+.su-step {
+  display: none;
+}
+
+.su-step.is-active {
+  display: block;
+  animation: suStepIn 0.2s ease both;
+}
+
+@keyframes suStepIn {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .su-step.is-active { animation: none; }
+  .su-dot { transition: none; }
+}
+
+.su-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 6px;
+}
+
+.su-desc {
+  margin: 0 0 20px;
+  font-size: 14px;
+}
+
+.su-desc strong {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.su-help {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- phone field: +63 prefix ---------- */
+.su-prefix {
+  position: absolute;
+  left: 46px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* the shared rule gives every input 48px left padding; the prefix needs more room */
+.login-panel form .input-wrapper input.su-phone {
+  padding-left: 84px !important;
+}
+
+/* ---------- invalid field ---------- */
+.login-panel form input.is-invalid,
+.login-panel form input.is-invalid:focus {
+  border-color: var(--auth-error) !important;
+}
+
+/* ---------- OTP boxes ---------- */
+.otp-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* three classes beat ".login-panel form input" in stylesheet-login.css, so the boxes keep their own look */
+.login-panel form .otp-row input.otp-input {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100% !important;
+  height: 52px !important;
+  padding: 0 !important;
+  text-align: center;
+  font-size: 22px !important;
+  font-weight: 600;
+  border-radius: 14px !important;
+  caret-color: #2bb673;
+}
+
+.login-panel form .otp-row input.otp-input:focus {
+  border-color: #2bb673 !important;
+  box-shadow: 0 0 0 3px rgba(43, 182, 115, 0.3) !important;
+}
+
+.su-timer {
+  margin: 10px 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.su-links {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.su-link {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.su-link:disabled {
+  color: var(--text-muted) !important;
+  font-weight: 500;
+  cursor: not-allowed;
+}
+
+/* ---------- secondary button (Back) ---------- */
+.btn-su-secondary {
+  height: 46px;
+  background: transparent !important;
+  color: var(--text-main) !important;
+  border: 1px solid rgba(43, 182, 115, 0.55) !important;
+  font-size: 15px;
+  transition: background-color 0.2s ease;
+}
+
+.btn-su-secondary:hover {
+  background: rgba(43, 182, 115, 0.12) !important;
+}
+
+.login-panel .btn-submit[disabled],
+.login-panel form button[type="submit"][disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ---------- terms checkbox ---------- */
+.su-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--label-color);
+  cursor: pointer;
+}
+
+/* beats the shared ".login-panel form input" rule (46px pill) */
+.login-panel form .su-terms input.su-check {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 20px;
+  width: 20px !important;
+  height: 20px !important;
+  margin: 1px 0 0;
+  padding: 0 !important;
+  border-radius: 6px !important;
+  background-color: transparent !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 14px;
+  cursor: pointer;
+}
+
+.login-panel form .su-terms input.su-check:checked {
+  background-color: #2bb673 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' stroke='%23ffffff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.login-panel form .su-terms input.su-check:focus-visible {
+  outline: 2px solid #2bb673;
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   MOBILE (up to 768px)
+   The form sits directly on the banner image (no separate card). A dark
+   overlay (see .login-container above) keeps text readable on the bright
+   streaks of the artwork, so all text here is white in BOTH modes.
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* sign-up page = same container / panel as log in */
+  .signup-container {
+    min-height: 0;
+    height: auto;
+  }
+
+  .signup-container .login-panel {
+    min-height: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .signup-container .theme-toggle {
+    top: 24px;
+    left: auto;
+    right: 24px;
+  }
+
+  /* links: GREEN, no pill (the dark overlay keeps them readable) */
+  .forgot,
+  .auth-switch a,
+  .su-link,
+  .su-terms a {
+    color: #3ddc97 !important;
+    background: none;
+    padding: 3px 4px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+
+  .forgot {
+    display: block;
+    width: fit-content;
+    margin-left: auto;
+    padding: 5px 4px;
+  }
+
+  .su-link:disabled {
+    color: rgba(255, 255, 255, 0.6) !important;
+    text-decoration: none;
+  }
+
+  .forgot:focus-visible,
+  .auth-switch a:focus-visible,
+  .su-link:focus-visible,
+  .su-terms a:focus-visible,
+  .btn-su-secondary:focus-visible {
+    outline-color: #3ddc97;
+  }
+
+  /* progress bar: green (the dark overlay keeps it visible) */
+  .su-dot {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  .su-dot.is-done,
+  .su-dot.is-current {
+    background: #3ddc97;
+  }
+
+  .su-dot.is-current {
+    box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.3);
+  }
+
+  /* Back button */
+  .btn-su-secondary {
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+  }
+
+  .btn-su-secondary:hover {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  /* checkbox border (the shared mobile input rule makes it too faint) */
+  .login-panel form .su-terms input.su-check {
+    border-color: #ffffff !important;
+  }
+
+  .su-title {
+    font-size: 18px;
+  }
+
+  .otp-row {
+    gap: 6px;
+  }
+
+  .login-panel form .otp-row input.otp-input {
+    height: 48px !important;
+    font-size: 20px !important;
+  }
+
+  .su-links {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 360px) {
+  .login-container,
+  .signup-container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE CONTRAST FIX (log in + sign up)
+   KEEP THIS BLOCK AT THE VERY BOTTOM OF THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* dark overlay on top of the banner (also covers .signup-container) */
+  .login-container,
+  .signup-container {
+    background-image:
+      linear-gradient(rgba(3, 22, 15, 0.55), rgba(3, 22, 15, 0.55)),
+      var(--welcome-bg-image);
+    background-size: cover;
+    background-position: center;
+  }
+
+  /* light mode: slightly lighter overlay so it still feels "light" */
+  html.light-mode .login-container,
+  html.light-mode .signup-container {
+    background-image:
+      linear-gradient(rgba(3, 40, 26, 0.45), rgba(3, 40, 26, 0.45)),
+      var(--welcome-bg-image);
+  }
+
+  /* all text white in BOTH modes (light mode labels were black) */
+  .login-panel,
+  .login-panel form label,
+  .login-panel .su-title,
+  .login-panel .su-desc,
+  .login-panel .su-desc strong,
+  .login-panel .reset-desc,
+  .su-count,
+  .su-help,
+  .su-timer,
+  .auth-switch,
+  .su-terms {
+    color: #ffffff !important;
+  }
+
+  .su-count,
+  .su-help,
+  .su-timer,
+  .login-panel .reset-desc {
+    color: rgba(255, 255, 255, 0.88) !important;
+  }
+
+  /* title: white word + light mint accent word ("Sign" + "up", "Log" + "in") */
+  .login-panel h1,
+  html.dark-mode .login-panel h1 .log-word,
+  html.dark-mode .login-panel h1 .reset-word,
+  html.light-mode .login-panel h1 .log-word,
+  html.light-mode .login-panel h1 .reset-word {
+    color: #ffffff !important;
+  }
+
+  .login-panel h1 span:not(.log-word):not(.reset-word) {
+    color: #5ee6a8 !important;   /* readable on the dark overlay */
+  }
+
+  /* subtle shadow helps on the brightest spots */
+  .login-panel h1,
+  .su-title,
+  .su-desc,
+  .su-count,
+  .su-help,
+  .auth-switch,
+  .login-panel form label {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+
+  /* inputs: easy to read in both modes */
+  html.dark-mode .login-panel form input.form-control,
+  html.dark-mode .login-panel form input {
+    background-color: rgba(8, 30, 22, 0.75) !important;
+    border: 1px solid rgba(94, 230, 168, 0.55) !important;
+    color: #ffffff !important;
+  }
+
+  html.light-mode .login-panel form input.form-control,
+  html.light-mode .login-panel form input {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+    border: 1px solid #2bb673 !important;
+    color: #0d1b17 !important;
+  }
+
+  /* the +63 prefix must follow the input color */
+  html.light-mode .su-prefix { color: #0d1b17; }
+  html.dark-mode  .su-prefix { color: #ffffff; }
+
+  /* icons inside the inputs */
+  html.light-mode .input-icon,
+  html.light-mode .toggle-password img {
+    filter: none !important;
+    opacity: 0.7 !important;
+  }
+
+  /* theme toggle icon: always white on the banner */
+  .theme-toggle img {
+    filter: brightness(0) invert(1) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE GREEN LINKS (Forgot Password?, Sign up, Log in, Resend, Terms)
+   KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+  html.dark-mode .forgot,
+  html.light-mode .forgot,
+  html.dark-mode .auth-switch a,
+  html.light-mode .auth-switch a,
+  html.dark-mode .su-link,
+  html.light-mode .su-link,
+  html.dark-mode .su-terms a,
+  html.light-mode .su-terms a {
+    color: #3ddc97 !important;
+    background: none !important;
+    text-decoration: none !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+
+  html.dark-mode .forgot:hover,
+  html.light-mode .forgot:hover,
+  html.dark-mode .auth-switch a:hover,
+  html.light-mode .auth-switch a:hover,
+  html.dark-mode .su-link:hover:not(:disabled),
+  html.light-mode .su-link:hover:not(:disabled),
+  html.dark-mode .su-terms a:hover,
+  html.light-mode .su-terms a:hover {
+    text-decoration: underline !important;
+  }
+
+  html.dark-mode .su-link:disabled,
+  html.light-mode .su-link:disabled {
+    color: rgba(255, 255, 255, 0.6) !important;
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE GREEN PROGRESS BAR (sign up steps)
+   KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+  html.dark-mode .su-dot,
+  html.light-mode .su-dot {
+    background: rgba(255, 255, 255, 0.25) !important;
+  }
+
+  html.dark-mode .su-dot.is-done,
+  html.light-mode .su-dot.is-done,
+  html.dark-mode .su-dot.is-current,
+  html.light-mode .su-dot.is-current {
+    background: #3ddc97 !important;
+  }
+
+  html.dark-mode .su-dot.is-current,
+  html.light-mode .su-dot.is-current {
+    box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.3);
+  }
+}
+
+
+/* ==========================================================================
+   AUTOFILL FIX (the light-blue / white box with invisible text)
+   Chrome paints its own light-blue background when it autofills or previews a
+   saved value (this happens when you press Back and the field gets focus).
+   The old autofill rule lost to ".login-panel form input { box-shadow: none !important }",
+   so this version is more specific. KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+html .login-panel form input:-webkit-autofill,
+html .login-panel form input:-webkit-autofill:hover,
+html .login-panel form input:-webkit-autofill:focus,
+html .login-panel form input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  -webkit-text-fill-color: var(--input-text) !important;
+  caret-color: var(--input-text) !important;
+  border: 1px solid var(--input-border) !important;
+  transition: background-color 9999s ease-in-out 0s !important;
+}
+
+/* Firefox / other browsers */
+html .login-panel form input:autofill {
+  box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  -webkit-text-fill-color: var(--input-text) !important;
+  caret-color: var(--input-text) !important;
 }

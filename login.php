@@ -23,6 +23,11 @@ require_once __DIR__ . "/config/database.php";
 
 $errorMessage = "";
 
+// Shown after a successful sign-up (signup-api.php redirects here with ?registered=1).
+$successMessage = (($_GET["registered"] ?? "") === "1")
+    ? "Account created. Log in with your new username and password."
+    : "";
+
 // Redirect authenticated users to the protected app.
 if (isset($_SESSION["user_id"])) {
     header("Location: index.php");
@@ -97,6 +102,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                     $user["status"] !== "Active"
                 ) {
                     $errorMessage = "Invalid username/email or password.";
+                    $successMessage = "";
                 } else {
                     // Regenerate the session ID after authentication.
                     session_regenerate_id(true);
@@ -133,13 +139,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRM - Log In</title>
 
-  
+
 <link rel="preload" as="image" href="backgroundPicture/background-lightmode.png">
 <link rel="preload" as="image" href="backgroundPicture/background-darkmode.png">
 
-  
+
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  
+
   <link rel="stylesheet" href="css-InAllPages/stylesheet-login.css">
   <script src="js-InAllPages/theme.js"></script>
   <script>
@@ -150,16 +156,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 </head>
 <body class="d-flex align-items-center justify-content-center min-vh-100 p-3 p-md-4">
 
-  
+
   <main class="login-container position-relative d-flex overflow-hidden rounded-4 shadow-lg w-100">
-    
-    
+
+
     <button type="button" class="theme-toggle position-absolute border-0 bg-transparent p-0" id="themeToggle" aria-label="Switch theme">
       <img src="icons/sun-icon.svg" class="sun-icon" alt="Sun Icon">
       <img src="icons/moon-icon.svg" class="moon-icon" alt="Moon Icon">
     </button>
 
-    
+
     <section class="welcome-panel flex-grow-1 d-flex flex-column justify-content-start">
       <div class="welcome-content w-100">
         <p class="welcome-label fw-semibold text-uppercase">Welcome to</p>
@@ -169,7 +175,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
       </div>
     </section>
 
-    
+
     <section class="login-panel d-flex flex-column justify-content-center">
       <div class="form-content w-100">
         <h1 class="fw-bold mb-4">
@@ -180,13 +186,19 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <form action="login.php" method="POST" class="d-flex flex-column">
           <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION["login_csrf_token"] ?? "", ENT_QUOTES, "UTF-8") ?>">
 
+          <?php if ($successMessage !== "") : ?>
+            <div class="alert alert-success" role="status">
+              <?= htmlspecialchars($successMessage, ENT_QUOTES, "UTF-8") ?>
+            </div>
+          <?php endif; ?>
+
           <?php if ($errorMessage !== "") : ?>
             <div class="alert alert-danger" role="alert">
               <?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?>
             </div>
           <?php endif; ?>
 
-          
+
           <div class="mb-3">
             <label for="email" class="form-label">Username</label>
             <div class="input-wrapper position-relative">
@@ -195,14 +207,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             </div>
           </div>
 
-          
+
           <div class="mb-2">
             <label for="password" class="form-label">Password</label>
             <div class="password-wrapper position-relative">
               <img src="icons/password-icon.svg" class="input-icon position-absolute" alt="Password Icon">
               <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" required placeholder="Enter your password">
 
-              
+
               <button type="button" class="toggle-password position-absolute border-0 bg-transparent" id="togglePassword" aria-label="Toggle password visibility">
                 <img src="icons/eye-closed.svg" class="eye-closed-icon" alt="Show Password">
                 <img src="icons/eye-open.svg" class="eye-open-icon" alt="Hide Password">
@@ -210,19 +222,24 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             </div>
           </div>
 
-          
+
           <a href="forgotpassword.html" class="forgot text-end d-block mb-3">Forgot Password?</a>
 
-          
+
           <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold">Log in</button>
+
+          <p class="auth-switch text-center mt-4 mb-0">
+            Don't have an account? <a href="signup.php">Sign up</a>
+          </p>
         </form>
       </div>
     </section>
 
   </main>
 
-  
+
   <script src="js-InAllPages/loading.js"></script>
   <script src="js-InAllPages/function-for-login.js"></script>
+
 </body>
 </html>
