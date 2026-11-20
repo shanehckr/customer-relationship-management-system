@@ -1,0 +1,21 @@
+<!-- Customer Service Dashboard. pages.js crmRenderDashboard() fills it from dashboard-api.php (all support tickets). Layout: stats, status/priority (middle), attention + recent tickets. -->
+<main class="content-body sd-dashboard dash-page flex-grow-1" data-crm-dashboard data-dashboard-role="customer-service">
+  <header class="dash-head">
+    <div><h2 class="dash-title">DASHBOARD</h2><p class="dash-sub" id="dashSub"></p></div>
+    <span class="dash-date"><i class="bi bi-calendar3" aria-hidden="true"></i><span id="currentDashboardDate"></span></span>
+  </header>
+  <div class="dash-stats" data-cols="4">
+    <div class="card sd-stat dash-stat"><span class="stat-label">Open Tickets</span><div class="stat-number" data-metric="open_tickets">—</div></div>
+    <div class="card sd-stat dash-stat is-warn"><span class="stat-label">Requiring Action</span><div class="stat-number" data-metric="requiring_action">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Unread Messages</span><div class="stat-number" data-metric="unread_messages">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Resolved This Month</span><div class="stat-number" data-metric="resolved_this_month">—</div></div>
+  </div>
+  <div class="dash-grid">
+    <section class="card dash-panel span-6"><div class="dash-panel-head"><h5>Tickets by Status</h5><span class="dash-chip" id="dashStatusTotal"></span></div><div id="dashStatusMeters" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+    <section class="card dash-panel span-6"><div class="dash-panel-head"><h5>Tickets by Priority</h5><span class="dash-chip" id="dashPriorityTotal"></span></div><div id="dashPriorityMeters" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+  </div>
+  <div class="dash-grid">
+    <section class="card dash-panel span-5"><div class="dash-panel-head"><h5>Needs Your Attention</h5><span class="dash-chip is-amber" id="dashAttentionChip"></span></div><div id="dashAttention" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+    <section class="card dash-panel span-7"><div class="dash-panel-head"><h5>Recently Updated Tickets</h5><button type="button" class="ops-link" data-dash-page="cs-ticket.html">View all <i class="bi bi-arrow-right" aria-hidden="true"></i></button></div><div id="dashRecent" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+  </div>
+</main>

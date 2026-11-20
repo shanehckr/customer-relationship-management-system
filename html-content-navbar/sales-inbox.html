@@ -1,0 +1,71 @@
+<!-- Sales Staff: Inbox (inquiry conversations only).
+     Support tickets belong to Customer Service Staff and are not shown here.
+     No data is written here: the list, the thread and the replies are built by pages.js
+     (crmInitSalesInbox) from sales-inbox-api.php, which uses the same conversation tables as the
+     customer's "Messages" tab (cib_conversations, cib_messages).
+     "View Inquiry Details" opens the page named in data-inquiries-page (change it to your Inquiries page). -->
+<div class="csi-page p-3 p-md-4" id="salesInboxPage" data-api="sales-inbox-api.php" data-inquiries-page="inquiries">
+  <h2 class="fw-bold mb-3">CUSTOMER CONVERSATION INBOX</h2>
+
+  <div class="card csi-shell" id="csiShell">
+
+    <!-- LEFT: conversations -->
+    <aside class="csi-list-pane" aria-label="Conversations">
+      <div class="csi-list-head">
+        <div class="csi-list-title">
+          <h3 class="iq-pool-title"><i class="bi bi-chat-dots-fill" aria-hidden="true"></i>Conversations</h3>
+          <span class="stage-pill stage-won" id="csiUnreadCount" hidden></span>
+        </div>
+        <div class="position-relative">
+          <i class="bi bi-search search-icon position-absolute top-50 start-0 translate-middle-y ms-3" aria-hidden="true"></i>
+          <input type="search" id="csiSearch" class="form-control table-search-input ps-5"
+                 placeholder="Search customer, inquiry ID, or subject..." aria-label="Search conversations" autocomplete="off">
+        </div>
+      </div>
+      <p class="iq-state" id="csiListState">Loading conversations...</p>
+      <!-- Placed BEFORE the list, so "No results found" shows right under the search (not at the bottom) -->
+      <div class="crm-no-results-state iq-no-results" id="csiNoResults" role="status" hidden>
+        <i class="bi bi-search" aria-hidden="true"></i>
+        <p class="crm-no-results-title">No results found</p>
+        <p class="crm-no-results-description">Try changing your search.</p>
+      </div>
+      <div class="csi-list" id="csiList" aria-live="polite"></div>
+    </aside>
+
+    <!-- RIGHT: selected conversation -->
+    <section class="csi-thread" aria-label="Conversation">
+      <div class="csi-empty" id="csiEmpty">
+        <i class="bi bi-chat-square-text" aria-hidden="true"></i>
+        <p>Select a conversation to view its messages.</p>
+      </div>
+
+      <div class="csi-thread-body" id="csiThread" hidden>
+        <header class="csi-thread-head">
+          <button type="button" class="iq-back csi-back" id="csiBack"><i class="bi bi-arrow-left" aria-hidden="true"></i>Conversations</button>
+          <span class="iq-avatar" id="csiAvatar" aria-hidden="true"></span>
+          <div class="iq-head-main">
+            <h4 class="iq-customer"><span id="csiName"></span> <span class="csi-ref" id="csiRef"></span></h4>
+            <span class="csi-subject" id="csiSubject"></span>
+          </div>
+          <div class="csi-head-actions">
+            <span class="stage-pill" id="csiStatus"></span>
+            <button type="button" class="btn csi-outline-btn" id="csiViewTicket"><i class="bi bi-clipboard-check-fill" aria-hidden="true"></i>View Inquiry Details</button>
+          </div>
+        </header>
+
+        <div class="csi-feed" id="csiFeed" aria-live="polite" aria-label="Messages"></div>
+
+        <form class="csi-composer" id="csiForm" enctype="multipart/form-data">
+          <input type="file" id="csiFiles" name="attachments[]" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+          <button type="button" class="csi-icon-btn csi-attach" id="csiAttach" aria-label="Attach a file or image" title="Attach a file or image" disabled><i class="bi bi-paperclip" aria-hidden="true"></i></button>
+          <div class="csi-composer-copy">
+            <textarea id="csiText" name="message" rows="1" maxlength="5000" placeholder="Type your response to the customer..." aria-label="Type your response" disabled></textarea>
+            <span class="csi-file-label" id="csiFileLabel" aria-live="polite"></span>
+          </div>
+          <button type="submit" class="csi-icon-btn csi-send" id="csiSend" aria-label="Send response" title="Send" disabled><i class="bi bi-send-fill" aria-hidden="true"></i></button>
+        </form>
+      </div>
+    </section>
+
+  </div>
+</div>

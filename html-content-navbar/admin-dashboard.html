@@ -1,0 +1,25 @@
+<!-- Admin Dashboard. pages.js crmRenderDashboard() fills every [data-metric] and #dash* box from dashboard-api.php. Layout: stats, charts (middle), attention + activity, events. -->
+<div class="sd-dashboard dash-page" data-crm-dashboard data-dashboard-role="admin">
+  <header class="dash-head">
+    <div><h2 class="dash-title">DASHBOARD</h2><p class="dash-sub" id="dashSub"></p></div>
+    <span class="dash-date"><i class="bi bi-calendar3" aria-hidden="true"></i><span id="currentDashboardDate"></span></span>
+  </header>
+  <div class="dash-stats" data-cols="5">
+    <div class="card sd-stat dash-stat"><span class="stat-label">Total Customers</span><div class="stat-number" data-metric="total_customers">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Active Employees</span><div class="stat-number" data-metric="active_employees">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Active Inquiries</span><div class="stat-number" data-metric="active_inquiries">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Upcoming Bookings</span><div class="stat-number" data-metric="upcoming_bookings">—</div></div>
+    <div class="card sd-stat dash-stat"><span class="stat-label">Open Tickets</span><div class="stat-number" data-metric="open_tickets">—</div></div>
+  </div>
+  <div class="dash-grid">
+    <section class="card dash-panel span-6 dash-chart-panel"><div class="dash-panel-head"><h5>Inquiries by Stage</h5><button type="button" class="ops-link" data-dash-page="manager-admin-inquiries.html">View <i class="bi bi-arrow-right" aria-hidden="true"></i></button></div><div id="dashInquiryChart" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+    <section class="card dash-panel span-6 dash-chart-panel"><div class="dash-panel-head"><h5>Bookings by Service</h5><button type="button" class="ops-link" data-dash-page="manager-admin-bookings.html">View <i class="bi bi-arrow-right" aria-hidden="true"></i></button></div><div id="dashBookingChart" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+  </div>
+  <div class="dash-grid">
+    <section class="card dash-panel span-5"><div class="dash-panel-head"><h5>Needs Your Attention</h5></div><div id="dashPending" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+    <section class="card dash-panel span-7"><div class="dash-panel-head"><h5>Recent Activity</h5></div><div id="dashActivity" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+  </div>
+  <div class="dash-grid">
+    <section class="card dash-panel span-12"><div class="dash-panel-head"><h5>Upcoming Catering Events</h5><button type="button" class="ops-link" data-dash-page="admin-manager-sales-calendar.html">View all <i class="bi bi-arrow-right" aria-hidden="true"></i></button></div><div id="dashBookings" aria-live="polite"><p class="sd-empty-note">Loading...</p></div></section>
+  </div>
+</div>

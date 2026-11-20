@@ -1,0 +1,244 @@
+<!-- Sales Staff: My Inquiries (the inquiries assigned to me).
+     Same page as Sales Staff > Available Inquiries (sales-available.html): pages.js (crmInitSalesAvailable)
+     builds the cards, filters and the View Details screen from the API, so no inquiry data is typed here.
+     data-mode="mine" turns on the Stage filter and the Open Chat button.
+     It keeps the id "salesAvailablePage" on purpose, because that is what pages.js looks for.
+     Backend: GET sales-inquiries.php?action=list -> { success: true, inquiries: [ {...} ] }
+     (same fields as Available Inquiries, plus an optional unread_count for Open Chat). -->
+<div class="iq-page av-page iq-page--sales" id="salesAvailablePage" data-mode="mine" data-api="sales-inquiries.php?action=list">
+
+  <!-- LIST VIEW -->
+  <div id="avListView">
+    <div class="mb-4">
+      <h2 class="fw-bold text-uppercase mb-1">Inquiries</h2>
+    
+    </div>
+
+    <!-- Search + filters (same classes as Available Inquiries) -->
+    <div class="av-filter-row mb-4">
+      <div class="av-search position-relative">
+        <i class="bi bi-search search-icon position-absolute top-50 translate-middle-y ms-3" aria-hidden="true"></i>
+        <input type="search" id="avSearchInput" class="form-control table-search-input ps-5"
+               placeholder="Search by Inquiry ID, event name, customer, or location..." aria-label="Search inquiries" autocomplete="off">
+      </div>
+
+      <div class="dropdown av-stage" data-av-filter="stage">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Inquiry Stage</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="avStageMenu"></ul>
+      </div>
+
+      <div class="dropdown av-arr" data-av-filter="arrangement">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Catering Arrangement</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu">
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="all">All Arrangements</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="pickup">Customer Pickup</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="delivery">Food Delivery</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="onsite">Buffet with Setup</a></li>
+        </ul>
+      </div>
+
+      <div class="bk-date-range av-date">
+        <input type="date" id="avDate" aria-label="Event date">
+      </div>
+    </div>
+
+    <div class="iq-pool-head">
+      <h3 class="iq-pool-title">Assigned Inquiries</h3>
+      <span class="text-muted">Sales Staff Portfolio</span>
+    </div>
+
+    <p class="iq-state" id="avState">Loading inquiries...</p>
+
+    <!-- Cards are inserted here -->
+    <div class="av-grid" id="avGrid"></div>
+
+    <!-- Shown when the search / filters match nothing (same shared "No results found" design) -->
+    <div class="crm-no-results-state iq-no-results" id="avNoResults" role="status" hidden>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <p class="crm-no-results-title">No results found</p>
+      <p class="crm-no-results-description">Try changing your search or filters.</p>
+    </div>
+  </div>
+
+  <!-- DETAIL VIEW (View Details): filled by pages.js -->
+  <div id="avDetailView" hidden></div>
+
+  <!-- CREATE QUOTATION / PAYMENT page (2 steps). quotation-page.js clones #qpTemplate in here; no data is typed in the markup. -->
+  <div id="avQuoteView" hidden></div>
+</div>
+
+<!-- ==========================================================================
+     Create Quotation page (Buffet with Setup, Customer Pickup and Delivery).
+     Markup only: quotation-page.js fills every [data-qp-*] hook. Styles: quotation-page.css.
+     Reuses: card, av-d-card, av-d-card-head, av-d-grid, av-d-label, av-d-value, av-d-total, av-d-cat,
+             ci-food, modal-input-label, modal-input-field, modal-btn-save, csi-outline-btn, stage-pill.
+     ========================================================================== -->
+<template id="qpTemplate">
+  <div class="qp-page">
+
+    <header class="card qp-head">
+      <button type="button" class="btn csi-outline-btn qp-back" data-qp="back"><i class="bi bi-arrow-left" aria-hidden="true"></i> <span data-qp-out="back-label">Back to Inquiry Details</span></button>
+      <div class="qp-head-row">
+        <h2 class="qp-title" data-qp-out="page-title">Create Quotation</h2>
+        <span class="stage-pill stage-won qp-mode" data-qp-out="mode">Mode: New Quotation</span>
+      </div>
+      <p class="qp-sub"><span>Inquiry Reference: <b class="qp-mono" data-qp-out="inquiry-ref"></b></span> <span>Customer Name: <b data-qp-out="customer"></b></span></p>
+      <ol class="qp-steps" aria-label="Steps">
+        <li class="qp-step is-current" data-qp-stepper="1"><span class="qp-node">01</span><span class="qp-step-text"><b>Fill Out <span data-qp-out="doc-word">Quotation</span></b><small>Select official menu items, charges &amp; terms</small></span></li>
+        <li class="qp-step" data-qp-stepper="2"><span class="qp-node">02</span><span class="qp-step-text"><b>Review &amp; Confirm</b><small>Verify customer-facing preview</small></span></li>
+      </ol>
+    </header>
+
+    <p class="qp-error" data-qp="error" role="alert" hidden></p>
+
+    <!-- ===================== STEP 1 ===================== -->
+    <div data-qp-step="1">
+
+      <section class="card iq-detail-card av-d-card">
+        <div class="av-d-card-head"><h3 class="iq-section-title">A. Customer and Event Information</h3><span class="av-d-tag">Read-only, inherited from <span data-qp-out="inquiry-ref"></span></span></div>
+        <div class="av-d-grid av-d-grid-3">
+          <div class="qp-info"><span class="av-d-label">Customer name</span><span class="av-d-value" data-qp-out="customer"></span></div>
+          <div class="qp-info"><span class="av-d-label">Inquiry reference</span><span class="av-d-value qp-mono" data-qp-out="inquiry-ref"></span></div>
+          <div class="qp-info"><span class="av-d-label">Event name</span><span class="av-d-value" data-qp-out="event"></span></div>
+          <div class="qp-info"><span class="av-d-label">Event date</span><span class="av-d-value" data-qp-out="date"></span></div>
+          <div class="qp-info"><span class="av-d-label">Catering arrangement</span><span class="av-d-value" data-qp-out="arrangement"></span></div>
+          <div class="qp-info"><span class="av-d-label">Event location</span><span class="av-d-value" data-qp-out="location"></span></div>
+        </div>
+      </section>
+
+      <section class="card iq-detail-card av-d-card">
+        <div class="av-d-card-head">
+          <h3 class="iq-section-title">B. Selected Food Items (<span data-qp-out="count">0</span>)</h3>
+          <button type="button" class="btn csi-outline-btn qp-edit" data-qp="edit-toggle"><i class="bi bi-pencil" aria-hidden="true"></i> <span data-qp-out="edit-label">Edit Items</span></button>
+        </div>
+        <p class="qp-hint" data-qp-out="menu-hint"></p>
+        <p class="qp-state" data-qp="menu-state">Loading menu...</p>
+        <div class="av-d-table-wrap qp-table-wrap">
+          <table class="ci-food qp-table" data-qp="table">
+            <thead><tr><th>Food item</th><th>Portion / serving size</th><th>Quantity</th><th>Unit price</th><th>Amount</th><th class="qp-col-action">Action</th></tr></thead>
+            <tbody data-qp="rows"></tbody>
+          </table>
+        </div>
+        <p class="qp-empty" data-qp="rows-empty">No food items yet. Press Edit Items to add items from the official menu.</p>
+
+        <!-- Add any item from the official menu: only shown while editing -->
+        <p class="qp-note" data-qp="range-note" hidden></p>
+
+        <!-- Add any item from the official menu: only shown while editing. Serving size and price come from the menu; only the quantity is typed. -->
+        <div class="qp-add-panel" data-qp="add-panel" hidden>
+          <h4 class="qp-picker-title">Add an item from the official menu</h4>
+          <div class="qp-picker-row">
+            <div><label class="modal-input-label" for="qpItem">Menu item</label><select class="modal-input-field" id="qpItem" data-qp="item"></select></div>
+            <div><label class="modal-input-label" for="qpPortion">Portion</label><select class="modal-input-field" id="qpPortion" data-qp="portion"></select></div>
+            <div><label class="modal-input-label" for="qpQty">Quantity</label><input class="modal-input-field" id="qpQty" type="number" min="1" step="1" value="1" data-qp="qty"></div>
+            <button type="button" class="btn modal-btn-save qp-add" data-qp="add"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add Food Item</button>
+          </div>
+          <div class="qp-auto-row">
+            <div class="qp-info"><span class="av-d-label">Serving size (from menu)</span><span class="av-d-value" data-qp-out="add-serving"></span></div>
+            <div class="qp-info"><span class="av-d-label">Unit price (from menu)</span><span class="av-d-value" data-qp-out="add-price"></span></div>
+            <div class="qp-info"><span class="av-d-label">Line amount</span><span class="av-d-value" data-qp-out="add-line"></span></div>
+          </div>
+        </div>
+
+        <div class="qp-subtotal"><span class="qp-hint">Serving capacities belong to individual menu items and do not alter the event's attendance PAX.</span><span class="qp-subtotal-amt"><span class="qp-subtotal-label">Food Subtotal:</span> <span class="av-d-total" data-qp-out="subtotal">₱0.00</span></span></div>
+      </section>
+
+      <section class="card iq-detail-card av-d-card">
+        <div class="av-d-card-head"><h3 class="iq-section-title">C. Additional Fee</h3>
+          <span class="qp-chips" data-qp="arr-chips"><span class="qp-chip" data-arr="pickup">Customer Pickup</span><span class="qp-chip" data-arr="delivery">Food Delivery</span><span class="qp-chip" data-arr="onsite">Buffet with Setup</span></span>
+        </div>
+        <p class="qp-hint" data-qp-out="charge-hint"></p>
+        <div class="qp-fee-grid">
+          <div class="qp-info qp-span-2" data-qp="addr-wrap" hidden><span class="av-d-label">Delivery address</span><span class="av-d-value" data-qp-out="addr"></span></div>
+          <div class="qp-info" data-qp="pax-wrap"><span class="av-d-label">Event guests (PAX)</span><span class="av-d-value" data-qp-out="pax"></span></div>
+          <div class="qp-info" data-qp="bracket-wrap"><span class="av-d-label">Service-fee bracket</span><span class="av-d-value" data-qp-out="bracket"></span></div>
+          <div class="qp-fee-input"><label class="modal-input-label" for="qpExtra">Additional fee (PHP)</label><input class="modal-input-field" id="qpExtra" type="number" min="0" step="0.01" value="0" data-qp="extra">
+            <button type="button" class="qp-link" data-qp="fee-reset" hidden></button></div>
+        </div>
+      </section>
+
+      <section class="card iq-detail-card av-d-card">
+        <div class="av-d-card-head"><h3 class="iq-section-title" data-qp-out="terms-title">D. Quotation Terms</h3></div>
+        <p class="qp-hint" data-qp-out="terms-hint">Validity, deposit percentage and an optional message to the customer.</p>
+        <div class="av-d-grid av-d-grid-3">
+          <div data-qp="valid-wrap"><label class="modal-input-label" for="qpValid">Valid until</label><input class="modal-input-field" id="qpValid" type="date" data-qp="valid"></div>
+          <div data-qp="rate-wrap"><label class="modal-input-label" for="qpRate">Deposit percentage (%)</label><input class="modal-input-field" id="qpRate" type="number" min="1" max="100" step="1" value="20" data-qp="rate"></div>
+          <div data-qp="discount-wrap"><label class="modal-input-label" for="qpDiscount">Discount (PHP, optional)</label><input class="modal-input-field" id="qpDiscount" type="number" min="0" step="0.01" value="0" data-qp="discount"></div>
+        </div>
+        <div class="qp-notes"><label class="modal-input-label" for="qpNotes">Message to customer <span class="qp-opt">(optional)</span></label>
+          <textarea class="modal-input-field" id="qpNotes" rows="3" maxlength="2000" placeholder="Inclusions, payment reminders, special arrangements..." data-qp="notes"></textarea></div>
+      </section>
+
+      <div class="card iq-detail-card qp-footer"><div class="av-d-actions"><button type="button" class="btn modal-btn-save av-d-btn" data-qp="to-review">Continue to Review <i class="bi bi-arrow-right" aria-hidden="true"></i></button></div></div>
+    </div>
+
+    <!-- ===================== STEP 2 ===================== -->
+    <div data-qp-step="2" hidden>
+      <article class="card qp-doc">
+        <div class="qp-doc-head">
+          <div><h3 class="qp-doc-brand">Catering Services &amp; Commissary</h3><p class="qp-hint" data-qp-out="doc-sub">Customer-Facing Event Quotation</p><span class="stage-pill stage-won" data-qp-out="doc-version"></span></div>
+          <dl class="qp-doc-refs">
+            <dt class="qp-doc-name" data-qp-out="doc-name">QUOTATION</dt>
+            <div><dt data-qp-out="ref-label">Quotation Ref:</dt><dd class="qp-mono" data-qp-out="doc-ref"></dd></div>
+            <div><dt>Inquiry Ref:</dt><dd class="qp-mono" data-qp-out="inquiry-ref"></dd></div>
+            <div><dt>Version:</dt><dd data-qp-out="doc-v"></dd></div>
+            <div><dt>Issue Date:</dt><dd data-qp-out="issue"></dd></div>
+            <div data-qp="valid-line"><dt>Valid Until:</dt><dd data-qp-out="valid-out"></dd></div>
+          </dl>
+        </div>
+
+        <h4 class="qp-doc-h">Customer and event details</h4>
+        <div class="av-d-grid av-d-grid-3 qp-doc-box">
+          <div><span class="av-d-label">Customer name</span><span class="av-d-value" data-qp-out="customer"></span></div>
+          <div><span class="av-d-label">Event name</span><span class="av-d-value" data-qp-out="event"></span></div>
+          <div><span class="av-d-label">Event date</span><span class="av-d-value" data-qp-out="date"></span></div>
+          <div><span class="av-d-label">Catering arrangement</span><span class="av-d-value" data-qp-out="arrangement"></span></div>
+          <div class="qp-span-2"><span class="av-d-label">Event location</span><span class="av-d-value" data-qp-out="location"></span></div>
+        </div>
+
+        <h4 class="qp-doc-h">Detailed food breakdown</h4>
+        <div class="av-d-table-wrap">
+          <table class="ci-food qp-table"><thead><tr><th>Category</th><th>Food item</th><th>Portion / serving size</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody data-qp="prev-rows"></tbody></table>
+        </div>
+
+        <div class="qp-doc-split">
+          <div>
+            <h4 class="qp-doc-h">Terms and customer message</h4>
+            <div class="qp-terms">
+              <p><b data-qp-out="terms-line"></b></p>
+              <p class="qp-hint" data-qp-out="terms-text"></p>
+              <p class="qp-msg" data-qp-out="message" hidden></p>
+            </div>
+          </div>
+          <div>
+            <h4 class="qp-doc-h">Charges and payment summary</h4>
+            <dl class="qp-sum">
+              <div><dt>Food subtotal</dt><dd data-qp-out="s-sub"></dd></div>
+              <div><dt>Additional charges</dt><dd data-qp-out="s-extra"></dd></div>
+              <div data-qp="s-discount-row"><dt>Discount</dt><dd data-qp-out="s-discount"></dd></div>
+              <div class="qp-sum-total"><dt data-qp-out="s-total-label">Total quotation amount</dt><dd data-qp-out="s-total"></dd></div>
+              <div><dt data-qp-out="s-dep-label">Required deposit</dt><dd data-qp-out="s-dep"></dd></div>
+              <div data-qp="s-bal-row"><dt>Remaining balance</dt><dd data-qp-out="s-bal"></dd></div>
+            </dl>
+          </div>
+        </div>
+
+        <div class="qp-doc-actions">
+          <button type="button" class="btn csi-outline-btn" data-qp="back-edit"><i class="bi bi-arrow-left" aria-hidden="true"></i> Back to Edit</button>
+          <span class="qp-grow"></span>
+          <button type="button" class="btn csi-outline-btn" data-qp="save-draft">Save as Draft</button>
+          <button type="button" class="btn modal-btn-save" data-qp="send"><i class="bi bi-send" aria-hidden="true"></i> <span data-qp-out="send-label">Send Quotation to Customer</span></button>
+        </div>
+      </article>
+    </div>
+
+  </div>
+</template>

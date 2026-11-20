@@ -1,0 +1,180 @@
+<!-- Reports (Admin + Manager share this page; navbar.js maps both roles to manager-admin-report.html).
+     Fragment: navbar.js inserts it into the app shell, pages.js (crmRenderReports -> crmLoadReportsData -> crmFillReports) fills it.
+     4 tabs: Customer Report, Sales Report, Ticket Report, Feedback Report. Only existing classes are used (no new CSS).
+     Same export contract as every other report: every chart has data-report-chart, so Export CSV / Download PDF export the open tab.
+     Backend: reports-api.php?range=weekly|monthly|yearly|custom (custom adds &start=YYYY-MM-DD&end=YYYY-MM-DD) -> JSON, contract at the top of crmFillReports() in pages.js. -->
+<main class="content-body p-3 p-md-4 flex-grow-1 rp-page sd-dashboard" id="reportsPage"
+      data-api="reports-api.php" data-report-type="customer">
+
+  <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+    <h2 class="fw-bold m-0 text-uppercase">REPORTS</h2>
+    <span class="rp-scope"><i class="rp-scope-dot"></i><span id="reportScopeRole">Organization-Wide Analytics</span></span>
+  </div>
+
+  <!-- Tabs -->
+  <div class="rp-tabs" role="tablist">
+    <button type="button" class="rp-tab active" role="tab" data-bs-toggle="tab" data-bs-target="#rpCustomer">Customer Report</button>
+    <button type="button" class="rp-tab" role="tab" data-bs-toggle="tab" data-bs-target="#rpSales">Sales Report</button>
+    <button type="button" class="rp-tab" role="tab" data-bs-toggle="tab" data-bs-target="#rpTicket">Ticket Report</button>
+    <button type="button" class="rp-tab" role="tab" data-bs-toggle="tab" data-bs-target="#rpFeedback">Feedback Report</button>
+  </div>
+
+  <!-- Date filter + export buttons (shared by all tabs) -->
+  <div class="d-flex flex-wrap align-items-end justify-content-between gap-3 mb-3 mt-3 rp-actions">
+    <div class="d-flex flex-wrap align-items-end gap-2">
+      <div>
+        <label class="small fw-semibold d-block mb-1" id="reportDateTitle">Date</label>
+        <div class="dropdown" id="reportDateDropdown">
+          <button class="btn custom-dropdown-toggle rp-date-btn d-flex align-items-center justify-content-between gap-3 px-3 py-2"
+            type="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <div class="d-flex align-items-center gap-2"><i class="bi bi-calendar3 rp-green"></i><span id="reportDateLabel">Monthly</span></div>
+            <i class="bi bi-chevron-down small"></i>
+          </button>
+          <ul class="dropdown-menu custom-dropdown-menu shadow-sm border-0 p-0 overflow-hidden" id="reportDateMenu">
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Weekly</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Monthly</a></li>
+            <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#">Custom Date Range</a></li>
+          </ul>
+        </div>
+      </div>
+      <!-- the exact dates of the chosen range (filled from reports-api.php) -->
+      <span class="rp-scope" id="reportRangeText"></span>
+      <!-- Custom Date Range: Start / End date (hidden until "Custom Date Range" is picked) -->
+      <div class="rp-custom-dates d-none" id="reportCustomDates">
+        <div>
+          <label class="small fw-semibold d-block mb-1" for="reportStartDate">Start Date</label>
+          <div class="bk-date-range"><input type="date" id="reportStartDate" aria-label="Start Date"></div>
+        </div>
+        <div>
+          <label class="small fw-semibold d-block mb-1" for="reportEndDate">End Date</label>
+          <div class="bk-date-range"><input type="date" id="reportEndDate" aria-label="End Date"></div>
+        </div>
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <!-- the id stays exportCsvBtn because download-export.js listens for it -->
+      <button type="button" class="btn modal-btn-cancel px-3 d-flex align-items-center gap-2" id="exportCsvBtn"><i class="bi bi-file-earmark-excel"></i> Export CSV</button>
+      <button type="button" class="btn modal-btn-save px-3 d-flex align-items-center gap-2" id="downloadPdfBtn"><i class="bi bi-printer"></i> Download PDF</button>
+    </div>
+  </div>
+
+  <div class="tab-content">
+
+    <!-- ===================== CUSTOMER REPORT ===================== -->
+    <div class="tab-pane fade show active" id="rpCustomer" data-report-title="Customer Report" data-report-type="customer" data-date-label="Date Added">
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-md-4"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Total Customers</span><div class="stat-number" id="totalCustomers">0</div><div class="rp-delta" data-delta="customer.total" data-good="up"></div></div></div>
+        <div class="col-12 col-md-4"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">New Customers (Period)</span><div class="stat-number is-green" id="newCustomers">0</div><div class="rp-delta" data-delta="customer.new" data-good="up"></div></div></div>
+        <div class="col-12 col-md-4"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Returning Active Clients</span><div class="stat-number" id="returningCustomers">0</div><div class="rp-delta" data-delta="customer.returning" data-good="up"></div></div></div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-7"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">New Customer Registrations</h5></div></div>
+          <div class="rp-chart" id="customerTrendChart" data-report-chart="New Customer Registrations" data-chart-style="line" data-items='[]'></div>
+        </div></div>
+        <div class="col-12 col-lg-5"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Customers by Assigned Sales Staff</h5></div></div>
+          <div class="rp-hchart" id="customersByStaffChart" data-report-chart="Customers by Assigned Sales Staff" data-items='[]'></div>
+        </div></div>
+      </div>
+<div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 rp-perf-card">
+  <div class="rp-card-head"><div><h5 class="fw-bold m-0">Customer Engagement</h5><p class="rp-sub">How much of the customer base is new, and how many came back</p></div></div>
+  <div class="rp-perf-grid" id="customerPerfGrid"></div>
+</div>
+
+    </div>
+
+    <!-- ===================== SALES REPORT ===================== -->
+    <div class="tab-pane fade" id="rpSales" data-report-title="Sales Report" data-report-type="sales" data-date-label="Date Submitted">
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-6 col-xl"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Inquiries Submitted</span><div class="stat-number" id="inquiriesSubmitted">0</div><div class="rp-delta" data-delta="sales.inquiries" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Quotations Sent</span><div class="stat-number" id="quotationsSent">0</div><div class="rp-delta" data-delta="sales.quotations" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Confirmed Bookings</span><div class="stat-number is-green" id="confirmedBookings">0</div><div class="rp-delta" data-delta="sales.confirmed_bookings" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Verified Revenue</span><div class="stat-number is-green" id="verifiedRevenue">&#8369;0.00</div><div class="rp-delta" data-delta="sales.verified_revenue" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Outstanding Balance</span><div class="stat-number is-red" id="outstandingBalance">&#8369;0.00</div></div></div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-6"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Inquiry Stage Distribution</h5></div></div>
+          <div class="rp-chart" id="inquiryStageChart" data-report-chart="Inquiry Stage Distribution" data-chart-style="donut" data-donut-caption="INQUIRIES" data-items='[]'></div>
+        </div></div>
+        <div class="col-12 col-lg-6"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Confirmed Bookings by Service Arrangement</h5></div></div>
+          <div class="rp-chart" id="bookingArrangementChart" data-report-chart="Confirmed Bookings by Service Arrangement" data-chart-style="donut" data-donut-caption="CONFIRMED" data-items='[]'></div>
+        </div></div>
+      </div>
+      <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 rp-perf-card">
+  <div class="rp-card-head"><div><h5 class="fw-bold m-0">Conversion &amp; Collection</h5><p class="rp-sub">How far inquiries get, and how much of the booked value is already paid</p></div></div>
+  <div class="rp-perf-grid" id="salesPerfGrid"></div>
+</div>
+      <div class="card border-0 shadow-sm rounded-4 w-100 mb-4 rp-table-card">
+        <div class="rp-card-head rp-table-head"><div><h5 class="fw-bold m-0">Financial Summary</h5></div></div>
+        <div class="table-responsive">
+          <table class="table align-middle mb-0 rp-fin" id="financialSummaryTable" data-report-table="Financial Summary">
+            <thead class="table-light text-uppercase small"><tr><th>Financial Metric</th><th class="text-end">Amount</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== TICKET REPORT ===================== -->
+    <div class="tab-pane fade" id="rpTicket" data-report-title="Ticket Report" data-report-type="tickets" data-date-label="Date Submitted">
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Total Tickets</span><div class="stat-number" id="totalTickets">0</div><div class="rp-delta" data-delta="ticket.total" data-good="neutral"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Open Tickets</span><div class="stat-number is-orange" id="openTicketsCount">0</div><div class="rp-delta" data-delta="ticket.open" data-good="down"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">In Progress Tickets</span><div class="stat-number" id="inProgressTickets">0</div><div class="rp-delta" data-delta="ticket.in_progress" data-good="neutral"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Resolved Tickets</span><div class="stat-number is-green" id="resolvedTickets">0</div><div class="rp-delta" data-delta="ticket.resolved" data-good="up"></div></div></div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-6"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Ticket Status Distribution</h5></div></div>
+          <div class="rp-chart" id="ticketsByStatusChart" data-report-chart="Ticket Status Distribution" data-chart-style="donut" data-donut-caption="TICKETS" data-items='[]'></div>
+        </div></div>
+        <div class="col-12 col-lg-6"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Tickets by Priority</h5></div></div>
+          <div class="rp-hchart" id="ticketsByPriorityChart" data-report-chart="Tickets by Priority" data-items='[]'></div>
+        </div></div>
+      </div>
+<div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 rp-perf-card">
+  <div class="rp-card-head"><div><h5 class="fw-bold m-0">Ticket Resolution</h5><p class="rp-sub">How much of the support workload is already solved</p></div></div>
+  <div class="rp-perf-grid" id="ticketPerfGrid"></div>
+</div>
+
+    </div>
+
+    <!-- ===================== FEEDBACK REPORT ===================== -->
+    <div class="tab-pane fade" id="rpFeedback" data-report-title="Feedback Report" data-report-type="feedback" data-date-label="Date Submitted">
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Feedback Received</span><div class="stat-number" id="feedbackTotal">0</div><div class="rp-delta" data-delta="feedback.total" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Average Rating</span><div class="stat-number is-green" id="feedbackAverage">&#8212;</div><div class="rp-delta" data-delta="feedback.average" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Satisfied (4-5 Stars)</span><div class="stat-number" id="feedbackSatisfied">0</div><div class="rp-delta" data-delta="feedback.satisfied" data-good="up"></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card sd-stat border-0 shadow-sm p-3 rounded-4 h-100"><span class="stat-label d-block mb-1">Low Ratings (1-2 Stars)</span><div class="stat-number is-red" id="feedbackLow">0</div><div class="rp-delta" data-delta="feedback.low" data-good="down"></div></div></div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-lg-7"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Average Rating Trend</h5></div></div>
+          <div class="rp-chart" id="ratingTrendChart" data-report-chart="Average Rating Trend" data-chart-style="line" data-items='[]'></div>
+        </div></div>
+        <div class="col-12 col-lg-5"><div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 h-100">
+          <div class="rp-card-head"><div><h5 class="fw-bold m-0">Rating Distribution</h5></div></div>
+          <div class="rp-hchart" id="ratingDistributionChart" data-report-chart="Rating Distribution" data-items='[]'></div>
+        </div></div>
+      </div>
+      <div class="card border-0 shadow-sm rounded-4 p-3 p-md-4 rp-perf-card">
+        <div class="rp-card-head"><div><h5 class="fw-bold m-0">Customer Satisfaction</h5><p class="rp-sub">How many customers answered the rating request, and how happy they were</p></div></div>
+        <div class="rp-perf-grid" id="feedbackPerfGrid"></div>
+      </div>
+      <div class="card border-0 shadow-sm rounded-4 w-100 mb-4 rp-table-card">
+        <div class="rp-card-head rp-table-head"><div><h5 class="fw-bold m-0">Customer Feedback</h5></div></div>
+        <div class="table-responsive">
+          <table class="table align-middle mb-0" id="feedbackTable" data-report-table="Customer Feedback" data-empty-text="No feedback for this period yet">
+            <thead class="table-light text-uppercase small"><tr><th>Date</th><th>Booking</th><th>Customer</th><th>Event</th><th>Rating</th><th>Comment</th><th>Photos</th><th>Sales Staff</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>

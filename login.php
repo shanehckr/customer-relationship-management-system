@@ -26,7 +26,9 @@ $errorMessage = "";
 // Shown after a successful sign-up (signup-api.php redirects here with ?registered=1).
 $successMessage = (($_GET["registered"] ?? "") === "1")
     ? "Account created. Log in with your new username and password."
-    : "";
+    : ((($_GET["reset"] ?? "") === "1")
+        ? "Password updated. Log in with your new password."
+        : "");
 
 // Redirect authenticated users to the protected app.
 if (isset($_SESSION["user_id"])) {
@@ -140,14 +142,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <title>CRM - Log In</title>
 
 
-<link rel="preload" as="image" href="backgroundPicture/background-lightmode.png">
-<link rel="preload" as="image" href="backgroundPicture/background-darkmode.png">
+<link rel="preload" as="image" href="background-picture/background-lightmode.png">
+<link rel="preload" as="image" href="background-picture/background-darkmode.png">
 
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
-  <link rel="stylesheet" href="css-InAllPages/stylesheet-login.css">
-  <script src="js-InAllPages/theme.js"></script>
+  <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+  <script src="all-pages-js/theme.js"></script>
   <script>
     if (sessionStorage.getItem('pageTransition') === 'true') {
       document.documentElement.classList.add('preload-transition');
@@ -223,7 +225,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
           </div>
 
 
-          <a href="forgotpassword.html" class="forgot text-end d-block mb-3">Forgot Password?</a>
+          <a href="forgot-password.php" class="forgot text-end d-block mb-3">Forgot Password?</a>
 
 
           <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold">Log in</button>
@@ -238,8 +240,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   </main>
 
 
-  <script src="js-InAllPages/loading.js"></script>
-  <script src="js-InAllPages/function-for-login.js"></script>
+  <script src="all-pages-js/loading.js"></script>
+  <script src="all-pages-js/function-for-login.js"></script>
 
 </body>
 </html>

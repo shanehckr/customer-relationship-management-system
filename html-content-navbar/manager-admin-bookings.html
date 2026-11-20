@@ -1,0 +1,79 @@
+<!-- Admin + Manager: Catering Operations > Bookings (ONE shared page for both roles).
+     No data is written here: the cards are built automatically by pages.js
+     (crmInitManagerBookings) from the list the backend returns.
+     Reuses the Inquiries styles (.iq-*), the shared search box, dropdowns, pills and
+     "No results found" box. Only the filter grid and the date range are new (.bk-*). -->
+<div class="iq-page p-3 p-md-4" id="managerBookingsPage" data-api="bookings-api.php?action=list">
+
+  <!-- LIST VIEW -->
+  <div id="bkListView">
+
+    <!-- Same title as Inquiries (h2 + mb-4). View Calendar sits beside the search box. -->
+    <h2 class="fw-bold text-uppercase mb-4">Bookings</h2>
+
+    <div class="bk-search-row mb-3">
+      <div class="position-relative">
+        <i class="bi bi-search search-icon position-absolute top-50 start-0 translate-middle-y ms-3" aria-hidden="true"></i>
+        <input type="search" id="bkSearchInput" class="form-control table-search-input ps-5"
+               placeholder="Search bookings by reference, event name, customer, or assigned staff..." aria-label="Search bookings">
+      </div>
+      <button type="button" class="btn modal-btn-save bk-calendar-btn" id="bkCalendarBtn" aria-label="View Calendar">
+        <i class="bi bi-calendar3" aria-hidden="true"></i> <span class="bk-calendar-label">View Calendar</span>
+      </button>
+    </div>
+
+    <div class="bk-filters">
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Booking Status</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkStatusMenu" data-filter="status"></ul>
+      </div>
+
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Payment Status</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkPaymentMenu" data-filter="payment"></ul>
+      </div>
+
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Assigned Staff</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkStaffMenu" data-filter="staff"></ul>
+      </div>
+
+      <div class="bk-date-range">
+        <input type="date" id="bkDate" aria-label="Event date">
+      </div>
+    </div>
+
+    <div class="iq-pool-head">
+      <h3 class="iq-pool-title">Active Booking Operations</h3>
+      <span class="text-muted">Cavite &amp; Metro Manila Services</span>
+    </div>
+
+    <!-- Cards are inserted here -->
+    <div class="iq-grid" id="bkGrid"></div>
+    <p class="iq-state" id="bkState">Loading bookings...</p>
+
+    <!-- Shown when the search / filters match nothing (shared "No results found" design) -->
+    <div class="crm-no-results-state iq-no-results" id="bkNoResults" role="status" hidden>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <p class="crm-no-results-title">No results found</p>
+      <p class="crm-no-results-description">Try changing your search or filters.</p>
+    </div>
+
+  </div>
+
+  <!-- DETAIL VIEW (filled by pages.js when View is clicked) -->
+  <div id="bkDetailView" hidden></div>
+
+</div>

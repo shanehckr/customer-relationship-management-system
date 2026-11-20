@@ -1,521 +1,438 @@
 <?php
 declare(strict_types=1);
 
-/** Handles backend requests for customer service ticket management.*/
+/**
+ * tickets-api.php  -  Tickets page backend (Admin, Manager, Customer Service Staff)
+ *
+ * Reads the SAME support-ticket tables the customer Inbox ("My Concerns") and the CS Inbox use:
+ *   cib_tickets, cib_ticket_messages
+ * so a ticket a customer creates in the Inbox shows up on the Tickets page right away.
+ * It also keeps two small tables of its own (created automatically on first run):
+ *   cib_ticket_activity  - audit trail (status / priority changes, resolve, notes added)
+ *   cib_ticket_notes     - internal notes (staff only, never shown to the customer)
+ *
+ * The old `tickets` table (contacts / assigned_user_id) is no longer used by this file.
+ * It is not touched or deleted, so anything else that references it keeps working.
+ *
+ * Who can do what
+ *   Customer Service Staff : view, change status / priority, resolve, add internal notes
+ *   Admin, Manager         : view only (every change is refused by the server)
+ *
+ * Actions
+ *   GET  ?action=list            -> { success, role, can_manage, csrf_token, tickets: [...] }
+ *   POST ?action=update_status   id, status
+ *   POST ?action=update_priority id, priority
+ *   POST ?action=resolve         id
+ *   POST ?action=add_note        id, note
+ *   (every POST sends the CSRF token in the X-CSRF-Token header and returns { success, ticket })
+ */
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
+// Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
+define('SESSION_API', true);
+require_once __DIR__ . '/session-init.php';
 
-session_set_cookie_params([
-    "httponly" => true,
-    "secure" => false,
-    "samesite" => "Lax"
-]);
-
-session_start();
-
+date_default_timezone_set("Asia/Manila");
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
+
+const TICKET_STATUSES = ["Open", "In Progress", "Pending", "Resolved"];
+const TICKET_PRIORITIES = ["Urgent", "High", "Medium", "Low"];
+const TICKET_MANAGER_ROLE = "Customer Service Staff";
 
 function ticketsRespond(int $status, array $data): void
 {
     http_response_code($status);
-    echo json_encode(
-        $data,
-        JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
-    );
+    echo json_encode($data, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
 
-function ticketsPostString(string $key): ?string
+function ticketsFail(int $status, string $message, string $code = ""): void
+{
+    $body = ["success" => false, "message" => $message];
+    if ($code !== "") {
+        $body["code"] = $code;
+    }
+    ticketsRespond($status, $body);
+}
+
+function ticketsPostString(string $key): string
 {
     $value = $_POST[$key] ?? "";
-    return is_string($value) ? trim($value) : null;
+    return is_string($value) ? trim($value) : "";
 }
 
-function ticketsPositiveId(?string $value): ?int
+function ticketsPositiveId(string $value): ?int
 {
-    if ($value === null || preg_match('/\A[1-9][0-9]*\z/', $value) !== 1) {
-        return null;
-    }
-
-    $id = filter_var($value, FILTER_VALIDATE_INT, [
-        "options" => ["min_range" => 1]
-    ]);
-
-    return $id === false ? null : $id;
+    return preg_match('/\A[1-9][0-9]*\z/', $value) === 1 ? (int) $value : null;
 }
 
+/** Runs a prepared statement and returns every row (ints only for the types string). */
+function ticketsRows(mysqli $conn, string $sql, string $types = "", array $args = []): array
+{
+    $st = $conn->prepare($sql);
+    if ($types !== "") {
+        $st->bind_param($types, ...$args);
+    }
+    $st->execute();
+    $rows = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+    $st->close();
+    return $rows;
+}
+
+function ticketsRun(mysqli $conn, string $sql, string $types = "", array $args = []): void
+{
+    $st = $conn->prepare($sql);
+    if ($types !== "") {
+        $st->bind_param($types, ...$args);
+    }
+    $st->execute();
+    $st->close();
+}
+
+/** A customer's profile photo as a web path (uploads/profile/...), or "" when they have none. */
+function ticketsPhotoUrl($rel): string
+{
+    $rel = trim((string) $rel);
+    if ($rel === "" || strpos($rel, "uploads/profile/") !== 0) {
+        return "";
+    }
+    $file = __DIR__ . "/" . $rel;
+    return $rel . "?v=" . (is_file($file) ? (string) filemtime($file) : "1");
+}
+
+function ticketsNow(): string
+{
+    return date("Y-m-d H:i:s");
+}
+
+/* ------------------------- 1. SESSION + ROLE ------------------------- */
 $sessionUserId = $_SESSION["user_id"] ?? null;
 if (!is_int($sessionUserId) || $sessionUserId < 1) {
-    ticketsRespond(401, [
-        "success" => false,
-        "code" => "session_expired",
-        "message" => "Please log in to continue."
-    ]);
+    ticketsFail(401, "Please log in to continue.", "session_expired");
 }
 
 $action = $_GET["action"] ?? "";
 $method = $_SERVER["REQUEST_METHOD"] ?? "";
-$transactionStarted = false;
+$postActions = ["update_status", "update_priority", "resolve", "add_note"];
 
-if (
-    !(($method === "GET" && $action === "list") ||
-      ($method === "POST" && in_array($action, ["create", "update", "delete"], true)))
-) {
+if (!(($method === "GET" && $action === "list") || ($method === "POST" && in_array($action, $postActions, true)))) {
     header("Allow: GET, POST");
-    ticketsRespond(405, [
-        "success" => false,
-        "message" => "This Tickets API operation is not supported."
-    ]);
+    ticketsFail(405, "This Tickets API operation is not supported.");
 }
 
 try {
-    require_once __DIR__ . "/config/database.php";
+    require_once __DIR__ . "/config/database.php";   // gives $conn (mysqli)
+    require_once __DIR__ . "/notifications-helper.php";   // bell notifications (see notifications-api.php)
 
-    $currentUserQuery = $conn->prepare(
-        "SELECT u.status, r.role_name
-         FROM users AS u
-         INNER JOIN roles AS r ON r.role_id = u.role_id
-         WHERE u.user_id = ?
-         LIMIT 1"
-    );
-    $currentUserQuery->bind_param("i", $sessionUserId);
-    $currentUserQuery->execute();
-    $currentUser = $currentUserQuery->get_result()->fetch_assoc();
-    $currentUserQuery->close();
+    $me = ticketsRows(
+        $conn,
+        "SELECT u.status, u.full_name, r.role_name
+         FROM users AS u INNER JOIN roles AS r ON r.role_id = u.role_id
+         WHERE u.user_id = ? LIMIT 1",
+        "i",
+        [$sessionUserId]
+    )[0] ?? null;
 
-    if (!$currentUser || $currentUser["status"] !== "Active") {
-        ticketsRespond(401, [
-            "success" => false,
-            "code" => "session_expired",
-            "message" => "Your account is no longer active. Please log in again."
-        ]);
+    if (!$me || $me["status"] !== "Active") {
+        ticketsFail(401, "Your account is no longer active. Please log in again.", "session_expired");
+    }
+    $roleName = (string) $me["role_name"];
+    if (!in_array($roleName, ["Admin", "Manager", TICKET_MANAGER_ROLE], true)) {
+        ticketsFail(403, "You are not authorized to access Tickets.");
+    }
+    $canManage = $roleName === TICKET_MANAGER_ROLE;
+    $staffName = trim((string) $me["full_name"]) !== "" ? trim((string) $me["full_name"]) : $roleName;
+    $staffRoleLabel = $roleName === TICKET_MANAGER_ROLE ? "CS Staff" : $roleName;
+
+    /* ------------------------- 2. TABLES ------------------------- */
+    // The Inbox creates cib_tickets / cib_ticket_messages. Make sure they exist, then add what this page needs.
+    $conn->query("CREATE TABLE IF NOT EXISTS cib_tickets (
+        id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, ticket_number VARCHAR(30) DEFAULT '',
+        subject VARCHAR(160) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Open', conversation_id INT DEFAULT NULL,
+        created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
+    ) ENGINE=InnoDB");
+    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_messages (
+        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, sender_type VARCHAR(20) NOT NULL,
+        sender_name VARCHAR(120) DEFAULT '', message TEXT, attachments TEXT, created_at DATETIME NOT NULL, INDEX (ticket_id)
+    ) ENGINE=InnoDB");
+    $hasPriority = ticketsRows($conn, "SHOW COLUMNS FROM cib_tickets LIKE 'priority'");
+    if (!$hasPriority) {
+        $conn->query("ALTER TABLE cib_tickets ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'Medium'");
+    }
+    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_activity (
+        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, action VARCHAR(255) NOT NULL,
+        performed_by VARCHAR(120) NOT NULL DEFAULT '', performed_by_role VARCHAR(60) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL, INDEX (ticket_id)
+    ) ENGINE=InnoDB");
+    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_notes (
+        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, note TEXT NOT NULL,
+        created_by VARCHAR(120) NOT NULL DEFAULT '', created_by_role VARCHAR(60) NOT NULL DEFAULT '',
+        created_at DATETIME NOT NULL, INDEX (ticket_id)
+    ) ENGINE=InnoDB");
+
+    /* ------------------------- 3. CUSTOMER COLUMNS (users table) ------------------------- */
+    // The customer's account is in `users` (key user_id). Name / email / phone columns are found automatically.
+    $uCols = [];
+    foreach (ticketsRows($conn, "SHOW COLUMNS FROM users") as $c) {
+        $uCols[strtolower($c["Field"])] = $c["Field"];
+    }
+    $nameParts = [];
+    foreach (["full_name", "name", "username"] as $n) {
+        if (isset($uCols[$n])) {
+            $nameParts[] = "NULLIF(TRIM(u.`{$uCols[$n]}`), '')";
+        }
+    }
+    if (isset($uCols["first_name"], $uCols["last_name"])) {
+        array_unshift($nameParts, "NULLIF(TRIM(CONCAT(u.`{$uCols['first_name']}`, ' ', u.`{$uCols['last_name']}`)), '')");
+    }
+    $nameSql = $nameParts ? "COALESCE(" . implode(", ", $nameParts) . ")" : "NULL";
+    $emailSql = isset($uCols["email"]) ? "u.`{$uCols['email']}`" : "NULL";
+    $phoneSql = "NULL";
+    foreach (["phone", "contact_number", "phone_number", "mobile", "mobile_number", "contact_no", "contact"] as $p) {
+        if (isset($uCols[$p])) {
+            $phoneSql = "u.`{$uCols[$p]}`";
+            break;
+        }
     }
 
-    $roleName = $currentUser["role_name"];
-    if (!in_array($roleName, ["Admin", "Manager", "Customer Service Staff"], true)) {
-        ticketsRespond(403, [
-            "success" => false,
-            "message" => "You are not authorized to access Tickets."
-        ]);
-    }
+    $photoSql = isset($uCols["photo_path"]) ? "u.`{$uCols['photo_path']}`" : "NULL";
 
-    if ($method === "GET") {
-        $csrfTokenKey = "tickets_csrf_token";
-        if (
-            !isset($_SESSION[$csrfTokenKey]) ||
-            !is_string($_SESSION[$csrfTokenKey]) ||
-            preg_match('/\A[a-f0-9]{64}\z/', $_SESSION[$csrfTokenKey]) !== 1
-        ) {
-            $_SESSION[$csrfTokenKey] = bin2hex(random_bytes(32));
+    /* ------------------------- 4. BUILD TICKET RECORDS ------------------------- */
+    /** Returns the full ticket records (with activity + notes) for the given ids, or every ticket when $ids is null. */
+    $loadTickets = function (?array $ids) use ($conn, $nameSql, $emailSql, $phoneSql, $photoSql): array {
+        $where = "";
+        if ($ids !== null) {
+            if (!$ids) {
+                return [];
+            }
+            $where = "WHERE t.id IN (" . implode(",", array_map("intval", $ids)) . ")";
         }
-
-        $ticketSql = "
-            SELECT
-                t.ticket_id,
-                t.ticket_name,
-                t.contact_id,
-                t.description,
-                t.status,
-                t.priority,
-                t.assigned_user_id,
-                c.customer_name,
-                assigned.full_name AS assigned_staff_name
-            FROM tickets AS t
-            INNER JOIN contacts AS c ON c.contact_id = t.contact_id
-            INNER JOIN users AS assigned ON assigned.user_id = t.assigned_user_id
-        ";
-        if ($roleName === "Customer Service Staff") {
-            $ticketSql .= " WHERE t.assigned_user_id = ?";
-        }
-        $ticketSql .= " ORDER BY t.created_at DESC, t.ticket_id DESC";
-
-        $ticketQuery = $conn->prepare($ticketSql);
-        if ($roleName === "Customer Service Staff") {
-            $ticketQuery->bind_param("i", $sessionUserId);
-        }
-        $ticketQuery->execute();
-        $tickets = $ticketQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        $ticketQuery->close();
-
-        $contactQuery = $conn->prepare(
-            "SELECT contact_id, customer_name
-             FROM contacts
-             ORDER BY customer_name ASC, contact_id ASC"
+        $tickets = ticketsRows(
+            $conn,
+            "SELECT t.id, t.customer_id, t.ticket_number, t.subject, t.status, t.priority, t.created_at, t.updated_at,
+                    (SELECT m.message FROM cib_ticket_messages m WHERE m.ticket_id = t.id
+                        ORDER BY (m.sender_type = 'customer') DESC, m.id ASC LIMIT 1) AS description,
+                    $nameSql AS customer_name, $emailSql AS customer_email, $phoneSql AS customer_phone, $photoSql AS customer_photo_path
+             FROM cib_tickets t
+             LEFT JOIN users u ON u.user_id = t.customer_id
+             $where
+             ORDER BY t.created_at DESC, t.id DESC"
         );
-        $contactQuery->execute();
-        $contacts = $contactQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        $contactQuery->close();
-
-        $staffSql = "
-            SELECT u.user_id, u.full_name
-            FROM users AS u
-            INNER JOIN roles AS r ON r.role_id = u.role_id
-            WHERE u.status = 'Active'
-              AND r.role_name = 'Customer Service Staff'
-        ";
-        if ($roleName === "Customer Service Staff") {
-            $staffSql .= " AND u.user_id = ?";
+        if (!$tickets) {
+            return [];
         }
-        $staffSql .= " ORDER BY u.full_name ASC, u.user_id ASC";
+        $idList = implode(",", array_map(fn($t) => (int) $t["id"], $tickets));
 
-        $staffQuery = $conn->prepare($staffSql);
-        if ($roleName === "Customer Service Staff") {
-            $staffQuery->bind_param("i", $sessionUserId);
+        $messages = $logged = $notes = [];
+        foreach (ticketsRows($conn, "SELECT id, ticket_id, sender_type, sender_name, created_at FROM cib_ticket_messages
+                                      WHERE ticket_id IN ($idList) ORDER BY id ASC") as $m) {
+            $messages[(int) $m["ticket_id"]][] = $m;
         }
-        $staffQuery->execute();
-        $staff = $staffQuery->get_result()->fetch_all(MYSQLI_ASSOC);
-        $staffQuery->close();
+        foreach (ticketsRows($conn, "SELECT ticket_id, action, performed_by, performed_by_role, created_at FROM cib_ticket_activity
+                                      WHERE ticket_id IN ($idList) ORDER BY id ASC") as $a) {
+            $logged[(int) $a["ticket_id"]][] = $a;
+        }
+        foreach (ticketsRows($conn, "SELECT ticket_id, note, created_by, created_by_role, created_at FROM cib_ticket_notes
+                                      WHERE ticket_id IN ($idList) ORDER BY id ASC") as $n) {
+            $notes[(int) $n["ticket_id"]][] = $n;
+        }
 
-        $csrfToken = $_SESSION[$csrfTokenKey];
+        $result = [];
+        foreach ($tickets as $t) {
+            $id = (int) $t["id"];
+            $customer = trim((string) ($t["customer_name"] ?? ""));
+            if ($customer === "") {
+                $customer = "Customer #" . $t["customer_id"];
+            }
+            $status = (string) $t["status"];
+            $isClosed = (bool) preg_match('/^(resolved|closed)$/i', $status);
+
+            // Audit trail: only what really happened after the ticket was submitted (every message after the first
+            // one + the logged changes). Nothing is made up; a new ticket has an empty history.
+            $trail = [];
+            $ticketMessages = $messages[$id] ?? [];
+            $skippedFirst = false;
+            foreach ($ticketMessages as $m) {
+                if (!$skippedFirst && $m["sender_type"] === "customer") {
+                    $skippedFirst = true;   // the first customer message is the ticket itself
+                    continue;
+                }
+                $fromCustomer = $m["sender_type"] === "customer";
+                $trail[] = [
+                    "action" => $fromCustomer ? "Customer sent a new message" : "Customer Service Staff replied to the customer",
+                    "performed_by" => $fromCustomer ? $customer : (trim((string) $m["sender_name"]) ?: "Customer Service Staff"),
+                    "performed_by_role" => $fromCustomer ? "Customer" : "CS Staff",
+                    "created_at" => $m["created_at"],
+                ];
+            }
+            foreach ($logged[$id] ?? [] as $a) {
+                if (trim((string) $a["performed_by"]) === "" && $a["performed_by_role"] === "Customer") {
+                    $a["performed_by"] = $customer;   // written by the customer Inbox, which does not know the name
+                }
+                $trail[] = $a;
+            }
+            usort($trail, fn($x, $y) => strcmp((string) $x["created_at"], (string) $y["created_at"]));   // stable in PHP 8
+
+            $last = $ticketMessages ? end($ticketMessages) : null;
+            if ($isClosed) {
+                $actionNeeded = "No action needed";
+            } elseif ($last && $last["sender_type"] !== "customer") {
+                $actionNeeded = "Waiting for customer";
+            } else {
+                $actionNeeded = "Respond to customer";
+            }
+
+            $result[] = [
+                "ticket_id" => $id,
+                "ticket_no" => $t["ticket_number"] ?: "TCK-" . str_pad((string) $id, 4, "0", STR_PAD_LEFT),
+                "ticket_name" => $t["subject"],
+                "description" => (string) ($t["description"] ?? ""),
+                "customer_id" => (int) $t["customer_id"],
+                "customer_name" => $customer,
+                "customer_email" => (string) ($t["customer_email"] ?? ""),
+                "customer_phone" => (string) ($t["customer_phone"] ?? ""),
+                "customer_photo" => ticketsPhotoUrl($t["customer_photo_path"] ?? ""),
+                "status" => $status,
+                "priority" => $t["priority"] ?: "Medium",
+                "created_at" => $t["created_at"],
+                "updated_at" => $t["updated_at"],
+                "last_activity" => $trail ? end($trail)["action"] : "Ticket submitted",
+                "action_needed" => $actionNeeded,
+                "activity" => array_values($trail),
+                "internal_notes" => $notes[$id] ?? [],
+            ];
+        }
+        return $result;
+    };
+
+    /* ------------------------- 5. LIST ------------------------- */
+    if ($method === "GET") {
+        $key = "tickets_csrf_token";
+        if (!isset($_SESSION[$key]) || !is_string($_SESSION[$key]) || preg_match('/\A[a-f0-9]{64}\z/', $_SESSION[$key]) !== 1) {
+            $_SESSION[$key] = bin2hex(random_bytes(32));
+        }
+        $csrfToken = $_SESSION[$key];
         session_write_close();
 
         ticketsRespond(200, [
             "success" => true,
             "role" => $roleName,
             "user_id" => $sessionUserId,
-            "tickets" => $tickets,
-            "contacts" => $contacts,
-            "staff" => $staff,
-            "csrf_token" => $csrfToken
+            "can_manage" => $canManage,
+            "csrf_token" => $csrfToken,
+            "tickets" => $loadTickets(null),
         ]);
     }
 
+    /* ------------------------- 6. CHANGES (Customer Service Staff only) ------------------------- */
     $headerToken = $_SERVER["HTTP_X_CSRF_TOKEN"] ?? "";
     $formToken = $_POST["csrf_token"] ?? "";
-    $submittedToken = is_string($headerToken) && $headerToken !== ""
-        ? $headerToken
-        : $formToken;
-    $storedToken = $_SESSION["tickets_csrf_token"] ?? "";
-
-    if (
-        !is_string($submittedToken) ||
-        !is_string($headerToken) ||
-        !is_string($formToken) ||
-        ($headerToken !== "" && $formToken !== "" && !hash_equals($headerToken, $formToken)) ||
-        !is_string($storedToken) ||
-        preg_match('/\A[a-f0-9]{64}\z/', $storedToken) !== 1 ||
-        !hash_equals($storedToken, $submittedToken)
-    ) {
-        ticketsRespond(403, [
-            "success" => false,
-            "code" => "csrf_invalid",
-            "message" => "Your security token is no longer valid. Refresh Tickets and try again."
-        ]);
+    $submitted = is_string($headerToken) && $headerToken !== "" ? $headerToken : (is_string($formToken) ? $formToken : "");
+    $stored = $_SESSION["tickets_csrf_token"] ?? "";
+    if (!is_string($stored) || preg_match('/\A[a-f0-9]{64}\z/', $stored) !== 1 || !hash_equals($stored, $submitted)) {
+        ticketsFail(403, "Your security token is no longer valid. Refresh Tickets and try again.", "csrf_invalid");
+    }
+    if (!$canManage) {
+        ticketsFail(403, "Admin and Manager accounts can view tickets only. Customer Service Staff manage them.", "forbidden");
     }
 
-    if ($action === "delete" && $roleName !== "Admin") {
-        ticketsRespond(403, [
-            "success" => false,
-            "code" => "forbidden",
-            "message" => "Only an Admin can delete tickets."
-        ]);
+    $ticketId = ticketsPositiveId(ticketsPostString("id"));
+    if ($ticketId === null) {
+        ticketsFail(422, "Select a valid ticket.", "invalid_ticket_id");
     }
-
-    if ($action === "delete") {
-        $ticketId = ticketsPositiveId(ticketsPostString("id"));
-        if ($ticketId === null) {
-            ticketsRespond(422, [
-                "success" => false,
-                "code" => "invalid_ticket_id",
-                "message" => "Select a valid ticket to delete."
-            ]);
-        }
-
-        $conn->begin_transaction();
-        $transactionStarted = true;
-        $ticketQuery = $conn->prepare(
-            "SELECT ticket_id
-             FROM tickets
-             WHERE ticket_id = ?
-             FOR UPDATE"
-        );
-        $ticketQuery->bind_param("i", $ticketId);
-        $ticketQuery->execute();
-        $ticket = $ticketQuery->get_result()->fetch_assoc();
-        $ticketQuery->close();
-
-        if (!$ticket) {
-            $conn->rollback();
-            $transactionStarted = false;
-            ticketsRespond(404, [
-                "success" => false,
-                "code" => "ticket_not_found",
-                "message" => "The selected ticket no longer exists."
-            ]);
-        }
-
-        $activityQuery = $conn->prepare(
-            "SELECT COUNT(*) AS activity_count
-             FROM activities
-             WHERE ticket_id = ?"
-        );
-        $activityQuery->bind_param("i", $ticketId);
-        $activityQuery->execute();
-        $activityCount = (int) $activityQuery->get_result()->fetch_assoc()["activity_count"];
-        $activityQuery->close();
-
-        if ($activityCount > 0) {
-            $conn->rollback();
-            $transactionStarted = false;
-            ticketsRespond(409, [
-                "success" => false,
-                "code" => "ticket_has_activities",
-                "message" => "This ticket cannot be deleted because it is linked to one or more activities."
-            ]);
-        }
-
-        $deleteQuery = $conn->prepare(
-            "DELETE FROM tickets WHERE ticket_id = ?"
-        );
-        $deleteQuery->bind_param("i", $ticketId);
-        $deleteQuery->execute();
-        $deleteQuery->close();
-        $conn->commit();
-        $transactionStarted = false;
-
-        ticketsRespond(200, [
-            "success" => true,
-            "message" => "Ticket deleted successfully."
-        ]);
-    }
-
-    $ticketName = ticketsPostString("ticket_name");
-    $description = ticketsPostString("description");
-    $contactId = $action === "create"
-        ? ticketsPositiveId(ticketsPostString("customer_id"))
-        : null;
-    $status = ticketsPostString("status");
-    $priority = ticketsPostString("priority");
-    $assignedUserId = ticketsPositiveId(ticketsPostString("staff_id"));
-    $ticketId = $action === "update"
-        ? ticketsPositiveId(ticketsPostString("id"))
-        : null;
-
-    if ($action === "update" && $ticketId === null) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_ticket_id",
-            "message" => "Select a valid ticket to update."
-        ]);
-    }
-    if (
-        $ticketName === null ||
-        $ticketName === "" ||
-        mb_strlen($ticketName, "UTF-8") > 150
-    ) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_ticket_name",
-            "message" => "Enter a ticket name of 1 to 150 characters."
-        ]);
-    }
-    if (
-        $description === null ||
-        $description === "" ||
-        mb_strlen($description, "UTF-8") > 150
-    ) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_description",
-            "message" => "Enter a concern description of 1 to 150 characters."
-        ]);
-    }
-    if ($action === "create" && $contactId === null) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_contact_id",
-            "message" => "Select a valid existing customer."
-        ]);
-    }
-    if (!in_array($status, ["Open", "Pending", "Resolved"], true)) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_status",
-            "message" => "Select a valid ticket status."
-        ]);
-    }
-    if (!in_array($priority, ["High", "Medium", "Low"], true)) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_priority",
-            "message" => "Select a valid ticket priority."
-        ]);
-    }
-    if ($assignedUserId === null) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_assigned_staff",
-            "message" => "Select an active Customer Service Staff member."
-        ]);
-    }
-    if ($roleName === "Customer Service Staff" && $assignedUserId !== $sessionUserId) {
-        ticketsRespond(403, [
-            "success" => false,
-            "code" => "assignment_forbidden",
-            "message" => "Customer Service Staff can assign tickets only to themselves."
-        ]);
-    }
-
-    if ($action === "create") {
-        $contactQuery = $conn->prepare(
-            "SELECT contact_id FROM contacts WHERE contact_id = ? LIMIT 1"
-        );
-        $contactQuery->bind_param("i", $contactId);
-        $contactQuery->execute();
-        $contactExists = $contactQuery->get_result()->fetch_assoc();
-        $contactQuery->close();
-        if (!$contactExists) {
-            ticketsRespond(422, [
-                "success" => false,
-                "code" => "contact_not_found",
-                "message" => "The selected customer does not exist."
-            ]);
-        }
-    }
-
-    $staffQuery = $conn->prepare(
-        "SELECT u.user_id
-         FROM users AS u
-         INNER JOIN roles AS r ON r.role_id = u.role_id
-         WHERE u.user_id = ?
-           AND u.status = 'Active'
-           AND r.role_name = 'Customer Service Staff'
-         LIMIT 1"
-    );
-    $staffQuery->bind_param("i", $assignedUserId);
-    $staffQuery->execute();
-    $staffExists = $staffQuery->get_result()->fetch_assoc();
-    $staffQuery->close();
-    if (!$staffExists) {
-        ticketsRespond(422, [
-            "success" => false,
-            "code" => "invalid_assigned_staff",
-            "message" => "The selected staff member must be an active Customer Service Staff user."
-        ]);
-    }
-
-    if ($action === "create") {
-        $createQuery = $conn->prepare(
-            "INSERT INTO tickets
-                (ticket_name, contact_id, description, status, priority, assigned_user_id)
-             VALUES (?, ?, ?, ?, ?, ?)"
-        );
-        $createQuery->bind_param(
-            "sisssi",
-            $ticketName,
-            $contactId,
-            $description,
-            $status,
-            $priority,
-            $assignedUserId
-        );
-        $createQuery->execute();
-        $createdTicketId = $createQuery->insert_id;
-        $createQuery->close();
-
-        ticketsRespond(201, [
-            "success" => true,
-            "message" => "Ticket created successfully.",
-            "ticket_id" => $createdTicketId
-        ]);
-    }
-
-    $conn->begin_transaction();
-    $transactionStarted = true;
-    $ownershipSql = "
-        SELECT t.ticket_id, t.contact_id
-        FROM tickets AS t
-        INNER JOIN contacts AS c ON c.contact_id = t.contact_id
-        WHERE t.ticket_id = ?
-    ";
-    if ($roleName === "Customer Service Staff") {
-        $ownershipSql .= " AND t.assigned_user_id = ?";
-    }
-    $ownershipSql .= " FOR UPDATE";
-
-    $ownershipQuery = $conn->prepare($ownershipSql);
-    if ($roleName === "Customer Service Staff") {
-        $ownershipQuery->bind_param("ii", $ticketId, $sessionUserId);
-    } else {
-        $ownershipQuery->bind_param("i", $ticketId);
-    }
-    $ownershipQuery->execute();
-    $ticket = $ownershipQuery->get_result()->fetch_assoc();
-    $ownershipQuery->close();
-
+    $ticket = ticketsRows($conn, "SELECT id, customer_id, ticket_number, subject, status, priority FROM cib_tickets WHERE id = ? LIMIT 1", "i", [$ticketId])[0] ?? null;
     if (!$ticket) {
-        $conn->rollback();
-        $transactionStarted = false;
-        ticketsRespond(404, [
-            "success" => false,
-            "code" => "ticket_not_found",
-            "message" => "The selected ticket does not exist or is not assigned to you."
-        ]);
+        ticketsFail(404, "The selected ticket no longer exists.", "ticket_not_found");
     }
 
-    $updateQuery = $conn->prepare(
-        "UPDATE tickets
-         SET ticket_name = ?, description = ?, status = ?,
-             priority = ?, assigned_user_id = ?
-         WHERE ticket_id = ?"
-    );
-    $updateQuery->bind_param(
-        "ssssii",
-        $ticketName,
-        $description,
-        $status,
-        $priority,
-        $assignedUserId,
-        $ticketId
-    );
-    $updateQuery->execute();
-    $updateQuery->close();
-    $conn->commit();
-    $transactionStarted = false;
+    $log = function (string $text) use ($conn, $ticketId, $staffName, $staffRoleLabel): void {
+        ticketsRun(
+            $conn,
+            "INSERT INTO cib_ticket_activity (ticket_id, action, performed_by, performed_by_role, created_at) VALUES (?,?,?,?,?)",
+            "issss",
+            [$ticketId, $text, $staffName, $staffRoleLabel, ticketsNow()]
+        );
+    };
+    $touch = function () use ($conn, $ticketId): void {
+        ticketsRun($conn, "UPDATE cib_tickets SET updated_at = ? WHERE id = ?", "si", [ticketsNow(), $ticketId]);
+    };
+
+    $newStatus = null;   // set when the status really changed: the customer is notified after the commit
+    $conn->begin_transaction();
+    try {
+        if ($action === "update_status" || $action === "resolve") {
+            $status = $action === "resolve" ? "Resolved" : ticketsPostString("status");
+            if (!in_array($status, TICKET_STATUSES, true)) {
+                $conn->rollback();
+                ticketsFail(422, "Select a valid ticket status.", "invalid_status");
+            }
+            if ($status !== $ticket["status"]) {
+                ticketsRun($conn, "UPDATE cib_tickets SET status = ? WHERE id = ?", "si", [$status, $ticketId]);
+                $log($action === "resolve" ? "Ticket resolved" : "Ticket status changed to " . $status);
+                $touch();
+                $newStatus = $status;
+            }
+        } elseif ($action === "update_priority") {
+            $priority = ticketsPostString("priority");
+            if (!in_array($priority, TICKET_PRIORITIES, true)) {
+                $conn->rollback();
+                ticketsFail(422, "Select a valid ticket priority.", "invalid_priority");
+            }
+            if ($priority !== $ticket["priority"]) {
+                ticketsRun($conn, "UPDATE cib_tickets SET priority = ? WHERE id = ?", "si", [$priority, $ticketId]);
+                $log("Ticket priority changed to " . $priority);
+                $touch();
+            }
+        } else {   // add_note
+            $note = ticketsPostString("note");
+            if ($note === "" || mb_strlen($note, "UTF-8") > 2000) {
+                $conn->rollback();
+                ticketsFail(422, "Enter an internal note of 1 to 2000 characters.", "invalid_note");
+            }
+            ticketsRun(
+                $conn,
+                "INSERT INTO cib_ticket_notes (ticket_id, note, created_by, created_by_role, created_at) VALUES (?,?,?,?,?)",
+                "issss",
+                [$ticketId, $note, $staffName, $staffRoleLabel, ticketsNow()]
+            );
+            $log("Internal note added");
+            $touch();
+        }
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        throw $e;
+    }
+
+    if ($newStatus !== null) {
+        $nfRef = nfTicketRef($ticket);
+        $resolved = $newStatus === "Resolved";
+        notifySend($conn, [
+            "type" => "ticket",
+            "title" => $resolved ? "Ticket resolved" : "Ticket status updated",
+            "message" => $staffName . " changed " . $nfRef . " to " . $newStatus . ": " . $ticket["subject"],
+            "page" => "manager-admin-ticket.html",
+            "ref" => $nfRef,
+            "user_ids" => [(int) $ticket["customer_id"]],
+            "exclude_user_id" => $sessionUserId,
+            "by_role" => ["Customer" => [
+                "title" => $resolved ? "Your ticket was resolved" : "Your ticket status was updated",
+                "message" => $resolved
+                    ? $nfRef . " has been marked as resolved: " . $ticket["subject"]
+                    : $nfRef . " is now " . $newStatus . ": " . $ticket["subject"],
+                "page" => "customer-inbox.html",
+            ]],
+        ]);
+    }
 
     ticketsRespond(200, [
         "success" => true,
-        "message" => "Ticket updated successfully."
-    ]);
-} catch (mysqli_sql_exception $e) {
-    if ($transactionStarted && isset($conn) && $conn instanceof mysqli) {
-        try {
-            $conn->rollback();
-        } catch (Throwable $rollbackError) {
-            error_log("Tickets API rollback error: " . $rollbackError->getMessage());
-        }
-        $transactionStarted = false;
-    }
-
-    if ($action === "delete" && (int) $e->getCode() === 1451) {
-        ticketsRespond(409, [
-            "success" => false,
-            "code" => "ticket_has_related_records",
-            "message" => "This ticket cannot be deleted because related records still reference it."
-        ]);
-    }
-
-    error_log("Tickets API database error: " . $e->getMessage());
-    ticketsRespond(500, [
-        "success" => false,
-        "message" => "Unable to process this ticket request. Please try again."
+        "message" => "Ticket updated successfully.",
+        "ticket" => ($loadTickets([$ticketId])[0] ?? null),
     ]);
 } catch (Throwable $e) {
-    if ($transactionStarted && isset($conn) && $conn instanceof mysqli) {
-        try {
-            $conn->rollback();
-        } catch (Throwable $rollbackError) {
-            error_log("Tickets API rollback error: " . $rollbackError->getMessage());
-        }
-    }
-
     error_log("Tickets API error: " . $e->getMessage());
-    ticketsRespond(500, [
-        "success" => false,
-        "message" => "Unable to process this ticket request. Please try again."
-    ]);
+    ticketsFail(500, "Unable to process this ticket request. Please try again.");
 }

@@ -5,16 +5,9 @@ declare(strict_types=1);
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
-
-session_set_cookie_params([
-    "httponly" => true,
-    "secure" => false,     // Local XAMPP uses HTTP; enable secure cookies under HTTPS.
-    "samesite" => "Lax"
-]);
-
-session_start();
+// Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
+define('SESSION_API', true);
+require_once __DIR__ . '/session-init.php';
 
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
@@ -36,7 +29,12 @@ if (empty($_SESSION["user_id"])) {
     ]);
 }
 
-if (($_SESSION["role_name"] ?? "") !== "Admin") {
+// Admin: everything. Manager: list + Activate / Deactivate (no Edit, no Delete).
+$sessionRole = (string) ($_SESSION["role_name"] ?? "");
+$isAdminSession = $sessionRole === "Admin";
+$isManagerSession = $sessionRole === "Manager";
+
+if (!$isAdminSession && !$isManagerSession) {
     respond(403, [
         "success" => false,
         "message" => "You are not authorized to access account management."
@@ -45,6 +43,22 @@ if (($_SESSION["role_name"] ?? "") !== "Admin") {
 
 $action = $_GET["action"] ?? "";
 
+// Edit and Delete are Admin only. (Activate / Deactivate uses action=status, open to Manager.)
+if (!$isAdminSession && ($action === "edit" || $action === "delete")) {
+    respond(403, [
+        "success" => false,
+        "message" => "Only an Admin can " . ($action === "delete" ? "delete" : "edit") . " accounts."
+    ]);
+}
+
+// "Created Info" needs users.created_by (the id of the user who made the account).
+// If that column does not exist yet, the list still works and just leaves "by ..." out.
+function users_has_created_by(mysqli $conn): bool
+{
+    $result = $conn->query("SHOW COLUMNS FROM users LIKE 'created_by'");
+    return $result instanceof mysqli_result && $result->num_rows > 0;
+}
+
 if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
     try {
         require_once __DIR__ . "/config/database.php";
@@ -52,6 +66,18 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
         if (empty($_SESSION["settings_csrf_token"])) {
             $_SESSION["settings_csrf_token"] = bin2hex(random_bytes(32));
         }
+
+        $hasCreatedBy = users_has_created_by($conn);
+        $createdSelect = $hasCreatedBy
+            ? "u.created_by, cb.full_name AS created_by_name, cr.role_name AS created_by_role"
+            : "NULL AS created_by, NULL AS created_by_name, NULL AS created_by_role";
+        $createdJoin = $hasCreatedBy
+            ? "LEFT JOIN users AS cb ON cb.user_id = u.created_by
+               LEFT JOIN roles AS cr ON cr.role_id = cb.role_id"
+            : "";
+
+        // A Manager never sees Admin accounts (Admin sees everyone).
+        $whereClause = $isAdminSession ? "" : "WHERE r.role_name <> 'Admin'";
 
         $result = $conn->query(
             "SELECT
@@ -62,15 +88,36 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
                 u.role_id,
                 r.role_name,
                 u.status,
-                u.created_at
+                u.created_at,
+                $createdSelect
              FROM users AS u
              INNER JOIN roles AS r ON r.role_id = u.role_id
+             $createdJoin
+             $whereClause
              ORDER BY u.created_at DESC, u.user_id DESC"
         );
 
+        $users = [];
+        foreach ($result->fetch_all(MYSQLI_ASSOC) as $user) {
+            // "Admin (Shane Admin)"; accounts with no creator show "System Root".
+            if (!$hasCreatedBy) {
+                $user["created_by_label"] = null;
+            } elseif ($user["created_by_name"] !== null) {
+                $user["created_by_label"] = trim(($user["created_by_role"] ?? "") . " (" . $user["created_by_name"] . ")");
+            } else {
+                $user["created_by_label"] = "System Root";
+            }
+            // A Manager may not change Admin accounts.
+            $user["can_status"] = $isAdminSession || $user["role_name"] !== "Admin";
+            unset($user["created_by_name"], $user["created_by_role"]);
+            $users[] = $user;
+        }
+
         respond(200, [
             "success" => true,
-            "users" => $result->fetch_all(MYSQLI_ASSOC),
+            "users" => $users,
+            "can_edit" => $isAdminSession,
+            "can_delete" => $isAdminSession,
             "csrf_token" => $_SESSION["settings_csrf_token"]
         ]);
     } catch (Throwable $e) {
@@ -191,6 +238,21 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
             ]);
         }
 
+        if (!$isAdminSession && $roleName === "Admin") {
+            respond(403, [
+                "success" => false,
+                "message" => "Only an Admin can create an Admin account."
+            ]);
+        }
+
+        // Customers sign up on their own; nobody creates a Customer account from Settings (Admin included).
+        if (strcasecmp(trim((string) $roleName), "Customer") === 0) {
+            respond(403, [
+                "success" => false,
+                "message" => "Customer accounts cannot be created here. Customers sign up on their own."
+            ]);
+        }
+
         $duplicateQuery = $conn->prepare(
             "SELECT user_id FROM users WHERE username = ? OR email = ? LIMIT 1"
         );
@@ -213,20 +275,39 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
 
         $roleId = (int) $role["role_id"];
         $status = "Active";
-        $insert = $conn->prepare(
-            "INSERT INTO users
-                (full_name, username, email, role_id, password_hash, status)
-             VALUES (?, ?, ?, ?, ?, ?)"
-        );
-        $insert->bind_param(
-            "sssiss",
-            $fullName,
-            $username,
-            $email,
-            $roleId,
-            $passwordHash,
-            $status
-        );
+        if (users_has_created_by($conn)) {
+            $createdBy = (int) $_SESSION["user_id"];
+            $insert = $conn->prepare(
+                "INSERT INTO users
+                    (full_name, username, email, role_id, password_hash, status, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)"
+            );
+            $insert->bind_param(
+                "sssissi",
+                $fullName,
+                $username,
+                $email,
+                $roleId,
+                $passwordHash,
+                $status,
+                $createdBy
+            );
+        } else {
+            $insert = $conn->prepare(
+                "INSERT INTO users
+                    (full_name, username, email, role_id, password_hash, status)
+                 VALUES (?, ?, ?, ?, ?, ?)"
+            );
+            $insert->bind_param(
+                "sssiss",
+                $fullName,
+                $username,
+                $email,
+                $roleId,
+                $passwordHash,
+                $status
+            );
+        }
         $insert->execute();
         $userId = $insert->insert_id;
         $insert->close();
@@ -482,6 +563,277 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "edit") {
         respond(500, [
             "success" => false,
             "message" => "Unable to update the account. Please try again."
+        ]);
+    }
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "status") {
+    // Activate / Deactivate an account. Open to Admin and Manager.
+    $submittedToken = $_SERVER["HTTP_X_CSRF_TOKEN"] ?? "";
+    $sessionToken = $_SESSION["settings_csrf_token"] ?? "";
+
+    if (
+        !is_string($submittedToken) ||
+        !is_string($sessionToken) ||
+        $sessionToken === "" ||
+        !hash_equals($sessionToken, $submittedToken)
+    ) {
+        respond(403, [
+            "success" => false,
+            "message" => "Your session expired. Refresh Settings and try again."
+        ]);
+    }
+
+    $userIdValue = $_POST["user_id"] ?? "";
+    $status = $_POST["status"] ?? "";
+    $userId = is_string($userIdValue)
+        ? filter_var($userIdValue, FILTER_VALIDATE_INT, ["options" => ["min_range" => 1]])
+        : false;
+
+    if ($userId === false) {
+        respond(400, [
+            "success" => false,
+            "message" => "Select a valid account to update."
+        ]);
+    }
+
+    if (!is_string($status) || ($status !== "Active" && $status !== "Inactive")) {
+        respond(400, [
+            "success" => false,
+            "message" => "Select a valid account status."
+        ]);
+    }
+
+    try {
+        require_once __DIR__ . "/config/database.php";
+        $conn->begin_transaction();
+
+        // Lock user rows while checking whether another active Admin exists.
+        $lockUsers = $conn->query("SELECT user_id FROM users ORDER BY user_id FOR UPDATE");
+        $lockUsers->free();
+
+        $accountQuery = $conn->prepare(
+            "SELECT u.user_id, u.status, r.role_name
+             FROM users AS u
+             INNER JOIN roles AS r ON r.role_id = u.role_id
+             WHERE u.user_id = ?
+             LIMIT 1"
+        );
+        $accountQuery->bind_param("i", $userId);
+        $accountQuery->execute();
+        $account = $accountQuery->get_result()->fetch_assoc();
+        $accountQuery->close();
+
+        if (!$account) {
+            $conn->rollback();
+            respond(404, [
+                "success" => false,
+                "message" => "The selected account was not found."
+            ]);
+        }
+
+        if (!$isAdminSession && $account["role_name"] === "Admin") {
+            $conn->rollback();
+            respond(403, [
+                "success" => false,
+                "message" => "Only an Admin can change an Admin account."
+            ]);
+        }
+
+        if ((int) $userId === (int) $_SESSION["user_id"] && $status === "Inactive") {
+            $conn->rollback();
+            respond(400, [
+                "success" => false,
+                "message" => "You cannot deactivate your own account."
+            ]);
+        }
+
+        if (
+            $account["role_name"] === "Admin" &&
+            $account["status"] === "Active" &&
+            $status === "Inactive"
+        ) {
+            $activeAdminQuery = $conn->prepare(
+                "SELECT COUNT(*) AS active_admin_count
+                 FROM users AS u
+                 INNER JOIN roles AS r ON r.role_id = u.role_id
+                 WHERE r.role_name = 'Admin' AND u.status = 'Active'"
+            );
+            $activeAdminQuery->execute();
+            $activeAdminCount = (int) $activeAdminQuery->get_result()->fetch_assoc()["active_admin_count"];
+            $activeAdminQuery->close();
+
+            if ($activeAdminCount <= 1) {
+                $conn->rollback();
+                respond(400, [
+                    "success" => false,
+                    "message" => "The last active Admin cannot be deactivated."
+                ]);
+            }
+        }
+
+        $update = $conn->prepare("UPDATE users SET status = ? WHERE user_id = ?");
+        $update->bind_param("si", $status, $userId);
+        $update->execute();
+        $update->close();
+
+        $conn->commit();
+
+        respond(200, [
+            "success" => true,
+            "message" => $status === "Active"
+                ? "Account activated successfully."
+                : "Account deactivated successfully.",
+            "user_id" => (int) $userId
+        ]);
+    } catch (Throwable $e) {
+        try {
+            $conn->rollback();
+        } catch (Throwable $rollbackError) {
+            error_log("Settings API rollback error: " . $rollbackError->getMessage());
+        }
+        error_log("Settings API status change error: " . $e->getMessage());
+        respond(500, [
+            "success" => false,
+            "message" => "Unable to update the account. Please try again."
+        ]);
+    }
+}
+
+if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
+    // Delete an account. Admin only (checked at the top of this file).
+    $submittedToken = $_SERVER["HTTP_X_CSRF_TOKEN"] ?? "";
+    $sessionToken = $_SESSION["settings_csrf_token"] ?? "";
+
+    if (
+        !is_string($submittedToken) ||
+        !is_string($sessionToken) ||
+        $sessionToken === "" ||
+        !hash_equals($sessionToken, $submittedToken)
+    ) {
+        respond(403, [
+            "success" => false,
+            "message" => "Your session expired. Refresh Settings and try again."
+        ]);
+    }
+
+    $userIdValue = $_POST["user_id"] ?? "";
+    $userId = is_string($userIdValue)
+        ? filter_var($userIdValue, FILTER_VALIDATE_INT, ["options" => ["min_range" => 1]])
+        : false;
+
+    if ($userId === false) {
+        respond(400, [
+            "success" => false,
+            "message" => "Select a valid account to delete."
+        ]);
+    }
+
+    if ((int) $userId === (int) $_SESSION["user_id"]) {
+        respond(400, [
+            "success" => false,
+            "message" => "You cannot delete your own account."
+        ]);
+    }
+
+    try {
+        require_once __DIR__ . "/config/database.php";
+        $conn->begin_transaction();
+
+        $lockUsers = $conn->query("SELECT user_id FROM users ORDER BY user_id FOR UPDATE");
+        $lockUsers->free();
+
+        $accountQuery = $conn->prepare(
+            "SELECT u.user_id, u.status, r.role_name
+             FROM users AS u
+             INNER JOIN roles AS r ON r.role_id = u.role_id
+             WHERE u.user_id = ?
+             LIMIT 1"
+        );
+        $accountQuery->bind_param("i", $userId);
+        $accountQuery->execute();
+        $account = $accountQuery->get_result()->fetch_assoc();
+        $accountQuery->close();
+
+        if (!$account) {
+            $conn->rollback();
+            respond(404, [
+                "success" => false,
+                "message" => "The selected account was not found."
+            ]);
+        }
+
+        // An account must be deactivated before it can be deleted.
+        if ($account["status"] === "Active") {
+            $conn->rollback();
+            respond(400, [
+                "success" => false,
+                "message" => "Deactivate this account first before deleting it."
+            ]);
+        }
+
+        if ($account["role_name"] === "Admin" && $account["status"] === "Active") {
+            $activeAdminQuery = $conn->prepare(
+                "SELECT COUNT(*) AS active_admin_count
+                 FROM users AS u
+                 INNER JOIN roles AS r ON r.role_id = u.role_id
+                 WHERE r.role_name = 'Admin' AND u.status = 'Active'"
+            );
+            $activeAdminQuery->execute();
+            $activeAdminCount = (int) $activeAdminQuery->get_result()->fetch_assoc()["active_admin_count"];
+            $activeAdminQuery->close();
+
+            if ($activeAdminCount <= 1) {
+                $conn->rollback();
+                respond(400, [
+                    "success" => false,
+                    "message" => "The last active Admin cannot be deleted."
+                ]);
+            }
+        }
+
+        $delete = $conn->prepare("DELETE FROM users WHERE user_id = ?");
+        $delete->bind_param("i", $userId);
+        $delete->execute();
+        $delete->close();
+
+        $conn->commit();
+
+        respond(200, [
+            "success" => true,
+            "message" => "Account deleted successfully.",
+            "user_id" => (int) $userId
+        ]);
+    } catch (mysqli_sql_exception $e) {
+        try {
+            $conn->rollback();
+        } catch (Throwable $rollbackError) {
+            error_log("Settings API rollback error: " . $rollbackError->getMessage());
+        }
+
+        // 1451 = the account is used by other records (inquiries, bookings, ...).
+        if ((int) $e->getCode() === 1451) {
+            respond(409, [
+                "success" => false,
+                "message" => "This account has related records and cannot be deleted. Deactivate it instead."
+            ]);
+        }
+
+        error_log("Settings API account delete error: " . $e->getMessage());
+        respond(500, [
+            "success" => false,
+            "message" => "Unable to delete the account. Please try again."
+        ]);
+    } catch (Throwable $e) {
+        try {
+            $conn->rollback();
+        } catch (Throwable $rollbackError) {
+            error_log("Settings API rollback error: " . $rollbackError->getMessage());
+        }
+        error_log("Settings API account delete error: " . $e->getMessage());
+        respond(500, [
+            "success" => false,
+            "message" => "Unable to delete the account. Please try again."
         ]);
     }
 }

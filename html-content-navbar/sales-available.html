@@ -1,0 +1,82 @@
+<!-- Sales Staff: Available Inquiries (unassigned queue).
+     Nothing is typed here: pages.js (crmInitSalesAvailable) builds the cards from
+         GET sales-available.php?action=available  ->  { success: true, inquiries: [ ... ] }
+     Each inquiry uses the same fields as the Manager Inquiries page, plus "event_location".
+     Same layout/position as sales-inquiries.html (iq-page--sales gives the same page inset).
+     The search box, Event Date, Service Arrangement and Sort all work in the browser. -->
+<style>
+  /* Sort sits in the filter row: same size as the other filters (42px / 14px) */
+  .av-filter-row .av-sort { flex: 0 0 200px; width: 200px; position: relative; min-width: 0; }
+  .av-filter-row .av-sort .custom-dropdown-toggle { height: 42px !important; font-size: 14px !important; font-weight: 500 !important; }
+  @media (max-width: 991.98px) {
+    .av-filter-row .av-sort { flex: 1 1 0; width: auto; }
+  }
+</style>
+<div class="iq-page av-page iq-page--sales" id="salesAvailablePage" data-api="sales-available.php?action=available">
+
+  <!-- List -->
+  <div id="avListView">
+    <div class="mb-4">
+      <h2 class="fw-bold text-uppercase mb-1">Available Inquiries</h2>
+    </div>
+
+    <!-- Search + filters (same row/classes as Inquiries) -->
+    <div class="av-filter-row mb-4">
+      <div class="av-search position-relative">
+        <i class="bi bi-search search-icon position-absolute top-50 translate-middle-y ms-3" aria-hidden="true"></i>
+        <input type="search" id="avSearchInput" class="form-control table-search-input ps-5"
+               placeholder="Search by Inquiry ID, Event Name, Customer Name, or Event Location" aria-label="Search available inquiries" autocomplete="off">
+      </div>
+
+      <div class="dropdown av-arr" data-av-filter="arrangement">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Service arrangement">
+          <span>Service Arrangement</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu">
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="all">All Arrangements</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="pickup">Customer Pickup</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="delivery">Food Delivery</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="onsite">Buffet with Setup</a></li>
+        </ul>
+      </div>
+
+      <div class="dropdown av-sort" data-av-filter="sort">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false" aria-label="Sort inquiries">
+          <span>Newest First</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-end custom-dropdown-menu">
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="newest" aria-selected="true">Newest First</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="oldest">Oldest First</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-dropdown-state="true" data-value="event">Earliest Event Date</a></li>
+        </ul>
+      </div>
+
+      <div class="bk-date-range av-date">
+        <input type="date" id="avDate" aria-label="Event date">
+      </div>
+    </div>
+
+    <!-- Count (pages.js writes e.g. "1 Available" here), same slot as "Assigned Inquiries" -->
+    <div class="iq-pool-head">
+      <h3 class="iq-pool-title" id="avCount">0 Available</h3>
+    </div>
+
+    <p class="iq-state" id="avState" role="status">Loading inquiries...</p>
+
+    <div class="iq-no-results crm-no-results-state" id="avNoResults" role="status" hidden>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <p class="crm-no-results-title">No results found</p>
+      <p class="crm-no-results-description">Try changing your search or filters.</p>
+    </div>
+
+    <div class="av-grid" id="avGrid"></div>
+  </div>
+
+  <!-- Inquiry details (View Details) -->
+  <div id="avDetailView" hidden></div>
+
+</div>

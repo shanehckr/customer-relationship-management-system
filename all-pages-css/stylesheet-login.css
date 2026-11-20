@@ -1,0 +1,1075 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* Colors */
+:root {
+  --bg-color: #0d1b17;
+  --panel-bg: #092017;
+  --text-main: #ffffff;
+  --text-muted: #a0b2aa;
+  --label-color: #d1ded8;
+  --input-bg: #17382B;
+  --input-border: #2bb673;
+  --input-text: #FFFAFA;
+  --welcome-bg-image: url('../background-picture/background-darkmode.png');
+  --welcome-label-color: #8faea1; /* fixed: was #8faeal (letter L) */
+  --welcome-title-color: #ffffff;
+  --welcome-desc-color: #c0d3cb;
+  --mobile-dark-log: #ffffff;
+  --mobile-dark-in: #2bb673;
+  --mobile-dark-subtext: #a0b2aa;
+  --mobile-dark-label: #FFFAFA;
+  --mobile-dark-forgot: #2bb673;
+  --mobile-light-log: #000000;
+  --mobile-light-in: #2bb673;
+  --mobile-light-subtext: #FFFAFA;
+  --mobile-light-label: #FFFAFA;
+}
+
+html.light-mode {
+  --bg-color: #FFFAFA;
+  --panel-bg: #ffffff;
+  --text-main: #0d1b17;
+  --text-muted: #707070;
+  --label-color: #000000;
+  --input-bg: #ffffff;
+  --input-border: #2bb673;
+  --input-text: #0d1b17;
+  --welcome-bg-image: url('../background-picture/background-lightmode.png');
+  --welcome-label-color: #8faea1; /* fixed: was #8faeal (letter L) */
+  --welcome-title-color: #ffffff;
+  --welcome-desc-color: #c0d3cb;
+}
+
+* {
+  font-family: 'Inter', sans-serif;
+}
+
+body {
+  background-color: var(--bg-color);
+  transition: background-color 0.2s ease;
+}
+
+/* Login card */
+.login-container {
+  max-width: 1100px;
+  height: 600px;
+  background-color: var(--panel-bg);
+  border-radius: 20px !important;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.welcome-panel {
+  order: 2;
+  padding: 100px 45px;
+  color: #ffffff;
+  background-image: var(--welcome-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.welcome-label {
+  font-size: 14px;
+  letter-spacing: 3px;
+  color: var(--welcome-label-color);
+}
+
+.welcome-panel h2 {
+  font-size: 30px;
+  line-height: 1.3;
+  color: var(--welcome-title-color);
+}
+
+.accent {
+  width: 60px;
+  height: 6px;
+  background-color: #2bb673;
+  margin: 20px 0;
+  border-radius: 10px;
+}
+
+.description {
+  font-size: 20px;
+  line-height: 1.6;
+  color: var(--welcome-desc-color);
+}
+
+.login-panel {
+  order: 1;
+  flex: 0 0 45%;
+  height: 100%;
+  padding: 40px 45px;
+  background-color: var(--panel-bg);
+  color: var(--text-main);
+}
+
+.form-content {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+html.preload-transition .form-content {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+.form-content.fade-in {
+  opacity: 1 !important;
+  transform: translateX(0) !important;
+}
+
+/* Theme toggle */
+.theme-toggle {
+  top: 28px;
+  left: calc(45% - 50px);
+  z-index: 20;
+}
+
+.theme-toggle img {
+  width: 24px;
+  height: 24px;
+  transition: transform 0.2s ease;
+}
+
+.theme-toggle:hover img {
+  transform: scale(1.1);
+}
+
+html.dark-mode .moon-icon { display: none; }
+html.dark-mode .sun-icon { display: block; }
+html.light-mode .sun-icon { display: none; }
+html.light-mode .moon-icon { display: block; }
+
+/* Form fields */
+.login-panel h1 {
+  font-size: 32px;
+  color: var(--text-main);
+}
+
+.login-panel h1 .in-word,
+.login-panel h1 .password-word {
+  color: #2bb673;
+}
+
+.reset-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.forgot,
+.back-link {
+  color: #2bb673;
+  text-decoration: none;
+  font-size: 13px;
+  transition: opacity 0.2s ease;
+}
+
+.forgot:hover,
+.back-link:hover {
+  opacity: 0.8;
+}
+
+/* Scope form styles to the login panel. */
+.login-panel form label {
+  font-size: 13px;
+  color: var(--label-color);
+  margin-bottom: 8px;
+}
+
+.login-panel form input.form-control,
+.login-panel form input {
+  height: 46px !important;
+  border: 1px solid var(--input-border) !important;
+  background-color: var(--input-bg) !important;
+  color: var(--input-text) !important;
+  border-radius: 20px !important;
+  padding-left: 48px !important;
+  padding-right: 20px !important;
+  font-size: 14px !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+html.light-mode .login-panel form input.form-control,
+html.light-mode .login-panel form input {
+  background-color: #ffffff !important;
+  color: #0d1b17 !important;
+}
+
+.login-panel .password-wrapper input.form-control,
+.login-panel .password-wrapper input {
+  padding-right: 50px !important;
+}
+
+/* Microsoft Edge draws its own "reveal password" eye (and a clear X) inside password fields, next to our own
+   .toggle-password button, so Edge showed two eyes. Hide Edge's built-in controls (no effect in Chrome / Brave). */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear,
+.password-wrapper input::-ms-reveal,
+.password-wrapper input::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.input-icon {
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.toggle-password {
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+}
+
+.toggle-password img {
+  width: 20px;
+  height: 20px;
+  opacity: 0.7;
+}
+
+.toggle-password .eye-open-icon { display: none; }
+.toggle-password.visible .eye-closed-icon { display: none; }
+.toggle-password.visible .eye-open-icon { display: block; }
+
+/* Login panel buttons */
+.login-panel form button[type="submit"],
+.login-panel .btn-submit {
+  width: 100% !important;
+  height: 46px !important;
+  background: #23a063 !important;
+  color: #ffffff !important;
+  border: none !important;
+  border-radius: 30px !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  transition: background 0.2s ease !important;
+}
+
+.login-panel form button[type="submit"]:hover,
+.login-panel .btn-submit:hover {
+  background: #2bb673 !important;
+  color: #ffffff !important;
+}
+
+html.dark-mode .login-panel form input::placeholder {
+  color: #FFFAFA !important;
+}
+
+/* Mobile layout */
+@media (max-width: 768px) {
+  .login-container {
+    max-width: 420px;
+    height: auto;
+    border-radius: 20px !important;
+    /* dark overlay on top of the banner so text stays readable */
+    background-image:
+      linear-gradient(rgba(3, 22, 15, 0.55), rgba(3, 22, 15, 0.55)),
+      var(--welcome-bg-image);
+    background-size: cover;
+    background-position: center;
+    padding: 40px 24px 36px 24px;
+  }
+
+  .theme-toggle {
+    top: 24px;
+    left: auto;
+    right: 24px;
+  }
+
+  .welcome-panel {
+    display: none !important;
+  }
+
+  .login-panel {
+    flex: none;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+  }
+
+  .login-panel form input.form-control,
+  .login-panel form input {
+    height: 44px !important;
+    border-radius: 22px !important;
+    font-size: 13px !important;
+  }
+
+  .login-panel form button[type="submit"],
+  .login-panel .btn-submit {
+    height: 44px !important;
+    border-radius: 22px !important;
+    font-size: 15px !important;
+  }
+
+  html.dark-mode .login-panel h1 .log-word,
+  html.dark-mode .login-panel h1 .reset-word {
+    color: var(--mobile-dark-log) !important;
+  }
+
+  html.dark-mode .login-panel form input.form-control,
+  html.dark-mode .login-panel form input {
+    background-color: rgba(15, 40, 30, 0.7) !important;
+    border: 1px solid rgba(43, 182, 115, 0.3) !important;
+    color: #ffffff !important;
+  }
+
+  html.dark-mode .login-panel form input::placeholder {
+    color: #FFFAFA !important;
+  }
+
+  html.light-mode .login-panel h1 .log-word,
+  html.light-mode .login-panel h1 .reset-word {
+    color: var(--mobile-light-log) !important;
+  }
+
+  html.light-mode .login-panel form input.form-control,
+  html.light-mode .login-panel form input {
+    background-color: #ffffff !important;
+    border: 1px solid #2bb673 !important;
+    color: #0d1b17 !important;
+  }
+
+  html.light-mode .login-panel form input::placeholder {
+    color: #707070 !important;
+  }
+}
+
+/* Loading overlay */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: var(--bg-color, #0d1b17);
+  z-index: 99999;
+  transition: opacity 0.35s ease, visibility 0.35s ease;
+}
+
+.loading-overlay.hidden {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  display: none !important;
+}
+
+.loader-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+}
+
+html.dark-mode .loader-bg.bg-dark { opacity: 1; }
+html.dark-mode .loader-bg.bg-light { opacity: 0; }
+html.light-mode .loader-bg.bg-dark { opacity: 0; }
+html.light-mode .loader-bg.bg-light { opacity: 1; }
+
+.loading-content {
+  position: relative;
+  z-index: 2;
+}
+
+.svg-spinner {
+  width: 64px;
+  height: 64px;
+  margin-bottom: 24px;
+}
+
+.svg-spinner .dot {
+  fill: #2bb673;
+  animation: svgDotFade 1.2s infinite ease-in-out;
+}
+
+.svg-spinner .dot-1 { animation-delay: -1.1s; }
+.svg-spinner .dot-2 { animation-delay: -1.0s; }
+.svg-spinner .dot-3 { animation-delay: -0.9s; }
+.svg-spinner .dot-4 { animation-delay: -0.8s; }
+.svg-spinner .dot-5 { animation-delay: -0.7s; }
+.svg-spinner .dot-6 { animation-delay: -0.6s; }
+.svg-spinner .dot-7 { animation-delay: -0.5s; }
+.svg-spinner .dot-8 { animation-delay: -0.4s; }
+.svg-spinner .dot-9 { animation-delay: -0.3s; }
+.svg-spinner .dot-10 { animation-delay: -0.2s; }
+.svg-spinner .dot-11 { animation-delay: -0.1s; }
+.svg-spinner .dot-12 { animation-delay: 0s; }
+
+@keyframes svgDotFade {
+  0%, 100% { opacity: 0.15; }
+  25% { opacity: 1; }
+}
+
+.loading-title {
+  font-size: 26px;
+  color: #2bb673;
+  text-shadow: 0 0 12px rgba(43, 182, 115, 0.3);
+}
+
+.loading-subtitle {
+  font-size: 14px;
+  color: var(--text-color, #FFFAFA);
+}
+
+/* Icon colors */
+html.dark-mode .input-icon {
+  filter: brightness(0) invert(1) !important;
+  opacity: 1 !important;
+}
+
+html.light-mode .input-icon {
+  filter: none !important;
+  opacity: 0.7 !important;
+}
+
+html.dark-mode .toggle-password img {
+  filter: brightness(0) invert(1) !important;
+  opacity: 1 !important;
+}
+
+html.light-mode .toggle-password img {
+  filter: none !important;
+  opacity: 0.7 !important;
+}
+
+html.dark-mode .toggle-password:hover img {
+  opacity: 0.85 !important;
+}
+
+/* ==========================================================================
+   BROWSER AUTOFILL: keep inputs dark (no light-blue / white autofill background)
+   ========================================================================== */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px var(--card-bg) inset !important;
+  -webkit-text-fill-color: var(--text-main) !important;
+  caret-color: var(--text-main) !important;
+  transition: background-color 9999s ease-in-out 0s;
+}
+
+
+/* ########################################################################
+   LOG IN + SIGN UP ADDITIONS (keep this block near the bottom of the file)
+   ######################################################################## */
+
+/* ==========================================================================
+   stylesheet-signup.css
+   Load AFTER stylesheet-login.css on login.php and signup.php.
+   Theme: dark #0D1712 surface with the #2BB673 accent (light mode keeps the same green family).
+   ========================================================================== */
+
+:root {
+  --auth-card-bg: #0D1712;
+  --auth-link: #2bb673;          /* contrast on #0D1712 is about 7:1 */
+  --auth-error: #ff6b6b;
+}
+
+html.light-mode {
+  --auth-card-bg: #ffffff;
+  --auth-link: #167a4a;          /* the lighter green is too faint on white; this one is about 5.5:1 */
+  --auth-error: #c62828;
+}
+
+/* stylesheet-login.css uses var(--card-bg) for the autofill color, but only the app defines it.
+   Define it here so autofilled fields stay dark on the login / sign-up pages too. */
+.login-container {
+  --card-bg: var(--input-bg);
+}
+
+/* ---------- links: always readable ---------- */
+.forgot,
+.auth-switch a,
+.su-link,
+.su-terms a {
+  color: var(--auth-link) !important;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.forgot:hover,
+.auth-switch a:hover,
+.su-link:hover:not(:disabled),
+.su-terms a:hover {
+  text-decoration: underline;
+  opacity: 1;
+}
+
+.forgot:focus-visible,
+.auth-switch a:focus-visible,
+.su-link:focus-visible,
+.su-terms a:focus-visible,
+.btn-su-secondary:focus-visible,
+.otp-input:focus-visible {
+  outline: 2px solid #2bb673;
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.auth-switch {
+  font-size: 14px;
+  color: var(--label-color);
+}
+
+/* ---------- alerts inside the card ---------- */
+.login-panel .alert {
+  font-size: 13px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+
+/* ==========================================================================
+   SIGN-UP WIZARD
+   ========================================================================== */
+
+/* the form is taller than the log in form, so let the card grow */
+.signup-container {
+  height: auto;
+  min-height: 600px;
+}
+
+.signup-container .login-panel {
+  height: auto;
+  min-height: 600px;
+  padding-top: 40px;
+  padding-bottom: 40px;
+}
+
+/* theme toggle sits over the branding panel on desktop */
+.signup-container .theme-toggle {
+  top: 28px;
+}
+
+/* ---------- progress ---------- */
+.su-progress {
+  display: flex;
+  gap: 8px;
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+}
+
+.su-dot {
+  flex: 1 1 0;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(127, 127, 127, 0.3);
+  transition: background-color 0.25s ease;
+}
+
+.su-dot.is-done,
+.su-dot.is-current {
+  background: #2bb673;
+}
+
+.su-dot.is-current {
+  box-shadow: 0 0 0 3px rgba(43, 182, 115, 0.25);
+}
+
+.su-count {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 20px;
+}
+
+/* ---------- steps ---------- */
+.su-step {
+  display: none;
+}
+
+.su-step.is-active {
+  display: block;
+  animation: suStepIn 0.2s ease both;
+}
+
+@keyframes suStepIn {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .su-step.is-active { animation: none; }
+  .su-dot { transition: none; }
+}
+
+.su-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 6px;
+}
+
+.su-desc {
+  margin: 0 0 20px;
+  font-size: 14px;
+}
+
+.su-desc strong {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+.su-help {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ---------- phone field: +63 prefix ---------- */
+.su-prefix {
+  position: absolute;
+  left: 46px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* the shared rule gives every input 48px left padding; the prefix needs more room */
+.login-panel form .input-wrapper input.su-phone {
+  padding-left: 84px !important;
+}
+
+/* ---------- invalid field ---------- */
+.login-panel form input.is-invalid,
+.login-panel form input.is-invalid:focus {
+  border-color: var(--auth-error) !important;
+}
+
+/* ---------- OTP boxes ---------- */
+.otp-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* three classes beat ".login-panel form input" in stylesheet-login.css, so the boxes keep their own look */
+.login-panel form .otp-row input.otp-input {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100% !important;
+  height: 52px !important;
+  padding: 0 !important;
+  text-align: center;
+  font-size: 22px !important;
+  font-weight: 600;
+  border-radius: 14px !important;
+  caret-color: #2bb673;
+}
+
+.login-panel form .otp-row input.otp-input:focus {
+  border-color: #2bb673 !important;
+  box-shadow: 0 0 0 3px rgba(43, 182, 115, 0.3) !important;
+}
+
+.su-timer {
+  margin: 10px 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.su-links {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.su-link {
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.su-link:disabled {
+  color: var(--text-muted) !important;
+  font-weight: 500;
+  cursor: not-allowed;
+}
+
+/* ---------- secondary button (Back) ---------- */
+.btn-su-secondary {
+  height: 46px;
+  background: transparent !important;
+  color: var(--text-main) !important;
+  border: 1px solid rgba(43, 182, 115, 0.55) !important;
+  font-size: 15px;
+  transition: background-color 0.2s ease;
+}
+
+.btn-su-secondary:hover {
+  background: rgba(43, 182, 115, 0.12) !important;
+}
+
+.login-panel .btn-submit[disabled],
+.login-panel form button[type="submit"][disabled] {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* ---------- terms checkbox ---------- */
+.su-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--label-color);
+  cursor: pointer;
+}
+
+/* beats the shared ".login-panel form input" rule (46px pill) */
+.login-panel form .su-terms input.su-check {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 20px;
+  width: 20px !important;
+  height: 20px !important;
+  margin: 1px 0 0;
+  padding: 0 !important;
+  border-radius: 6px !important;
+  background-color: transparent !important;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 14px;
+  cursor: pointer;
+}
+
+.login-panel form .su-terms input.su-check:checked {
+  background-color: #2bb673 !important;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-7' stroke='%23ffffff' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.login-panel form .su-terms input.su-check:focus-visible {
+  outline: 2px solid #2bb673;
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   MOBILE (up to 768px)
+   The form sits directly on the banner image (no separate card). A dark
+   overlay (see .login-container above) keeps text readable on the bright
+   streaks of the artwork, so all text here is white in BOTH modes.
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* sign-up page = same container / panel as log in */
+  .signup-container {
+    min-height: 0;
+    height: auto;
+  }
+
+  .signup-container .login-panel {
+    min-height: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .signup-container .theme-toggle {
+    top: 24px;
+    left: auto;
+    right: 24px;
+  }
+
+  /* links: GREEN, no pill (the dark overlay keeps them readable) */
+  .forgot,
+  .auth-switch a,
+  .su-link,
+  .su-terms a {
+    color: #3ddc97 !important;
+    background: none;
+    padding: 3px 4px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+
+  .forgot {
+    display: block;
+    width: fit-content;
+    margin-left: auto;
+    padding: 5px 4px;
+  }
+
+  .su-link:disabled {
+    color: rgba(255, 255, 255, 0.6) !important;
+    text-decoration: none;
+  }
+
+  .forgot:focus-visible,
+  .auth-switch a:focus-visible,
+  .su-link:focus-visible,
+  .su-terms a:focus-visible,
+  .btn-su-secondary:focus-visible {
+    outline-color: #3ddc97;
+  }
+
+  /* progress bar: green (the dark overlay keeps it visible) */
+  .su-dot {
+    background: rgba(255, 255, 255, 0.25);
+  }
+
+  .su-dot.is-done,
+  .su-dot.is-current {
+    background: #3ddc97;
+  }
+
+  .su-dot.is-current {
+    box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.3);
+  }
+
+  /* Back button */
+  .btn-su-secondary {
+    color: #ffffff !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+  }
+
+  .btn-su-secondary:hover {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  /* checkbox border (the shared mobile input rule makes it too faint) */
+  .login-panel form .su-terms input.su-check {
+    border-color: #ffffff !important;
+  }
+
+  .su-title {
+    font-size: 18px;
+  }
+
+  .otp-row {
+    gap: 6px;
+  }
+
+  .login-panel form .otp-row input.otp-input {
+    height: 48px !important;
+    font-size: 20px !important;
+  }
+
+  .su-links {
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+}
+
+@media (max-width: 360px) {
+  .login-container,
+  .signup-container {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE CONTRAST FIX (log in + sign up)
+   KEEP THIS BLOCK AT THE VERY BOTTOM OF THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+
+  /* dark overlay on top of the banner (also covers .signup-container) */
+  .login-container,
+  .signup-container {
+    background-image:
+      linear-gradient(rgba(3, 22, 15, 0.55), rgba(3, 22, 15, 0.55)),
+      var(--welcome-bg-image);
+    background-size: cover;
+    background-position: center;
+  }
+
+  /* light mode: slightly lighter overlay so it still feels "light" */
+  html.light-mode .login-container,
+  html.light-mode .signup-container {
+    background-image:
+      linear-gradient(rgba(3, 40, 26, 0.45), rgba(3, 40, 26, 0.45)),
+      var(--welcome-bg-image);
+  }
+
+  /* all text white in BOTH modes (light mode labels were black) */
+  .login-panel,
+  .login-panel form label,
+  .login-panel .su-title,
+  .login-panel .su-desc,
+  .login-panel .su-desc strong,
+  .login-panel .reset-desc,
+  .su-count,
+  .su-help,
+  .su-timer,
+  .auth-switch,
+  .su-terms {
+    color: #ffffff !important;
+  }
+
+  .su-count,
+  .su-help,
+  .su-timer,
+  .login-panel .reset-desc {
+    color: rgba(255, 255, 255, 0.88) !important;
+  }
+
+  /* title: white word + light mint accent word ("Sign" + "up", "Log" + "in") */
+  .login-panel h1,
+  html.dark-mode .login-panel h1 .log-word,
+  html.dark-mode .login-panel h1 .reset-word,
+  html.light-mode .login-panel h1 .log-word,
+  html.light-mode .login-panel h1 .reset-word {
+    color: #ffffff !important;
+  }
+
+  .login-panel h1 span:not(.log-word):not(.reset-word) {
+    color: #5ee6a8 !important;   /* readable on the dark overlay */
+  }
+
+  /* subtle shadow helps on the brightest spots */
+  .login-panel h1,
+  .su-title,
+  .su-desc,
+  .su-count,
+  .su-help,
+  .auth-switch,
+  .login-panel form label {
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  }
+
+  /* inputs: easy to read in both modes */
+  html.dark-mode .login-panel form input.form-control,
+  html.dark-mode .login-panel form input {
+    background-color: rgba(8, 30, 22, 0.75) !important;
+    border: 1px solid rgba(94, 230, 168, 0.55) !important;
+    color: #ffffff !important;
+  }
+
+  html.light-mode .login-panel form input.form-control,
+  html.light-mode .login-panel form input {
+    background-color: rgba(255, 255, 255, 0.95) !important;
+    border: 1px solid #2bb673 !important;
+    color: #0d1b17 !important;
+  }
+
+  /* the +63 prefix must follow the input color */
+  html.light-mode .su-prefix { color: #0d1b17; }
+  html.dark-mode  .su-prefix { color: #ffffff; }
+
+  /* icons inside the inputs */
+  html.light-mode .input-icon,
+  html.light-mode .toggle-password img {
+    filter: none !important;
+    opacity: 0.7 !important;
+  }
+
+  /* theme toggle icon: always white on the banner */
+  .theme-toggle img {
+    filter: brightness(0) invert(1) drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE GREEN LINKS (Forgot Password?, Sign up, Log in, Resend, Terms)
+   KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+  html.dark-mode .forgot,
+  html.light-mode .forgot,
+  html.dark-mode .auth-switch a,
+  html.light-mode .auth-switch a,
+  html.dark-mode .su-link,
+  html.light-mode .su-link,
+  html.dark-mode .su-terms a,
+  html.light-mode .su-terms a {
+    color: #3ddc97 !important;
+    background: none !important;
+    text-decoration: none !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+  }
+
+  html.dark-mode .forgot:hover,
+  html.light-mode .forgot:hover,
+  html.dark-mode .auth-switch a:hover,
+  html.light-mode .auth-switch a:hover,
+  html.dark-mode .su-link:hover:not(:disabled),
+  html.light-mode .su-link:hover:not(:disabled),
+  html.dark-mode .su-terms a:hover,
+  html.light-mode .su-terms a:hover {
+    text-decoration: underline !important;
+  }
+
+  html.dark-mode .su-link:disabled,
+  html.light-mode .su-link:disabled {
+    color: rgba(255, 255, 255, 0.6) !important;
+  }
+}
+
+
+/* ==========================================================================
+   MOBILE GREEN PROGRESS BAR (sign up steps)
+   KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+@media (max-width: 768px) {
+  html.dark-mode .su-dot,
+  html.light-mode .su-dot {
+    background: rgba(255, 255, 255, 0.25) !important;
+  }
+
+  html.dark-mode .su-dot.is-done,
+  html.light-mode .su-dot.is-done,
+  html.dark-mode .su-dot.is-current,
+  html.light-mode .su-dot.is-current {
+    background: #3ddc97 !important;
+  }
+
+  html.dark-mode .su-dot.is-current,
+  html.light-mode .su-dot.is-current {
+    box-shadow: 0 0 0 3px rgba(61, 220, 151, 0.3);
+  }
+}
+
+
+/* ==========================================================================
+   AUTOFILL FIX (the light-blue / white box with invisible text)
+   Chrome paints its own light-blue background when it autofills or previews a
+   saved value (this happens when you press Back and the field gets focus).
+   The old autofill rule lost to ".login-panel form input { box-shadow: none !important }",
+   so this version is more specific. KEEP THIS BLOCK AS THE LAST THING IN THE FILE.
+   ========================================================================== */
+html .login-panel form input:-webkit-autofill,
+html .login-panel form input:-webkit-autofill:hover,
+html .login-panel form input:-webkit-autofill:focus,
+html .login-panel form input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  -webkit-text-fill-color: var(--input-text) !important;
+  caret-color: var(--input-text) !important;
+  border: 1px solid var(--input-border) !important;
+  transition: background-color 9999s ease-in-out 0s !important;
+}
+
+/* Firefox / other browsers */
+html .login-panel form input:autofill {
+  box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
+  -webkit-text-fill-color: var(--input-text) !important;
+  caret-color: var(--input-text) !important;
+}

@@ -5,10 +5,10 @@ declare(strict_types=1);
  * Ends the user's session and redirects to the login page.
  */
 
-// Start the session so it can be cleared.
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
+// Start the session (same secure settings as the rest of the app) so it can be cleared.
+// SESSION_NO_REDIRECT: never redirect from here, logout always ends at login.php anyway.
+define("SESSION_NO_REDIRECT", true);
+require_once __DIR__ . "/session-init.php";
 
 // Clear authenticated data from the session.
 $_SESSION = [];

@@ -75,18 +75,29 @@
     </script>
 
     
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link href="all-pages-css/bootstrap/bootstrap.min.css?v=5.3.3" rel="stylesheet">
+    <!-- Bootstrap Icons: loaded locally so icons still show without internet.
+         Files live in all-pages-css/bootstrap-icons/ (bootstrap-icons.min.css + fonts/ folder). -->
+    <link rel="stylesheet" href="all-pages-css/bootstrap-icons/bootstrap-icons.min.css?v=1.11.3">
 
     
-    <link rel="stylesheet" href="css-InAllPages/stylesheet-login.css">
-    <link rel="stylesheet" href="css-InAllPages/navbar.css?v=3">
-        <link rel="stylesheet" href="css-InAllPages/adminpages.css?v=33">
-    <link rel="stylesheet" href="css-InAllPages/Notification.css">
+    <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+    <link rel="stylesheet" href="all-pages-css/navbar.css?v=4">
+    <link rel="stylesheet" href="all-pages-css/all-pages.css?v=45">
+    <link rel="stylesheet" href="all-pages-css/Notification.css">
     
     
    
-    <script src="js-InAllPages/theme.js"></script>
+    <script src="all-pages-js/theme.js"></script>
+    <style>
+        /* "Settings" link in the customer's profile menu */
+        .settings-action-btn { padding: 10px 14px; height: 42px; display: flex; align-items: center; gap: 10px; text-decoration: none;
+            color: var(--text-main); font-size: 13px; font-weight: 600; border-top: 1px solid var(--border-color); }
+        .settings-action-btn:first-of-type { border-top: 0; }
+        .settings-action-btn:hover { background: rgba(43, 182, 115, 0.12); color: var(--text-main); }
+        .settings-action-icon { width: 16px; height: 16px; object-fit: contain; flex-shrink: 0; }
+        html.dark-mode .settings-action-icon { filter: brightness(0) invert(1); }
+    </style>
 </head>
 
 <body>
@@ -127,7 +138,7 @@
                             <img src="icons/home-icon.svg" class="sidebar-icon" alt="Home Icon">
                             <span class="nav-text ms-3">Home</span>
                         </a>
-
+                    </li>
                     <li class="nav-item" data-role="customer">
                         <a href="#" onclick="loadPage('customer-inquiries.html', this); return false;"
                             class="nav-link d-flex align-items-center">
@@ -150,7 +161,7 @@
                 </li>
 
                     <!-- Sales Staff menu: two dropdown groups (Catering Operations, Inquiries).
-                         Page files go in html-contentLoadsInNavbar/ with these exact names. -->
+                         Page files go in html-content-navbar/ with these exact names. -->
                     <li class="nav-item nav-group" data-role="sales staff">
                         <button type="button" class="nav-link nav-group-toggle" title="Catering Operations"
                             aria-expanded="false" aria-controls="navGroupCatering">
@@ -161,7 +172,7 @@
                         <div class="nav-submenu" id="navGroupCatering">
                             <ul class="nav-submenu-list">
                                 <li class="nav-item" data-role="sales staff">
-                                    <a href="#" onclick="loadPage('sales-available-inquiries.html', this); return false;"
+                                    <a href="#" onclick="loadPage('sales-available.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Available</span></a>
                                 </li>
                             </ul>
@@ -177,7 +188,7 @@
                         <div class="nav-submenu" id="navGroupInquiries">
                             <ul class="nav-submenu-list">
                                 <li class="nav-item" data-role="sales staff">
-                                    <a href="#" onclick="loadPage('sales-my-inquiries.html', this); return false;"
+                                    <a href="#" onclick="loadPage('sales-inquiries.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">My Inquiries</span></a>
                                 </li>
                                 <li class="nav-item" data-role="sales staff">
@@ -185,16 +196,16 @@
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Bookings</span></a>
                                 </li>
                                 <li class="nav-item" data-role="sales staff">
-                                    <a href="#" onclick="loadPage('sales-calendar.html', this); return false;"
+                                    <a href="#" onclick="loadPage('admin-manager-sales-calendar.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Calendar</span></a>
                                 </li>
                             </ul>
                         </div>
                     </li>
                     <!-- Admin + Manager menu: Customers, Catering Operations (dropdown), Inbox, then the shared Tickets / Reports,
-                         then Menu Management. Page files go in html-contentLoadsInNavbar/ with these exact names. -->
+                         then Menu Management. Page files go in html-content-navbar/ with these exact names. -->
                     <li class="nav-item" data-role="admin, manager">
-                        <a href="#" onclick="loadPage('customers.html', this); return false;"
+                        <a href="#" onclick="loadPage('manager-admin-customers.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/contacts-icon.svg" class="sidebar-icon" alt="Customers Icon">
                             <span class="nav-text ms-3">Customers</span>
@@ -210,15 +221,15 @@
                         <div class="nav-submenu" id="navGroupManagerCatering">
                             <ul class="nav-submenu-list">
                                 <li class="nav-item" data-role="admin, manager">
-                                    <a href="#" onclick="loadPage('manager-inquiries.html', this); return false;"
+                                    <a href="#" onclick="loadPage('manager-admin-inquiries.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Inquiries</span></a>
                                 </li>
                                 <li class="nav-item" data-role="admin, manager">
-                                    <a href="#" onclick="loadPage('manager-bookings.html', this); return false;"
+                                    <a href="#" onclick="loadPage('manager-admin-bookings.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Bookings</span></a>
                                 </li>
                                 <li class="nav-item" data-role="admin, manager">
-                                    <a href="#" onclick="loadPage('manager-calendar.html', this); return false;"
+                                    <a href="#" onclick="loadPage('admin-manager-sales-calendar.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Calendar</span></a>
                                 </li>
                             </ul>
@@ -233,22 +244,8 @@
                         </a>
                     </li>
 
-                    <li class="nav-item" data-role="none">
-                        <a href="#" onclick="loadPage('contact.html', this); return false;"
-                            class="nav-link d-flex align-items-center">
-                            <img src="icons/contacts-icon.svg" class="sidebar-icon" alt="Contacts Icon">
-                            <span class="nav-text ms-3">Contacts</span>
-                        </a>
-                    </li>
-                    <li class="nav-item" data-role="none">
-                        <a href="#" onclick="loadPage('leadsanddeals.html', this); return false;"
-                            class="nav-link d-flex align-items-center">
-                            <img src="icons/leads-and-deals-icon.svg" class="sidebar-icon" alt="Leads & Deals Icon">
-                            <span class="nav-text ms-3">Leads & Deals</span>
-                        </a>
-                    </li>
                     <li class="nav-item" data-role="admin, manager, customer service">
-                        <a href="#" onclick="loadPage('ticket.html', this); return false;"
+                        <a href="#" onclick="loadPage('manager-admin-ticket.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/tickets-icon.svg" class="sidebar-icon" alt="Tickets Icon">
                             <span class="nav-text ms-3">Tickets</span>
@@ -263,14 +260,7 @@
                         </a>
                     </li>
 
-                    <li class="nav-item" data-role="none">
-                        <a href="#" onclick="loadPage('activities.html', this); return false;"
-                            class="nav-link d-flex align-items-center">
-                            <img src="icons/activity-icon.svg" class="sidebar-icon" alt="Activities Icon">
-                            <span class="nav-text ms-3">Activities</span>
-                        </a>
-                    </li>
-                    <li class="nav-item" data-role="admin, manager, sales staff">
+                    <li class="nav-item" data-role="admin, manager, sales staff, customer service">
                         <a href="#" onclick="loadPage('reports', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/report-icon.svg" class="sidebar-icon" alt="Reports Icon">
@@ -278,14 +268,14 @@
                         </a>
                     </li>
                     <li class="nav-item" data-role="admin, manager">
-                        <a href="#" onclick="loadPage('menu-management.html', this); return false;"
+                        <a href="#" onclick="loadPage('manager-admin-menu-management.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/menu-management-icon.svg" class="sidebar-icon" alt="Menu Management Icon">
                             <span class="nav-text ms-3">Menu Management</span>
                         </a>
                     </li>
-                    <li class="nav-item" data-role="admin">
-                        <a href="#" onclick="loadPage('settings.html', this); return false;"
+                    <li class="nav-item" data-role="admin, manager">
+                        <a href="#" onclick="loadPage('settings-pages.html', this); return false;"
                             class="nav-link d-flex align-items-center">
                             <img src="icons/settings-icon.svg" class="sidebar-icon" alt="Settings Icon">
                             <span class="nav-text ms-3">Settings</span>
@@ -320,7 +310,15 @@
                     <div class="dropdown">
                         <button class="user-avatar-btn border-0 d-flex align-items-center justify-content-center p-0"
                             id="userMenuDropdown" data-bs-toggle="dropdown" aria-expanded="false">
-                            <img src="icons/contacts-icon.svg" class="avatar-icon" alt="User Profile Icon">
+                            <?php
+                            // Google-style avatar: first letter of the first name. A customer's photo is added by navbar.js.
+                            $avatarName = trim((string) ($_SESSION["full_name"] ?? ""));
+                            $avatarParts = preg_split("/\\s+/u", $avatarName, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+                            $avatarInitial = $avatarParts
+                                ? mb_strtoupper(mb_substr($avatarParts[0], 0, 1, "UTF-8"), "UTF-8")
+                                : "?";
+                            ?>
+                            <span class="user-avatar-initial" id="userAvatarInitial" aria-hidden="true"><?= htmlspecialchars($avatarInitial, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8") ?></span>
                         </button>
                         <div class="dropdown-menu user-profile-card dropdown-menu-end shadow border-0 p-0 overflow-hidden"
                             aria-labelledby="userMenuDropdown">
@@ -333,6 +331,12 @@
                                 <span class="user-role small"
                                     id="dropdownUserRole"><?= htmlspecialchars($_SESSION["role_name"], ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8") ?></span>
                             </div>
+                            <?php if (strcasecmp((string) ($_SESSION["role_name"] ?? ""), "Customer") === 0) : ?>
+                            <a class="settings-action-btn" href="#" onclick="loadPage('customer-settings.html'); return false;">
+                                <img src="icons/settings-icon.svg" class="settings-action-icon" alt="">
+                                <span>Profile Settings</span>
+                            </a>
+                            <?php endif; ?>
                             <!-- Confirm logout before ending the session. -->
                             <a class="logout-action-btn d-flex align-items-center gap-3 text-decoration-none"
                                 id="logoutBtn" href="#logoutConfirmationModal" data-bs-toggle="modal"
@@ -368,21 +372,26 @@
             </div>
             <div class="modal-footer border-0 pt-0">
                 <button type="button" class="btn modal-btn-cancel px-4" data-bs-dismiss="modal">Cancel</button>
-                <a href="logout.php" id="logoutConfirmBtn" class="btn modal-btn-danger px-4">Yes, Log Out</a>
+                <a href="logout.php" id="logoutConfirmBtn" class="btn modal-btn-danger px-4">Log Out</a>
             </div>
         </div>
     </div>
 </div>
 
     
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="js-InAllPages/loading.js"></script>
-    <script src="js-InAllPages/navbar.js?v=8"></script>
-    <script src="js-InAllPages/pages.js?v=22"></script>
-   <script src="js-InAllPages/customerPages.js?v=13"></script>
-    <script src="js-InAllPages/settings.js?v=2"></script>
-    <script src="js-InAllPages/notification.js"></script>
-    <script src="js-InAllPages/downloadExport.js"></script>
+    <script src="all-pages-js/bootstrap.bundle.min.js?v=5.3.3"></script>
+    <!-- ExcelJS: needed by download-export.js for a real .xlsx file (without it "Export Excel" falls back to CSV). Load it BEFORE pages.js / download-export.js. -->
+    <script src="all-pages-js/exceljs.min.js?v=4.4.0"></script>
+    <script src="all-pages-js/loading.js"></script>
+    <script src="all-pages-js/navbar.js?v=11"></script>
+    <script src="all-pages-js/pages.js?v=32"></script>
+   <script src="all-pages-js/customer-pages.js?v=17"></script>
+    <script src="all-pages-js/customer-settings.js?v=1"></script>
+    <script src="all-pages-js/settings.js?v=5"></script>
+    <script src="all-pages-js/legal-pages.js?v=4"></script>
+    <script src="all-pages-js/notification.js"></script>
+    <script src="all-pages-js/download-export.js?v=2"></script>
+    <script src="all-pages-js/date-picker.js?v=1" defer></script>
 
     <!-- Handle sidebar collapse state. -->
     <script>

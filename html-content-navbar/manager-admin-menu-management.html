@@ -1,0 +1,179 @@
+<!-- Menu Management (Admin + Manager). Fragment: navbar.js inserts it into the app shell,
+     pages.js (crmInitMenuManagement) loads / saves everything through menu-management.php.
+     The menu saved here is the SAME list customers pick from in the inquiry form (Menu & Dishes step). -->
+<main class="content-body p-3 p-md-4 flex-grow-1 mm-page" id="menuManagementPage" data-api="menu-management.php">
+
+  <div class="mb-4">
+    <h2 class="fw-bold m-0">MENU</h2>
+  </div>
+
+  <!-- Category tabs (counts are filled by pages.js) + Add Menu Item on the same row -->
+  <div class="mm-tabs-row">
+  <div class="mm-tabs" id="mmTabs" role="tablist" aria-label="Menu categories">
+    <button type="button" class="mm-tab active" role="tab" data-cat="all"><span>All</span><span class="mm-count" data-count="all">0</span></button>
+    <button type="button" class="mm-tab" role="tab" data-cat="Best Sellers"><span>Best Sellers</span><span class="mm-count" data-count="Best Sellers">0</span></button>
+    <button type="button" class="mm-tab" role="tab" data-cat="Bilao"><span>Bilao</span><span class="mm-count" data-count="Bilao">0</span></button>
+    <button type="button" class="mm-tab" role="tab" data-cat="Catering Packages"><span>Catering Packages</span><span class="mm-count" data-count="Catering Packages">0</span></button>
+  </div>
+    <button type="button" class="btn modal-btn-save px-3 d-flex align-items-center gap-2" id="mmAddBtn">
+      <i class="bi bi-plus-lg" aria-hidden="true"></i> Add Menu Item
+    </button>
+  </div>
+
+  <!-- Search + sort -->
+  <div class="mm-toolbar">
+    <div class="position-relative flex-grow-1">
+      <i class="bi bi-search search-icon position-absolute top-50 start-0 translate-middle-y ms-3" aria-hidden="true"></i>
+      <input type="search" id="mmSearch" class="form-control table-search-input ps-5" placeholder="Search dishes, bilao, or packages..." aria-label="Search the menu" autocomplete="off">
+    </div>
+    <div class="dropdown mm-dropdown mm-sort-dd" id="mmSortDd">
+      <input type="hidden" id="mmSort" value="default">
+      <button type="button" class="custom-dropdown-toggle mm-dd-toggle" id="mmSortToggle"
+              data-bs-toggle="dropdown" data-bs-display="static" aria-haspopup="listbox" aria-expanded="false" aria-label="Sort menu items">
+        <span class="mm-dd-value">Sort: Default</span>
+        <i class="bi bi-chevron-down mm-dd-icon" aria-hidden="true"></i>
+      </button>
+      <ul class="dropdown-menu custom-dropdown-menu" role="listbox" aria-labelledby="mmSortToggle">
+        <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="default" aria-selected="true">Sort: Default</button></li>
+        <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="name-asc" aria-selected="false">Sort: Name (A-Z)</button></li>
+        <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="name-desc" aria-selected="false">Sort: Name (Z-A)</button></li>
+        <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="price-asc" aria-selected="false">Sort: Price (Low-High)</button></li>
+        <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="price-desc" aria-selected="false">Sort: Price (High-Low)</button></li>
+      </ul>
+    </div>
+  </div>
+
+  <p class="mm-state" id="mmState" role="status">Loading menu...</p>
+  <div class="mm-grid" id="mmGrid" aria-live="polite"></div>
+
+  <!-- Add / Edit -->
+  <div class="modal fade mm-modal" id="mmFormModal" tabindex="-1" aria-labelledby="mmFormTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+      <form class="modal-content" id="mmForm" novalidate>
+        <div class="modal-header border-0 pb-0">
+          <h5 class="modal-title fw-bold" id="mmFormTitle">Add New Menu Item</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mm-field">
+            <label class="mm-label" for="mmName">Item name *</label>
+            <input class="mm-input" id="mmName" name="item_name" type="text" maxlength="150" placeholder="e.g. Pork Sweet &amp; Sour" autocomplete="off">
+            <p class="mm-error" data-err="item_name" hidden></p>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label" id="mmCategoryLabel" for="mmCategoryToggle">Category *</label>
+            <div class="dropdown mm-dropdown" id="mmCategoryDd">
+              <input type="hidden" id="mmCategory" name="category" value="Best Sellers">
+              <button type="button" class="custom-dropdown-toggle mm-dd-toggle" id="mmCategoryToggle"
+                      data-bs-toggle="dropdown" data-bs-display="static" aria-haspopup="listbox" aria-expanded="false">
+                <span class="mm-dd-value">Best Sellers</span>
+                <i class="bi bi-chevron-down mm-dd-icon" aria-hidden="true"></i>
+              </button>
+              <ul class="dropdown-menu custom-dropdown-menu" role="listbox" aria-labelledby="mmCategoryLabel">
+                <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Best Sellers" aria-selected="true">Best Sellers</button></li>
+                <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Bilao" aria-selected="false">Bilao</button></li>
+                <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Catering Packages" aria-selected="false">Catering Packages</button></li>
+              </ul>
+            </div>
+            <p class="mm-error" data-err="category" hidden></p>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label" for="mmPrice">Display price / range (&#8369;) *</label>
+            <input class="mm-input" id="mmPrice" name="display_price" type="text" maxlength="80" placeholder="e.g. &#8369;1,800 &ndash; &#8369;2,500" inputmode="decimal" autocomplete="off">
+            <p class="mm-error" data-err="display_price" hidden></p>
+          </div>
+          <div class="mm-field">
+            <label class="mm-label" for="mmSpecs">Serving / PAX specs *</label>
+            <input class="mm-input" id="mmSpecs" name="serving_specs" type="text" maxlength="255" placeholder="e.g. Fixed Tiers: 15&ndash;20 PAX or 20&ndash;25 PAX" autocomplete="off">
+            <p class="mm-error" data-err="serving_specs" hidden></p>
+          </div>
+          <!-- PAX / portion tiers. Rows are built by pages.js (crmInitMenuManagement); they are sent as one JSON field "tiers". -->
+          <div class="mm-tiers" id="mmTiers">
+            <div class="mm-tiers-head">
+              <span class="mm-label mm-tiers-label" id="mmTiersLabel">PAX / Portion Tiers</span>
+              <button type="button" class="mm-add-tier" id="mmAddTier"><i class="bi bi-plus-circle" aria-hidden="true"></i> Add Tier</button>
+            </div>
+            <div class="mm-tier-rows" id="mmTierRows" aria-labelledby="mmTiersLabel"></div>
+            <p class="mm-error" data-err="tiers" hidden></p>
+          </div>
+
+          <div class="mm-field">
+            <span class="mm-label" id="mmPhotoLabel">Photo upload *</span>
+            <label class="mm-drop" id="mmDrop" for="mmPhoto">
+              <input type="file" id="mmPhoto" name="photo" accept="image/png,image/jpeg,image/webp" hidden>
+              <img class="mm-drop-preview" id="mmPreview" alt="" hidden>
+              <span class="mm-drop-empty" id="mmDropEmpty">
+                <span class="mm-drop-icon"><i class="bi bi-cloud-arrow-up" aria-hidden="true"></i></span>
+                <strong>Drag &amp; Drop photo here</strong>
+                <small>or click to browse from device (PNG, JPG, WEBP)</small>
+              </span>
+            </label>
+            <p class="mm-error" data-err="photo" hidden></p>
+          </div>
+          <p class="mm-error mm-form-error" id="mmFormError" role="alert" hidden></p>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn mm-btn-cancel" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn modal-btn-save px-4" id="mmSave">Save Menu Item</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- View details -->
+  <div class="modal fade mm-modal" id="mmViewModal" tabindex="-1" aria-labelledby="mmViewName" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="mm-view-media"><img id="mmViewImg" alt="" hidden><i class="bi bi-image" id="mmViewPh" aria-hidden="true"></i></div>
+        <div class="modal-body">
+          <span class="mm-tag" id="mmViewCat"></span>
+          <h5 class="fw-bold mt-2 mb-1" id="mmViewName"></h5>
+          <p class="mm-view-price" id="mmViewPrice"></p>
+          <p class="mm-view-specs" id="mmViewSpecs"></p>
+          <div class="mm-view-tiers" id="mmViewTiersBox" hidden>
+            <h6 class="mm-view-tiers-title">PAX / Portion Tiers</h6>
+            <ul class="mm-view-tier-list" id="mmViewTiers"></ul>
+          </div>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn mm-btn-cancel" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Discard unsaved changes (same look as the other CRM discard prompts) -->
+  <div class="modal fade mm-modal" id="mmDiscardModal" tabindex="-1" aria-labelledby="mmDiscardTitle" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content custom-modal-card">
+        <div class="modal-body">
+          <h5 class="modal-title fw-bold mb-2" id="mmDiscardTitle">Discard changes?</h5>
+          <p class="modal-delete-text mb-0">You have unsaved changes in <strong class="text-highlight" id="mmDiscardName">this menu item</strong>. If you leave now, they will be lost.</p>
+          <div class="d-flex justify-content-end gap-2 mt-4">
+            <button type="button" class="btn modal-btn-white px-3" id="mmDiscardBack">Back to Edit</button>
+            <button type="button" class="btn modal-btn-danger px-3" id="mmDiscardConfirm" data-bs-dismiss="modal">Discard</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete -->
+  <div class="modal fade mm-modal" id="mmDeleteModal" tabindex="-1" aria-labelledby="mmDeleteTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+      <div class="modal-content">
+        <div class="modal-body pt-4">
+          <h5 class="fw-bold" id="mmDeleteTitle">Delete menu item?</h5>
+          <p class="mm-view-specs mb-0">&ldquo;<span id="mmDeleteName"></span>&rdquo; will be removed from the menu and from the customer inquiry form.</p>
+          <p class="mm-error mt-2" id="mmDeleteError" role="alert" hidden></p>
+        </div>
+        <div class="modal-footer border-0 pt-0">
+          <button type="button" class="btn mm-btn-cancel" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn mm-btn-danger px-3" id="mmDeleteConfirm">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mm-toast" id="mmToast" role="status" aria-live="polite" hidden></div>
+</main>

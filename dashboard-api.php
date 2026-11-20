@@ -1,465 +1,378 @@
 <?php
 declare(strict_types=1);
 
-/** Retrieves CRM dashboard metrics, stage counts, and summary data.*/
+/**
+ * dashboard-api.php  -  ONE endpoint for the four dashboards (Admin, Manager, Sales Staff, Customer Service).
+ *
+ *   GET dashboard-api.php  ->  { success, role, user_name, metrics{}, ...role payload }
+ *
+ * Built on YOUR real tables (same ones tickets-api.php / inquiry-common.php / bookings-schema.php use):
+ *   users + roles (role_name)      leads (the inquiries)         bookings           quotations
+ *   payment_requests               cib_conversations/cib_messages (sales chat)
+ *   cib_tickets / cib_ticket_messages / cib_ticket_activity (support tickets)
+ * Same connection + session pattern as tickets-api.php: config/database.php gives $conn (mysqli), $_SESSION['user_id'].
+ * The role is read from the database (users -> roles), never from the URL or the browser.
+ *
+ * Each block is wrapped in dash_safe(): if one query fails, only that block comes back empty and the reason is listed
+ * in "warnings" while DASH_DEBUG is true. Set DASH_DEBUG to false when you go live.
+ */
+
+const DASH_DEBUG = true;
+const DASH_LARGE_EVENT_PAX = 50;                 // "Large Events" threshold for the Manager
+const DASH_OPEN_TICKET = "('Open','In Progress','Pending')";
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
+// Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
+define('SESSION_API', true);
+require_once __DIR__ . '/session-init.php';
+date_default_timezone_set('Asia/Manila');
+header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store');
 
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
-session_set_cookie_params([
-    "httponly" => true,
-    "secure" => false,
-    "samesite" => "Lax"
-]);
-session_start();
+$warnings = [];
 
-header("Content-Type: application/json; charset=utf-8");
-header("Cache-Control: no-store");
-
-function dashboardRespond(int $status, array $data): void
+function dash_out(array $payload, int $code = 200): never
 {
-    http_response_code($status);
-    echo json_encode(
-        $data,
-        JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE
-    );
+    http_response_code($code);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR);
     exit;
 }
 
-function dashboardRows(mysqli $conn, string $sql, ?int $userId = null): array
+/* ---------------------------------------------------------------- tiny query helpers (mysqli, ? placeholders) */
+function dash_rows(string $sql, array $params = []): array
 {
-    $statement = $conn->prepare($sql);
-    if ($userId !== null) {
-        $statement->bind_param("i", $userId);
+    global $conn;
+    $st = $conn->prepare($sql);
+    if ($params) {
+        $types = '';
+        foreach ($params as $p) { $types .= is_int($p) ? 'i' : 's'; }
+        $st->bind_param($types, ...$params);
     }
-
-    $statement->execute();
-    $rows = $statement->get_result()->fetch_all(MYSQLI_ASSOC);
-    $statement->close();
-
+    $st->execute();
+    $rows = $st->get_result()->fetch_all(MYSQLI_ASSOC);
+    $st->close();
     return $rows;
 }
-
-function dashboardCount(mysqli $conn, string $sql, ?int $userId = null): int
+function dash_val(string $sql, array $params = []): int
 {
-    $rows = dashboardRows($conn, $sql, $userId);
-    return (int) ($rows[0]["total"] ?? 0);
+    $r = dash_rows($sql, $params)[0] ?? [];
+    return (int)(array_values($r)[0] ?? 0);
 }
-
-function dashboardStageCounts(array $rows, array $stages): array
+/** Run one block; on any SQL problem return $default and remember why. */
+function dash_safe(string $label, callable $fn, mixed $default = [])
 {
-    $counts = array_fill_keys($stages, 0);
-    foreach ($rows as $row) {
-        $stage = (string) ($row["stage"] ?? "");
-        if (array_key_exists($stage, $counts)) {
-            $counts[$stage] = (int) $row["total"];
-        }
+    global $warnings;
+    try { return $fn(); }
+    catch (Throwable $e) { $warnings[] = $label . ': ' . $e->getMessage(); return $default; }
+}
+/** "SELECT x AS label, COUNT(*) AS n ... GROUP BY x"  ->  ["Label" => n] with every wanted label present. */
+function dash_counts(string $sql, array $params, array $labels): array
+{
+    $out = array_fill_keys($labels, 0);
+    foreach (dash_rows($sql, $params) as $r) {
+        if (array_key_exists((string)$r['label'], $out)) { $out[(string)$r['label']] = (int)$r['n']; }
     }
-
-    return $counts;
+    return $out;
 }
-
-function dashboardStatusCounts(array $rows, array $statuses): array
+/** The 3 booking services: "Customer Pickup", "Food Delivery" or "Buffet with Setup" (anything that is not pick-up / delivery). */
+function dash_service_label($arrangement): string
 {
-    $counts = array_fill_keys($statuses, 0);
-    foreach ($rows as $row) {
-        $status = (string) ($row["status"] ?? "");
-        if (array_key_exists($status, $counts)) {
-            $counts[$status] = (int) $row["total"];
-        }
+    $a = (string)$arrangement;
+    if (preg_match('/pick\s*-?\s*up/i', $a)) return 'Customer Pickup';
+    if (preg_match('/deliver/i', $a))          return 'Food Delivery';
+    return 'Buffet with Setup';
+}
+/** Bookings per service (cancelled ones are not counted). Uses the inquiry's arrangement when the booking has none. */
+function dash_booking_services(): array
+{
+    $out = ['Customer Pickup' => 0, 'Food Delivery' => 0, 'Buffet with Setup' => 0];
+    try {
+        $rows = dash_rows("SELECT COALESCE(NULLIF(TRIM(b.arrangement), ''), l.arrangement) AS a, b.booking_status AS s, COUNT(*) AS n
+                           FROM bookings b LEFT JOIN leads l ON l.lead_id = b.inquiry_id GROUP BY 1, 2");
+    } catch (Throwable $e) {   // no inquiry link: use the booking's own arrangement only
+        $rows = dash_rows("SELECT b.arrangement AS a, b.booking_status AS s, COUNT(*) AS n FROM bookings b GROUP BY 1, 2");
     }
+    foreach ($rows as $r) {
+        if (preg_match('/cancel/i', (string)$r['s'])) continue;
+        $out[dash_service_label($r['a'])] += (int)$r['n'];
+    }
+    return $out;
+}
+function dash_today(): string { return "'" . date('Y-m-d') . "'"; }
 
-    return $counts;
+/* ---------------------------------------------------------------- shared SQL pieces */
+const REF_LEAD    = "COALESCE(NULLIF(l.inquiry_ref,''), CONCAT('INQ-', LPAD(l.lead_id, 4, '0')))";
+const REF_BOOKING = "COALESCE(NULLIF(b.booking_ref,''), CONCAT('BK-', LPAD(b.booking_id, 4, '0')))";
+const BOOKING_LIVE = "b.booking_status NOT IN ('Completed','Cancelled')";
+// Active inquiry = not finished (Declined / Confirmed leave the pipeline)
+const LEAD_ACTIVE = "l.stage NOT IN ('Declined','Confirmed')";
+
+function dash_stage_counts(?int $staffId = null): array
+{
+    // New Inquiry | In Progress (every other active stage: discussion, quotation, negotiation...) | Declined
+    $sql = "SELECT CASE WHEN l.stage = 'New Inquiry' THEN 'New Inquiry' WHEN l.stage = 'Declined' THEN 'Declined' ELSE 'In Progress' END AS label,
+                   COUNT(*) AS n
+            FROM leads l WHERE l.stage <> 'Confirmed'" . ($staffId ? " AND l.assigned_staff_id = ?" : "") . " GROUP BY label";
+    return dash_counts($sql, $staffId ? [$staffId] : [], ['New Inquiry', 'In Progress', 'Declined']);
+}
+function dash_upcoming_bookings(int $limit, ?int $staffId = null): array
+{
+    return dash_rows(
+        "SELECT " . REF_BOOKING . " AS booking_ref, b.event_title AS event_name, b.event_date, b.arrangement,
+                b.expected_guests AS pax, b.customer_name, b.assigned_staff, b.booking_status AS status
+         FROM bookings b WHERE b.event_date >= " . dash_today() . " AND " . BOOKING_LIVE
+        . ($staffId ? " AND b.assigned_staff_id = ?" : "")
+        . " ORDER BY b.event_date ASC, b.booking_id ASC LIMIT " . (int)$limit, $staffId ? [$staffId] : []);
+}
+function dash_upcoming_count(?int $staffId = null): int
+{
+    return dash_val("SELECT COUNT(*) FROM bookings b WHERE b.event_date >= " . dash_today() . " AND " . BOOKING_LIVE
+        . ($staffId ? " AND b.assigned_staff_id = ?" : ""), $staffId ? [$staffId] : []);
+}
+/** Quotations sent and still waiting for the customer's answer. */
+function dash_pending_quotes(?int $staffId = null): int
+{
+    return dash_val("SELECT COUNT(*) FROM quotations q JOIN leads l ON l.lead_id = q.inquiry_id WHERE q.status = 'Sent'"
+        . ($staffId ? " AND l.assigned_staff_id = ?" : ""), $staffId ? [$staffId] : []);
+}
+/**
+ * Recent activity, built from what really happened in your tables (inquiries, quotations, bookings, payments,
+ * chat messages, ticket changes) so it needs no separate log table.
+ * Every kind of event is its own small query: if one fails (see "warnings"), the others still show.
+ * $staffId limits it to that Sales Staff's own inquiries / bookings; $withTickets adds ticket changes (Admin).
+ */
+function dash_activity(int $limit, ?int $staffId = null, bool $withTickets = false, bool $withMessages = false): array
+{
+    $pieces = [
+        'inquiries' => ["SELECT CONCAT('New catering inquiry submitted for ', l.event_name) AS text, " . REF_LEAD . " AS ref,
+                                COALESCE(NULLIF(l.customer_name,''), 'Customer') AS source_name, 'Customer' AS source_role, l.created_at AS `at`
+                         FROM leads l WHERE l.created_at IS NOT NULL", 'l.assigned_staff_id'],
+        'quotes_sent' => ["SELECT CONCAT('Quotation (V', q.version, ') sent to customer for ', COALESCE(l.event_name, 'the event')) AS text,
+                                  CONCAT('QT-', LPAD(q.inquiry_id, 4, '0'), '-v', q.version) AS ref,
+                                  COALESCE(NULLIF(q.prepared_by,''), 'Sales Staff') AS source_name, 'Sales Staff' AS source_role, q.sent_at AS `at`
+                           FROM quotations q LEFT JOIN leads l ON l.lead_id = q.inquiry_id WHERE q.sent_at IS NOT NULL", 'l.assigned_staff_id'],
+        'quotes_accepted' => ["SELECT CONCAT('Customer accepted quotation for ', COALESCE(l.event_name, 'the event')) AS text,
+                                      CONCAT('QT-', LPAD(q.inquiry_id, 4, '0'), '-v', q.version) AS ref,
+                                      COALESCE(NULLIF(l.customer_name,''), 'Customer') AS source_name, 'Customer' AS source_role, q.responded_at AS `at`
+                               FROM quotations q LEFT JOIN leads l ON l.lead_id = q.inquiry_id WHERE q.status = 'Accepted' AND q.responded_at IS NOT NULL", 'l.assigned_staff_id'],
+        'bookings' => ["SELECT CONCAT('Booking confirmed for ', b.event_title) AS text, " . REF_BOOKING . " AS ref,
+                               'System' AS source_name, 'Automated' AS source_role, b.created_at AS `at`
+                        FROM bookings b WHERE b.created_at IS NOT NULL", 'b.assigned_staff_id'],
+        'payments' => ["SELECT CONCAT('Payment received for ', b.event_title) AS text, " . REF_BOOKING . " AS ref,
+                               'Payment Gateway' AS source_name, 'Automated' AS source_role, pr.paid_at AS `at`
+                        FROM payment_requests pr JOIN bookings b ON b.booking_id = pr.booking_id WHERE pr.status = 'Paid' AND pr.paid_at IS NOT NULL", 'b.assigned_staff_id'],
+    ];
+    if ($withMessages) {
+        $pieces['messages'] = ["SELECT CONCAT('Customer sent a message regarding ', l.event_name) AS text, " . REF_LEAD . " AS ref,
+                                       COALESCE(NULLIF(l.customer_name,''), 'Customer') AS source_name, 'Customer' AS source_role, m.created_at AS `at`
+                                FROM cib_messages m JOIN cib_conversations c ON c.id = m.conversation_id JOIN leads l ON l.lead_id = c.inquiry_id
+                                WHERE m.sender_type = 'customer'", 'l.assigned_staff_id'];
+    }
+    if ($withTickets) {
+        $pieces['tickets'] = ["SELECT ta.action AS text, COALESCE(NULLIF(t.ticket_number,''), CONCAT('TCK-', LPAD(t.id, 4, '0'))) AS ref,
+                                      ta.performed_by AS source_name, ta.performed_by_role AS source_role, ta.created_at AS `at`
+                               FROM cib_ticket_activity ta JOIN cib_tickets t ON t.id = ta.ticket_id", null];
+    }
+    $all = [];
+    foreach ($pieces as $name => [$sql, $scope]) {
+        $params = [];
+        if ($scope && $staffId) { $sql .= " AND $scope = ?"; $params[] = $staffId; }
+        $rows = dash_safe('activity.' . $name, fn() => dash_rows($sql . " ORDER BY `at` DESC LIMIT " . (int)$limit, $params), []);
+        array_push($all, ...$rows);
+    }
+    usort($all, fn($x, $y) => strcmp((string)$y['at'], (string)$x['at']));
+    return array_slice($all, 0, $limit);
 }
 
-$sessionUserId = $_SESSION["user_id"] ?? null;
-if (!is_int($sessionUserId) || $sessionUserId < 1) {
-    dashboardRespond(401, [
-        "success" => false,
-        "message" => "Please log in to view the dashboard."
-    ]);
+/* ---------------------------------------------------------------- role builders */
+function build_admin(): array
+{
+    $open = DASH_OPEN_TICKET;
+    $m = [
+        'total_customers'  => dash_safe('total_customers',  fn() => dash_val("SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id WHERE r.role_name = 'Customer'"), 0),
+        'active_employees' => dash_safe('active_employees', fn() => dash_val("SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id WHERE u.status = 'Active' AND r.role_name <> 'Customer'"), 0),
+        'active_inquiries' => dash_safe('active_inquiries', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE " . LEAD_ACTIVE), 0),
+        'upcoming_bookings'=> dash_safe('upcoming_bookings',fn() => dash_upcoming_count(), 0),
+        'open_tickets'     => dash_safe('open_tickets',     fn() => dash_val("SELECT COUNT(*) FROM cib_tickets WHERE status IN $open"), 0),
+    ];
+    $unassigned = dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry'"), 0);
+    $unpaid     = dash_safe('unpaid', fn() => dash_val("SELECT COUNT(*) FROM bookings b WHERE b.payment_status IN ('Unpaid','Partial','Partially Paid') AND " . BOOKING_LIVE), 0);
+
+    return [
+        'metrics'          => $m,
+        'inquiry_stages'   => dash_safe('inquiry_stages', fn() => dash_stage_counts(), []),
+        'booking_statuses' => dash_safe('booking_statuses', fn() => dash_counts(
+            "SELECT b.booking_status AS label, COUNT(*) AS n FROM bookings b GROUP BY b.booking_status", [],
+            ['Confirmed', 'Preparing', 'Ready for Pickup', 'Out for Delivery', 'Service Scheduled', 'Completed']), []),
+        'booking_services' => dash_safe('booking_services', fn() => dash_booking_services(), []),
+        'pending_actions'  => [
+            ['label' => 'Unassigned Inquiries Awaiting Staff Assignment', 'count' => $unassigned, 'button' => 'Manage', 'page' => 'manager-admin-inquiries.html'],
+            ['label' => 'Bookings Awaiting Payment',                      'count' => $unpaid,     'button' => 'View',   'page' => 'manager-admin-bookings.html'],
+            ['label' => 'Open Customer Support Tickets',                  'count' => $m['open_tickets'], 'button' => 'View', 'page' => 'manager-admin-ticket.html'],
+        ],
+        'upcoming_bookings' => dash_safe('upcoming_list', fn() => dash_upcoming_bookings(5), []),
+        'activity'          => dash_safe('activity', fn() => dash_activity(7, null, true), []),
+    ];
 }
 
-if (($_SERVER["REQUEST_METHOD"] ?? "") !== "GET") {
-    header("Allow: GET");
-    dashboardRespond(405, [
-        "success" => false,
-        "message" => "This dashboard operation is not supported."
-    ]);
+function build_manager(): array
+{
+    $m = [
+        'active_inquiries'     => dash_safe('active_inquiries', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE " . LEAD_ACTIVE), 0),
+        'unassigned_inquiries' => dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry'"), 0),
+        'pending_quotations'   => dash_safe('pending_quotes', fn() => dash_pending_quotes(), 0),
+        'upcoming_bookings'    => dash_safe('upcoming_bookings', fn() => dash_upcoming_count(), 0),
+    ];
+
+    $attention = dash_safe('attention', function () {
+        $today = dash_today();
+        $conflicts = dash_val("SELECT COUNT(*) FROM (SELECT b.event_date FROM bookings b WHERE b.event_date >= $today AND " . BOOKING_LIVE
+            . " AND b.assigned_staff_id IS NOT NULL GROUP BY b.event_date, b.assigned_staff_id HAVING COUNT(*) > 1) x");
+        return [
+            ['label' => 'Large Events', 'hint' => 'Active inquiries with ' . DASH_LARGE_EVENT_PAX . ' PAX or more',
+             'count' => dash_val("SELECT COUNT(*) FROM leads l WHERE " . LEAD_ACTIVE . " AND l.expected_guests >= " . DASH_LARGE_EVENT_PAX), 'page' => 'manager-admin-inquiries.html'],
+            ['label' => 'Scheduling Conflicts', 'hint' => 'Bookings where one staff member has two events on the same date',
+             'count' => $conflicts, 'page' => 'manager-admin-bookings.html'],
+            ['label' => 'Overdue Payment Requests', 'hint' => 'Full-payment requests past their due date and still unpaid',
+             'count' => dash_val("SELECT COUNT(*) FROM payment_requests WHERE status = 'Pending' AND due_date < $today"), 'page' => 'manager-admin-bookings.html'],
+            ['label' => 'Expired Quotations', 'hint' => 'Sent quotations past their validity date with no customer response',
+             'count' => dash_val("SELECT COUNT(*) FROM quotations WHERE status = 'Sent' AND valid_until IS NOT NULL AND valid_until < $today"), 'page' => 'manager-admin-inquiries.html'],
+        ];
+    }, []);
+
+    return [
+        'metrics'        => $m,
+        'inquiry_stages' => dash_safe('inquiry_stages', fn() => dash_stage_counts(), []),
+        'sales_workload' => dash_safe('workload', fn() => dash_rows(
+            "SELECT u.user_id AS staff_id, u.full_name AS name,
+                    (SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id = u.user_id AND " . LEAD_ACTIVE . ") AS active_inquiries,
+                    (SELECT COUNT(*) FROM bookings b WHERE b.assigned_staff_id = u.user_id AND b.event_date >= " . dash_today() . " AND " . BOOKING_LIVE . ") AS upcoming_bookings
+             FROM users u JOIN roles r ON r.role_id = u.role_id
+             WHERE r.role_name LIKE '%Sales%' AND u.status = 'Active' ORDER BY u.full_name"), []),
+        'attention'         => $attention,
+        'upcoming_bookings' => dash_safe('upcoming_list', fn() => dash_upcoming_bookings(6), []),
+        'activity'          => dash_safe('activity', fn() => dash_activity(7), []),
+    ];
 }
+
+function build_sales(int $uid): array
+{
+    $m = [
+        'my_active_inquiries' => dash_safe('my_active', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id = ? AND " . LEAD_ACTIVE, [$uid]), 0),
+        'pending_quotations'  => dash_safe('my_quotes', fn() => dash_pending_quotes($uid), 0),
+        'my_upcoming_bookings'=> dash_safe('my_bookings', fn() => dash_upcoming_count($uid), 0),
+        // conversations that hold a customer message newer than the last time this staff opened the chat
+        'unread_messages'     => dash_safe('my_unread', fn() => dash_val(
+            "SELECT COUNT(DISTINCT c.id) FROM cib_conversations c JOIN leads l ON l.lead_id = c.inquiry_id
+             WHERE l.assigned_staff_id = ? AND EXISTS (SELECT 1 FROM cib_messages m WHERE m.conversation_id = c.id AND m.sender_type = 'customer'
+                   AND m.created_at > COALESCE(c.sales_read_at, '1970-01-01'))", [$uid]), 0),
+    ];
+
+    $attention = dash_safe('attention', function () use ($uid) {
+        $unread = dash_rows(
+            "SELECT " . REF_LEAD . " AS inquiry_ref, l.event_name, l.customer_name,
+                    (SELECT m.message FROM cib_messages m WHERE m.conversation_id = c.id AND m.sender_type = 'customer' ORDER BY m.id DESC LIMIT 1) AS message,
+                    (SELECT m.created_at FROM cib_messages m WHERE m.conversation_id = c.id AND m.sender_type = 'customer' ORDER BY m.id DESC LIMIT 1) AS `at`,
+                    'unread' AS kind
+             FROM cib_conversations c JOIN leads l ON l.lead_id = c.inquiry_id
+             WHERE l.assigned_staff_id = ? AND EXISTS (SELECT 1 FROM cib_messages m WHERE m.conversation_id = c.id AND m.sender_type = 'customer'
+                   AND m.created_at > COALESCE(c.sales_read_at, '1970-01-01'))
+             ORDER BY `at` DESC LIMIT 5", [$uid]);
+        $fresh = dash_rows(
+            "SELECT " . REF_LEAD . " AS inquiry_ref, l.event_name, l.customer_name, NULL AS message,
+                    COALESCE(l.claimed_at, l.created_at) AS `at`, 'new' AS kind
+             FROM leads l WHERE l.assigned_staff_id = ? AND l.stage = 'New Inquiry' ORDER BY `at` DESC LIMIT 5", [$uid]);
+        return array_slice(array_merge($fresh, $unread), 0, 5);
+    }, []);
+
+    return [
+        'metrics'           => $m,
+        'attention'         => $attention,
+        'inquiry_stages'    => dash_safe('stages', fn() => dash_stage_counts($uid), []),
+        'upcoming_bookings' => dash_safe('upcoming_list', fn() => dash_upcoming_bookings(5, $uid), []),
+        'activity'          => dash_safe('activity', fn() => dash_activity(6, $uid, false, true), []),
+    ];
+}
+
+/** Customer Service: support tickets are shared by all CS staff (same as tickets-api.php), so no per-staff filter. */
+function build_cs(): array
+{
+    $open = DASH_OPEN_TICKET;
+    $lastSender  = "(SELECT x.sender_type FROM cib_ticket_messages x WHERE x.ticket_id = t.id ORDER BY x.id DESC LIMIT 1)";
+    $lastMessage = "(SELECT x.message FROM cib_ticket_messages x WHERE x.ticket_id = t.id ORDER BY x.id DESC LIMIT 1)";
+    // customer messages written after the last staff reply
+    $unreadN = "(SELECT COUNT(*) FROM cib_ticket_messages x WHERE x.ticket_id = t.id AND x.sender_type = 'customer'
+                  AND x.id > COALESCE((SELECT MAX(s.id) FROM cib_ticket_messages s WHERE s.ticket_id = t.id AND s.sender_type <> 'customer'), 0))";
+
+    $m = [
+        'open_tickets'        => dash_safe('open', fn() => dash_val("SELECT COUNT(*) FROM cib_tickets t WHERE t.status IN $open"), 0),
+        'requiring_action'    => dash_safe('action', fn() => dash_val("SELECT COUNT(*) FROM cib_tickets t WHERE t.status IN $open AND $lastSender = 'customer'"), 0),
+        'unread_messages'     => dash_safe('unread', fn() => dash_val("SELECT COALESCE(SUM($unreadN), 0) FROM cib_tickets t WHERE t.status IN $open"), 0),
+        'resolved_this_month' => dash_safe('resolved', fn() => dash_val("SELECT COUNT(*) FROM cib_tickets t WHERE t.status = 'Resolved' AND t.updated_at >= " . "'" . date('Y-m-01') . "'"), 0),
+    ];
+
+    $base = "SELECT t.id AS ticket_id, COALESCE(NULLIF(t.ticket_number,''), CONCAT('TCK-', LPAD(t.id, 4, '0'))) AS ticket_number,
+                    t.subject, t.status, t.priority, t.updated_at, COALESCE(NULLIF(TRIM(u.full_name),''), CONCAT('Customer #', t.customer_id)) AS customer_name,
+                    $lastMessage AS last_message, $unreadN AS unread, CASE WHEN $lastSender = 'customer' THEN 1 ELSE 0 END AS awaiting_staff
+             FROM cib_tickets t LEFT JOIN users u ON u.user_id = t.customer_id";
+
+    return [
+        'metrics'   => $m,
+        'attention' => dash_safe('attention', fn() => dash_rows(
+            "$base WHERE t.status IN $open AND ($lastSender = 'customer' OR t.priority IN ('Urgent','High'))
+             ORDER BY awaiting_staff DESC, FIELD(t.priority,'Urgent','High','Medium','Low'), t.updated_at DESC LIMIT 5"), []),
+        'inbox'     => dash_safe('inbox', fn() => dash_rows("$base ORDER BY t.updated_at DESC LIMIT 5"), []),
+        'ticket_statuses'   => dash_safe('t_status', fn() => dash_counts("SELECT status AS label, COUNT(*) AS n FROM cib_tickets GROUP BY status", [],
+            ['Open', 'In Progress', 'Pending', 'Resolved']), []),
+        'ticket_priorities' => dash_safe('t_priority', fn() => dash_counts("SELECT priority AS label, COUNT(*) AS n FROM cib_tickets GROUP BY priority", [],
+            ['Urgent', 'High', 'Medium', 'Low']), []),
+        'recent_tickets'    => dash_safe('recent', fn() => dash_rows("$base ORDER BY t.updated_at DESC LIMIT 5"), []),
+    ];
+}
+
+/* ---------------------------------------------------------------- request */
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
+    header('Allow: GET');
+    dash_out(['success' => false, 'message' => 'Method not allowed.'], 405);
+}
+
+$uid = $_SESSION['user_id'] ?? null;
+if (!is_int($uid) || $uid < 1) {
+    dash_out(['success' => false, 'message' => 'Please log in to continue.', 'code' => 'session_expired'], 401);
+}
+session_write_close();
 
 try {
-    require_once __DIR__ . "/config/database.php";
+    require_once __DIR__ . '/config/database.php';     // gives $conn (mysqli), same as tickets-api.php
 
-    $currentUserRows = dashboardRows(
-        $conn,
-        "SELECT u.status, r.role_name
-         FROM users AS u
-         INNER JOIN roles AS r ON r.role_id = u.role_id
-         WHERE u.user_id = ?
-         LIMIT 1",
-        $sessionUserId
-    );
-    $currentUser = $currentUserRows[0] ?? null;
-
-    if (!$currentUser || $currentUser["status"] !== "Active") {
-        dashboardRespond(401, [
-            "success" => false,
-            "message" => "Your account is not authorized. Please log in again."
-        ]);
+    $me = dash_rows("SELECT u.status, u.full_name, r.role_name FROM users u INNER JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1", [$uid])[0] ?? null;
+    if (!$me || $me['status'] !== 'Active') {
+        dash_out(['success' => false, 'message' => 'Your account is no longer active. Please log in again.', 'code' => 'session_expired'], 401);
+    }
+    $roleName = strtolower((string)$me['role_name']);
+    $role = match (true) {
+        str_contains($roleName, 'admin')                                  => 'admin',
+        str_contains($roleName, 'manager')                                => 'manager',
+        str_contains($roleName, 'sales')                                  => 'sales',
+        str_contains($roleName, 'customer service'), str_contains($roleName, 'support') => 'customer-service',
+        default                                                           => '',
+    };
+    if ($role === '') {
+        dash_out(['success' => false, 'message' => 'You are not authorized to view this dashboard.'], 403);
     }
 
-    $roleName = (string) $currentUser["role_name"];
-    if (!in_array($roleName, ["Manager", "Sales Staff", "Customer Service Staff"], true)) {
-        dashboardRespond(403, [
-            "success" => false,
-            "message" => "You are not authorized to view this dashboard."
-        ]);
-    }
-
-    if ($roleName === "Manager") {
-        $leadStages = [
-            "New Inquiry",
-            "In Progress",
-            "In Discussion",
-            "Declined"
-        ];
-        $dealStages = [
-            "Quotation Preparation",
-            "Quotation Sent",
-            "Negotiation",
-            "Confirmed",
-            "Declined"
-        ];
-        $ticketStatuses = ["Open", "Pending", "Resolved"];
-
-        $leadCounts = dashboardRows(
-            $conn,
-            "SELECT stage, COUNT(*) AS total
-             FROM leads
-             GROUP BY stage"
-        );
-        $dealCounts = dashboardRows(
-            $conn,
-            "SELECT stage, COUNT(*) AS total
-             FROM deals
-             GROUP BY stage"
-        );
-        $ticketCounts = dashboardRows(
-            $conn,
-            "SELECT status, COUNT(*) AS total
-             FROM tickets
-             GROUP BY status"
-        );
-
-        $upcomingActivities = dashboardRows(
-            $conn,
-            "SELECT
-                a.activity_name,
-                CASE
-                    WHEN l.lead_id IS NOT NULL THEN CONCAT('Lead: ', l.inquiry_event_name)
-                    WHEN d.deal_id IS NOT NULL THEN CONCAT('Deal: ', d.inquiry_event_name)
-                    WHEN t.ticket_id IS NOT NULL THEN CONCAT('Ticket: ', t.ticket_name)
-                    ELSE c.customer_name
-                END AS related_record,
-                assigned.full_name AS assigned_staff,
-                a.due_date,
-                a.status
-             FROM activities AS a
-             INNER JOIN contacts AS c ON c.contact_id = a.contact_id
-             INNER JOIN users AS assigned ON assigned.user_id = a.assigned_user_id
-             LEFT JOIN leads AS l ON l.lead_id = a.lead_id
-             LEFT JOIN deals AS d ON d.deal_id = a.deal_id
-             LEFT JOIN tickets AS t ON t.ticket_id = a.ticket_id
-             WHERE a.due_date >= CURRENT_DATE
-               AND a.status IN ('Upcoming', 'In Progress')
-             ORDER BY a.due_date ASC, a.activity_id DESC
-             LIMIT 10"
-        );
-        $confirmedDeals = dashboardRows(
-            $conn,
-            "SELECT
-                d.inquiry_event_name,
-                c.customer_name,
-                assigned.full_name AS assigned_staff,
-                d.quotation_amount,
-                d.created_at
-             FROM deals AS d
-             INNER JOIN leads AS l ON l.lead_id = d.lead_id
-             INNER JOIN contacts AS c ON c.contact_id = l.contact_id
-             INNER JOIN users AS assigned ON assigned.user_id = d.assigned_user_id
-             WHERE d.stage = 'Confirmed'
-             ORDER BY d.created_at DESC, d.deal_id DESC
-             LIMIT 10"
-        );
-
-        $response = [
-            "success" => true,
-            "role" => $roleName,
-            "metrics" => [
-                "total_leads" => dashboardCount($conn, "SELECT COUNT(*) AS total FROM leads"),
-                "active_deals" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM deals
-                     WHERE stage NOT IN ('Confirmed', 'Declined')"
-                ),
-                "confirmed_deals" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total FROM deals WHERE stage = 'Confirmed'"
-                ),
-                "open_tickets" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total FROM tickets WHERE status = 'Open'"
-                )
-            ],
-            "lead_stages" => dashboardStageCounts($leadCounts, $leadStages),
-            "deal_stages" => dashboardStageCounts($dealCounts, $dealStages),
-            "ticket_statuses" => dashboardStatusCounts($ticketCounts, $ticketStatuses),
-            "upcoming_activities" => $upcomingActivities,
-            "confirmed_deals_list" => $confirmedDeals
-        ];
-    } elseif ($roleName === "Sales Staff") {
-        $leadStages = [
-            "New Inquiry",
-            "In Progress",
-            "In Discussion",
-            "Declined"
-        ];
-        $leadCounts = dashboardRows(
-            $conn,
-            "SELECT stage, COUNT(*) AS total
-             FROM leads
-             WHERE assigned_user_id = ?
-             GROUP BY stage",
-            $sessionUserId
-        );
-        $upcomingActivityCount = dashboardCount(
-            $conn,
-            "SELECT COUNT(*) AS total
-             FROM activities AS a
-             LEFT JOIN leads AS l ON l.lead_id = a.lead_id
-             LEFT JOIN deals AS d ON d.deal_id = a.deal_id
-             WHERE a.assigned_user_id = ?
-               AND a.due_date >= CURRENT_DATE
-               AND a.status IN ('Upcoming', 'In Progress')
-               AND (
-                    (a.lead_id IS NOT NULL AND l.assigned_user_id = a.assigned_user_id)
-                    OR
-                    (a.deal_id IS NOT NULL AND d.assigned_user_id = a.assigned_user_id)
-               )",
-            $sessionUserId
-        );
-        $upcomingActivities = dashboardRows(
-            $conn,
-            "SELECT
-                a.activity_name,
-                c.customer_name,
-                CASE
-                    WHEN l.lead_id IS NOT NULL THEN CONCAT('Lead: ', l.inquiry_event_name)
-                    WHEN d.deal_id IS NOT NULL THEN CONCAT('Deal: ', d.inquiry_event_name)
-                    ELSE ''
-                END AS related_record,
-                a.activity_type,
-                a.due_date
-             FROM activities AS a
-             INNER JOIN contacts AS c ON c.contact_id = a.contact_id
-             LEFT JOIN leads AS l ON l.lead_id = a.lead_id
-             LEFT JOIN deals AS d ON d.deal_id = a.deal_id
-             WHERE a.assigned_user_id = ?
-               AND a.due_date >= CURRENT_DATE
-               AND a.status IN ('Upcoming', 'In Progress')
-               AND (
-                    (a.lead_id IS NOT NULL AND l.assigned_user_id = a.assigned_user_id)
-                    OR
-                    (a.deal_id IS NOT NULL AND d.assigned_user_id = a.assigned_user_id)
-               )
-             ORDER BY a.due_date ASC, a.activity_id DESC
-             LIMIT 10",
-            $sessionUserId
-        );
-        $recentRecords = dashboardRows(
-            $conn,
-            "SELECT
-                record_name,
-                customer_name,
-                record_type,
-                current_stage,
-                updated_at,
-                record_id
-             FROM (
-                SELECT
-                    l.assigned_user_id,
-                    l.inquiry_event_name AS record_name,
-                    c.customer_name,
-                    'Lead' AS record_type,
-                    l.stage AS current_stage,
-                    l.updated_at,
-                    l.lead_id AS record_id
-                FROM leads AS l
-                INNER JOIN contacts AS c ON c.contact_id = l.contact_id
-
-                UNION ALL
-
-                SELECT
-                    d.assigned_user_id,
-                    d.inquiry_event_name AS record_name,
-                    c.customer_name,
-                    'Deal' AS record_type,
-                    d.stage AS current_stage,
-                    d.updated_at,
-                    d.deal_id AS record_id
-                FROM deals AS d
-                INNER JOIN leads AS l ON l.lead_id = d.lead_id
-                INNER JOIN contacts AS c ON c.contact_id = l.contact_id
-             ) AS assigned_records
-             WHERE assigned_user_id = ?
-             ORDER BY updated_at DESC, record_type ASC, record_id DESC
-             LIMIT 10",
-            $sessionUserId
-        );
-
-        $response = [
-            "success" => true,
-            "role" => $roleName,
-            "metrics" => [
-                "total_leads" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total FROM leads WHERE assigned_user_id = ?",
-                    $sessionUserId
-                ),
-                "active_deals" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM deals
-                     WHERE assigned_user_id = ?
-                       AND stage NOT IN ('Confirmed', 'Declined')",
-                    $sessionUserId
-                ),
-                "confirmed_deals" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM deals
-                     WHERE assigned_user_id = ? AND stage = 'Confirmed'",
-                    $sessionUserId
-                ),
-                "upcoming_activities" => $upcomingActivityCount
-            ],
-            "lead_stages" => dashboardStageCounts($leadCounts, $leadStages),
-            "upcoming_activities_list" => $upcomingActivities,
-            "recent_records" => $recentRecords
-        ];
-    } else {
-        $ticketStatuses = ["Open", "Pending", "Resolved"];
-        $ticketCounts = dashboardRows(
-            $conn,
-            "SELECT status, COUNT(*) AS total
-             FROM tickets
-             WHERE assigned_user_id = ?
-             GROUP BY status",
-            $sessionUserId
-        );
-        $upcomingFollowupCount = dashboardCount(
-            $conn,
-            "SELECT COUNT(*) AS total
-             FROM activities AS a
-             INNER JOIN tickets AS t ON t.ticket_id = a.ticket_id
-             WHERE a.assigned_user_id = ?
-               AND t.assigned_user_id = a.assigned_user_id
-               AND a.due_date >= CURRENT_DATE
-               AND a.status IN ('Upcoming', 'In Progress')",
-            $sessionUserId
-        );
-        $ticketOverview = dashboardRows(
-            $conn,
-            "SELECT
-                t.ticket_id,
-                c.customer_name,
-                t.status,
-                t.priority
-             FROM tickets AS t
-             INNER JOIN contacts AS c ON c.contact_id = t.contact_id
-             WHERE t.assigned_user_id = ?
-             ORDER BY t.created_at DESC, t.ticket_id DESC
-             LIMIT 10",
-            $sessionUserId
-        );
-        $upcomingFollowups = dashboardRows(
-            $conn,
-            "SELECT
-                a.activity_name,
-                c.customer_name,
-                a.due_date,
-                a.status
-             FROM activities AS a
-             INNER JOIN tickets AS t ON t.ticket_id = a.ticket_id
-             INNER JOIN contacts AS c ON c.contact_id = a.contact_id
-             WHERE a.assigned_user_id = ?
-               AND t.assigned_user_id = a.assigned_user_id
-               AND a.due_date >= CURRENT_DATE
-               AND a.status IN ('Upcoming', 'In Progress')
-             ORDER BY a.due_date ASC, a.activity_id DESC
-             LIMIT 10",
-            $sessionUserId
-        );
-        $recentTickets = dashboardRows(
-            $conn,
-            "SELECT
-                t.ticket_id,
-                c.customer_name,
-                t.description AS subject,
-                t.status,
-                t.priority,
-                t.updated_at
-             FROM tickets AS t
-             INNER JOIN contacts AS c ON c.contact_id = t.contact_id
-             WHERE t.assigned_user_id = ?
-             ORDER BY t.updated_at DESC, t.ticket_id DESC
-             LIMIT 10",
-            $sessionUserId
-        );
-
-        $response = [
-            "success" => true,
-            "role" => $roleName,
-            "metrics" => [
-                "open_tickets" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM tickets
-                     WHERE assigned_user_id = ? AND status = 'Open'",
-                    $sessionUserId
-                ),
-                "pending_tickets" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM tickets
-                     WHERE assigned_user_id = ? AND status = 'Pending'",
-                    $sessionUserId
-                ),
-                "resolved_tickets" => dashboardCount(
-                    $conn,
-                    "SELECT COUNT(*) AS total
-                     FROM tickets
-                     WHERE assigned_user_id = ? AND status = 'Resolved'",
-                    $sessionUserId
-                ),
-                "upcoming_followups" => $upcomingFollowupCount
-            ],
-            "ticket_statuses" => dashboardStatusCounts($ticketCounts, $ticketStatuses),
-            "ticket_overview" => $ticketOverview,
-            "upcoming_followups_list" => $upcomingFollowups,
-            "recent_tickets" => $recentTickets
-        ];
-    }
-
-    session_write_close();
-    dashboardRespond(200, $response);
-} catch (mysqli_sql_exception $exception) {
-    error_log("Dashboard API database error: " . $exception->getMessage());
-    dashboardRespond(500, [
-        "success" => false,
-        "message" => "Dashboard data is temporarily unavailable."
-    ]);
+    $payload = match ($role) {
+        'admin'            => build_admin(),
+        'manager'          => build_manager(),
+        'sales'            => build_sales($uid),
+        'customer-service' => build_cs(),
+    };
+} catch (Throwable $e) {
+    dash_out(['success' => false, 'message' => DASH_DEBUG ? $e->getMessage() : 'Unable to load dashboard data.'], 500);
 }
+
+dash_out(array_merge(
+    ['success' => true, 'role' => $role, 'role_name' => $me['role_name'], 'user_name' => (string)$me['full_name'], 'generated_at' => date('c')],
+    $payload,
+    DASH_DEBUG && $warnings ? ['warnings' => $warnings] : []
+));

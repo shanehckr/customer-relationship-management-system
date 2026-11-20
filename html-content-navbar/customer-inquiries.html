@@ -1,0 +1,282 @@
+<!--
+  Customer My Inquiries page and New Catering Inquiry wizard.
+  navbar.js inserts this markup into the page. The shared customerPages.js
+  handles its list and wizard behavior; adminpages.css provides the styling.
+-->
+<div class="ci-page" id="ciPage" data-ci-view="empty">
+
+  <!-- Page header -->
+  <div class="ci-header">
+    <h2 class="ci-title">MY INQUIRIES</h2>
+    <button type="button" class="ci-back" id="ciBack" aria-label="Back to main menu">
+      <i class="bi bi-arrow-left" aria-hidden="true"></i> Back to main menu
+    </button>
+    <button type="button" class="ci-btn-primary" id="ciAddBtn" data-iw-open>+ Add Inquiry</button>
+  </div>
+
+  <!-- Inquiry structure stays visible while the backend returns zero records. -->
+  <div class="ci-layout" id="ciLayout">
+
+    <!-- LEFT: inquiry list and count -->
+    <aside class="ci-list ci-box" aria-label="Your inquiries">
+      <div class="ci-panel-head ci-list-head">
+        <h4>Inquiries</h4>
+        <span class="ci-pill" id="ciInquiryCount">0 inquiries</span>
+      </div>
+      <div class="ci-state" id="ciState" role="status">0 inquiries yet. Your requests will appear here.</div>
+      <ul class="ci-list-items" id="ciList"></ul>
+    </aside>
+
+    <!-- RIGHT: detail structure for the backend to populate -->
+    <section class="ci-detail" id="ciDetail" aria-label="Inquiry details">
+
+      <!-- Desktop: "+ Add Inquiry" sits right beside the Inquiry overview bar.
+           (On tablet/phone the button in the page header above is used instead.) -->
+      <div class="ci-hero-row">
+        <header class="ci-hero">
+          <h3 class="ci-hero-title" id="ciHeroTitle">Inquiry overview</h3>
+          <span class="ci-pill ci-pill-on-green" id="ciHeroStatus">0 inquiries</span>
+        </header>
+        <button type="button" class="ci-btn-primary ci-hero-add" data-iw-open>+ Add Inquiry</button>
+      </div>
+
+      <ol class="ci-stepper" id="ciStepper" aria-label="Inquiry progress">
+        <li class="ci-step is-todo"><span class="ci-node">1</span><span class="ci-step-label">Submitted</span></li>
+        <li class="ci-step is-todo"><span class="ci-node">2</span><span class="ci-step-label">Under review</span></li>
+        <li class="ci-step is-todo"><span class="ci-node">3</span><span class="ci-step-label">Quotation</span></li>
+        <li class="ci-step is-todo"><span class="ci-node">4</span><span class="ci-step-label">Confirmation</span></li>
+        <li class="ci-step is-todo"><span class="ci-node">5</span><span class="ci-step-label">Completed</span></li>
+      </ol>
+
+      <div class="rp-tabs ci-tabs" role="tablist" aria-label="Inquiry sections">
+        <button type="button" class="rp-tab active" role="tab" id="ciTabDetails"
+                aria-selected="true" aria-controls="ciPanelDetails" data-ci-tab="details">
+          <i class="bi bi-file-earmark-text" aria-hidden="true"></i> Details
+        </button>
+        <button type="button" class="rp-tab" role="tab" id="ciTabQuote"
+                aria-selected="false" aria-controls="ciPanelQuote" data-ci-tab="quote" tabindex="-1">
+          <i class="bi bi-question-circle" aria-hidden="true"></i> Quotation
+        </button>
+      </div>
+
+      <div id="ciPanelDetails" role="tabpanel" aria-labelledby="ciTabDetails">
+        <section class="ci-box ci-panel">
+          <div class="ci-panel-head"><h4>Event details</h4></div>
+          <h3 class="ci-event-title">No inquiry selected</h3>
+          <dl class="ci-meta">
+            <div class="ci-meta-item"><dt>Event date</dt><dd>—</dd></div>
+            <div class="ci-meta-item is-wide"><dt>Venue</dt><dd>—</dd></div>
+            <div class="ci-meta-item"><dt>Service arrangement</dt><dd>—</dd></div>
+            <div class="ci-meta-item"><dt>Package</dt><dd>—</dd></div>
+          </dl>
+          <h4 class="ci-section-title">Selected dishes <span class="ci-zero-count">0</span></h4>
+          <div class="ci-note">No dishes selected.</div>
+        </section>
+      </div>
+
+      <div id="ciPanelQuote" role="tabpanel" aria-labelledby="ciTabQuote" hidden>
+        <div class="ci-note">0 quotations. No quotation is available yet.</div>
+      </div>
+    </section>
+  </div>
+  <!-- Live status message shown after a successful inquiry submission -->
+  <div class="ci-toast" id="ciToast" role="status" aria-live="polite" hidden></div>
+
+</div>
+
+
+<!-- ==========================================================================
+     NEW CATERING INQUIRY  (opens from "+ Add Inquiry")
+     4 steps: 1 Menu & Dishes  2 Event Details  3 Additional Info  4 Review & Submit
+     The ID does NOT start with "add" on purpose, so the shared pages.js modal code leaves it alone.
+     Behavior: js-InAllPages/customer-inquiry-form.js    Styles: css-InAllPages/customer-inquiry-form.css
+     ========================================================================== -->
+<!-- No "fade" class on purpose: without it Bootstrap opens and closes this window (and its dark backdrop) instantly. -->
+<div class="modal" id="inquiryWizardModal" tabindex="-1" aria-labelledby="iwTitle" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered iw-dialog">
+    <div class="modal-content iw-card">
+      <form id="iwForm" novalidate>
+
+        <!-- Header -->
+        <header class="iw-header">
+          <div>
+            <p class="iw-eyebrow">New Catering Inquiry</p>
+            <h2 class="iw-title" id="iwTitle" tabindex="-1">Menu &amp; Dishes</h2>
+          </div>
+          <button type="button" class="iw-close" id="iwClose" aria-label="Close">
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
+          </button>
+        </header>
+
+        <!-- Step tracker (filled in by the JS) -->
+        <ol class="iw-stepper" aria-label="Inquiry steps">
+          <li class="iw-step is-current" data-iw-node="1" aria-current="step">
+            <span class="iw-node">1</span>
+            <span class="iw-step-label">Menu &amp; Dishes<span class="visually-hidden"> (current step)</span></span>
+          </li>
+          <li class="iw-step is-todo" data-iw-node="2">
+            <span class="iw-node">2</span>
+            <span class="iw-step-label">Event Details<span class="visually-hidden"> (upcoming)</span></span>
+          </li>
+          <li class="iw-step is-todo" data-iw-node="3">
+            <span class="iw-node">3</span>
+            <span class="iw-step-label">Additional Info<span class="visually-hidden"> (upcoming)</span></span>
+          </li>
+          <li class="iw-step is-todo" data-iw-node="4">
+            <span class="iw-node">4</span>
+            <span class="iw-step-label">Review &amp; Submit<span class="visually-hidden"> (upcoming)</span></span>
+          </li>
+        </ol>
+
+        <div class="iw-body" id="iwBody">
+
+          <!-- ================= STEP 1: MENU & DISHES ================= -->
+          <section class="iw-panel" data-iw-step="1">
+
+            <div class="iw-section-head">
+              <h3 class="iw-h3">Select from our menu</h3>
+              <span class="iw-count" id="iwCount" aria-live="polite">0 selected</span>
+            </div>
+            <p class="iw-error" id="iwErrDishes" role="alert" hidden></p>
+
+            <!-- The menu is NOT written here. customer-pages.js loads it from menu-management.php (?action=list),
+                 the same menu Admin / Manager maintain in Menu Management, grouped by category
+                 (Best Sellers, Bilao, Catering Packages). Each item is a checkbox named "dishes". -->
+            <div class="iw-menu" id="iwMenu" aria-live="polite">
+              <p class="iw-menu-state" id="iwMenuState">Loading menu...</p>
+            </div>
+          </section>
+
+          <!-- ================= STEP 2: EVENT DETAILS ================= -->
+          <section class="iw-panel" data-iw-step="2" hidden>
+            <div class="iw-field">
+              <label class="iw-label" for="iwEventName">Event name</label>
+              <input class="iw-input" id="iwEventName" name="event_name" type="text" maxlength="100"
+                     placeholder="e.g. Company Anniversary Dinner" autocomplete="off" required>
+              <p class="iw-error" id="iwErrEventName" hidden></p>
+            </div>
+
+            <div class="iw-grid-2 iw-grid-1">
+              <div class="iw-field">
+                <label class="iw-label" for="iwEventDate">Event date</label>
+                <input class="iw-input" id="iwEventDate" name="event_date" type="date" required>
+                <p class="iw-error" id="iwErrEventDate" hidden></p>
+              </div>
+            </div>
+
+            <div class="iw-field">
+              <label class="iw-label" for="iwVenue">Venue or delivery address</label>
+              <input class="iw-input" id="iwVenue" name="venue" type="text" maxlength="255"
+                     placeholder="Complete venue address" autocomplete="off" required>
+              <p class="iw-error" id="iwErrVenue" hidden></p>
+            </div>
+
+            <div class="iw-field">
+              <label class="iw-label" id="iwArrangementLabel" for="iwArrangementToggle">Service arrangement</label>
+              <div class="dropdown iw-dropdown">
+                <input type="hidden" id="iwArrangement" name="arrangement" value="Customer Pickup">
+                <button type="button" class="custom-dropdown-toggle iw-dd-toggle" id="iwArrangementToggle"
+                        data-bs-toggle="dropdown" data-bs-display="static"
+                        aria-haspopup="listbox" aria-expanded="false" aria-describedby="iwErrArrangement">
+                  <span class="iw-dd-value">Customer Pickup</span>
+                  <i class="bi bi-chevron-down iw-select-icon" aria-hidden="true"></i>
+                </button>
+                <ul class="dropdown-menu custom-dropdown-menu" role="listbox" aria-labelledby="iwArrangementLabel">
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Customer Pickup" aria-selected="true">Customer Pickup</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Delivery" aria-selected="false">Delivery</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Buffet with setup" aria-selected="false">Buffet with setup</button></li>
+                </ul>
+              </div>
+              <p class="iw-error" id="iwErrArrangement" hidden></p>
+            </div>
+          </section>
+
+          <!-- ================= STEP 3: ADDITIONAL INFO ================= -->
+          <section class="iw-panel" data-iw-step="3" hidden>
+            <div class="iw-info-layout">
+              <div class="iw-field">
+                <label class="iw-label" for="iwNotes">Dietary requirements or allergies
+                  <span class="iw-optional">(Optional)</span></label>
+                <textarea class="iw-input iw-textarea" id="iwNotes" name="notes" maxlength="300" rows="5"
+                          placeholder="Tell us about allergies, dietary preferences, or preparation requests."></textarea>
+                <p class="iw-counter" id="iwNotesCount">0/300 characters</p>
+              </div>
+              <aside class="iw-note-card">
+                <h3>Anything else we should know?</h3>
+                <p>Your coordinator will confirm setup times, access requirements, styling, and final menu
+                  details after reviewing your inquiry.</p>
+              </aside>
+            </div>
+          </section>
+
+          <!-- ================= STEP 4: REVIEW & SUBMIT ================= -->
+          <section class="iw-panel" data-iw-step="4" hidden>
+            <div class="iw-callout">
+              <span class="iw-callout-icon"><i class="bi bi-check-lg" aria-hidden="true"></i></span>
+              <div>
+                <p class="iw-callout-title">Ready to submit</p>
+                <p class="iw-callout-text">Review the details below. You can go back to make changes.</p>
+              </div>
+            </div>
+
+            <section class="iw-review">
+              <h4 class="iw-review-title">Event details</h4>
+              <dl class="iw-review-grid">
+                <div><dt>Event</dt><dd id="iwRvEvent"></dd></div>
+                <div><dt>Event date</dt><dd id="iwRvDate"></dd></div>
+                <div><dt>Venue</dt><dd id="iwRvVenue"></dd></div>
+                <div><dt>Service</dt><dd id="iwRvService"></dd></div>
+              </dl>
+            </section>
+
+            <section class="iw-review">
+              <h4 class="iw-review-title">Menu selection</h4>
+              <dl class="iw-review-grid">
+                <div><dt>Catering package</dt><dd id="iwRvPackage"></dd></div>
+                <div><dt>Selected menu items</dt><dd id="iwRvDishes"></dd></div>
+              </dl>
+            </section>
+
+            <section class="iw-review">
+              <h4 class="iw-review-title">Additional information</h4>
+              <p class="iw-review-notes" id="iwRvNotes"></p>
+            </section>
+
+            <p class="iw-error" id="iwSubmitError" role="alert" hidden></p>
+          </section>
+        </div>
+
+        <!-- Footer buttons -->
+        <footer class="iw-footer">
+          <button type="button" class="iw-btn-ghost" id="iwBack">Cancel</button>
+          <button type="button" class="iw-btn-primary" id="iwNext">Continue <i class="bi bi-arrow-right" aria-hidden="true"></i></button>
+        </footer>
+
+      </form>
+
+    </div>
+  </div>
+</div>
+<!-- Reuse the CRM's existing discard confirmation template and button styles. -->
+<div class="modal fade" id="discardInquiryChangesModal" tabindex="-1"
+     aria-labelledby="discardInquiryChangesModalLabel" aria-hidden="true"
+     data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content custom-modal-card p-3">
+      <div class="modal-body px-2 py-2">
+        <h5 class="fw-bold fs-5 mb-2 modal-heading-text" id="discardInquiryChangesModalLabel">Discard changes?</h5>
+        <p class="modal-delete-text fs-6 mb-4">
+          You have unsaved changes to <strong class="fw-bold text-highlight">this inquiry</strong>. Are you sure you want to
+          discard them?
+        </p>
+        <div class="d-flex flex-column flex-sm-row justify-content-end gap-2 gap-sm-3 mt-3">
+          <button type="button" class="btn modal-btn-white px-4 py-2" id="iwConfirmKeep"
+                  data-bs-toggle="modal" data-bs-target="#inquiryWizardModal">Keep Edit</button>
+          <button type="button" class="btn modal-btn-danger px-4 py-2" id="iwConfirmDiscard"
+                  data-bs-dismiss="modal">Discard Changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

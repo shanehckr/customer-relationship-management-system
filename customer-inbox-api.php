@@ -15,7 +15,7 @@
 
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
 $DB_HOST = '127.0.0.1';
-$DB_NAME = 'crm';          // <-- your database name in phpMyAdmin (create it if needed)
+$DB_NAME = 'catering_crm';          // <-- your database name in phpMyAdmin (create it if needed)
 $DB_USER = 'root';         // XAMPP default
 $DB_PASS = '';             // XAMPP default is empty
 
@@ -51,7 +51,9 @@ set_exception_handler(function ($e) {
     fail('Server error: ' . $e->getMessage(), 500);
 });
 
-if (session_status() === PHP_SESSION_NONE) session_start();
+// Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
+if (!defined('SESSION_API')) define('SESSION_API', true);
+require_once __DIR__ . '/session-init.php';
 
 /* ------------------------- 2. DATABASE ------------------------- */
 try {
@@ -106,6 +108,10 @@ $db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_messages (
     created_at DATETIME NOT NULL,
     INDEX (ticket_id)
 ) ENGINE=InnoDB");
+require_once __DIR__ . '/quotations-schema.php';
+ensureQuotationsSchema($db);
+require_once __DIR__ . '/payments-schema.php';
+ensurePaymentRequestsSchema($db);
 
 /* ------------------------- 3. WHO IS LOGGED IN ------------------------- */
 $customerId = null;
@@ -114,9 +120,33 @@ foreach ($SESSION_KEYS as $key) {
 }
 if (!$customerId && $TEST_CUSTOMER_ID) $customerId = (int)$TEST_CUSTOMER_ID;
 if (!$customerId) fail('Please log in again.', 401);
+require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
+require_once __DIR__ . '/booking-feedback.php';       // "please rate us" message + card after an event is completed
 
 /* ------------------------- 4. HELPERS ------------------------- */
 function now(): string { return date('Y-m-d H:i:s'); }
+
+/* Audit trail shown on the staff Tickets page (also written by tickets-api.php and cs-inbox-api.php). */
+$db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_activity (
+    id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, action VARCHAR(255) NOT NULL,
+    performed_by VARCHAR(120) NOT NULL DEFAULT '', performed_by_role VARCHAR(60) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL, INDEX (ticket_id)
+) ENGINE=InnoDB");
+
+/* Unread badges for the customer: when the customer last opened a conversation / ticket. */
+function cibEnsureColumn(PDO $db, string $table, string $column, string $definition): bool {
+    $st = $db->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
+    $st->execute([$column]);
+    if ($st->fetch()) return false;
+    $db->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+    return true;
+}
+foreach (['cib_conversations', 'cib_tickets'] as $cibTable) {
+    // first time only: everything that already exists counts as read
+    if (cibEnsureColumn($db, $cibTable, 'customer_read_at', 'DATETIME NULL DEFAULT NULL')) {
+        $db->prepare("UPDATE `$cibTable` SET customer_read_at = ?")->execute([now()]);
+    }
+}
 
 function ownConversation(PDO $db, int $customerId, $id): array {
     $st = $db->prepare('SELECT * FROM cib_conversations WHERE id = ? AND customer_id = ?');
@@ -155,14 +185,38 @@ function saveUploads(string $dir, string $url, int $max, array $allowed): array 
     return $saved;
 }
 
+/** Customers see the event name only: hide quotation codes like "(QT-0038 (v1))" that staff messages contain (staff still see them). */
+function customerHideQuoteCode(string $text): string {
+    $text = preg_replace('/\s*[\(\[]\s*QT-\d+(?:\s*[\(\[]\s*v\d+\s*[\)\]])?\s*[\)\]]/i', '', $text);
+    return preg_replace('/\bQT-\d+\b/i', 'your quotation', (string)$text);
+}
+
 function shapeMessage(array $m): array {
     return [
         'id' => (int)$m['id'],
-        'message' => $m['message'],
+        'message' => customerHideQuoteCode((string)$m['message']),
         'is_mine' => $m['sender_type'] === 'customer',
         'sender_name' => $m['sender_type'] === 'customer' ? 'You' : ($m['sender_name'] ?: 'Catering team'),
         'attachments' => $m['attachments'] ? json_decode($m['attachments'], true) : [],
         'created_at' => str_replace(' ', 'T', $m['created_at']),
+    ];
+}
+
+/** A quotation as the customer's chat card draws it (formatted text, grouped lines). */
+function customerQuoteCard(array $q): array {
+    $lines = array_map(fn($i) => [
+        'name'   => $i['description'] . ((float)$i['quantity'] != 1.0 ? ' x ' . rtrim(rtrim(number_format((float)$i['quantity'], 2, '.', ''), '0'), '.') : ''),
+        'amount' => quotePeso($i['amount']),
+    ], $q['items']);
+    return [
+        'title'            => 'Quotation v' . $q['version'] . ' - ' . $q['status'],
+        'reference'        => $q['reference'],
+        'groups'           => [['title' => 'Menu and services', 'items' => $lines]],
+        'subtotal'         => quotePeso($q['subtotal']),
+        'total'            => quotePeso($q['total']),
+        'required_deposit' => quotePeso($q['deposit_amount']) . ' (' . $q['deposit_rate'] . '%)',
+        'valid_until'      => $q['validity'],
+        'status'           => $q['status'],
     ];
 }
 
@@ -174,28 +228,47 @@ $text = trim((string)($_POST['message'] ?? ''));
 switch ($action) {
 
     case 'list_conversations': {
-        // First visit: give the customer one conversation so Send can be tested.
-        $count = $db->prepare('SELECT COUNT(*) FROM cib_conversations WHERE customer_id = ?');
-        $count->execute([$customerId]);
-        if ((int)$count->fetchColumn() === 0) {
-            $db->prepare('INSERT INTO cib_conversations (customer_id, title, reference, status, created_at, updated_at) VALUES (?,?,?,?,?,?)')
-               ->execute([$customerId, 'General Inquiry', 'INQ-' . date('Y') . '-' . str_pad((string)$customerId, 4, '0', STR_PAD_LEFT), 'Active', now(), now()]);
-            $cid = (int)$db->lastInsertId();
-            $db->prepare('INSERT INTO cib_messages (conversation_id, sender_type, sender_name, message, created_at) VALUES (?,?,?,?,?)')
-               ->execute([$cid, 'staff', 'Catering team', 'Hello! How can we help you with your event?', now()]);
-        }
+        try { completeFinishedBookings($db, $DB_NAME); } catch (Throwable $e) { error_log('customer-inbox-api: ' . $e->getMessage()); }   // thank-you / rate-us message
+        // "Messages" shows INQUIRY conversations only. A conversation exists once the customer has submitted an
+        // inquiry (see inbox-link.php). Support-ticket conversations belong to "My Concerns" / Customer Service Staff.
         $st = $db->prepare("SELECT c.id, c.title, c.reference, c.status, c.updated_at,
-                (SELECT message FROM cib_messages m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message
-            FROM cib_conversations c WHERE c.customer_id = ? ORDER BY c.updated_at DESC, c.id DESC");
+                (SELECT message FROM cib_messages m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+                (SELECT attachments FROM cib_messages m WHERE m.conversation_id = c.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
+                (SELECT COUNT(*) FROM cib_messages m WHERE m.conversation_id = c.id AND m.sender_type <> 'customer'
+                    AND m.created_at > COALESCE(c.customer_read_at, '1970-01-01 00:00:00')) AS unread
+            FROM cib_conversations c WHERE c.customer_id = ?
+              AND c.status <> 'Support' AND NOT EXISTS (SELECT 1 FROM cib_tickets tk WHERE tk.conversation_id = c.id)
+            ORDER BY c.updated_at DESC, c.id DESC");
         $st->execute([$customerId]);
-        out(['success' => true, 'conversations' => $st->fetchAll()]);
+        $rows = array_map(function ($r) {
+            if ((string)$r['last_message'] === '' && !empty($r['last_attachments'])) $r['last_message'] = 'Sent an attachment';
+            unset($r['last_attachments']);
+            $r['unread'] = (int)$r['unread'];
+            $r['last_message'] = customerHideQuoteCode(str_replace('**', '', (string)$r['last_message']));   // list preview: no raw ** markers, no QT codes
+            // Customers see the event name only: drop "(INQ-0017)" / "BK-0016" style reference codes.
+            $r['title'] = trim(preg_replace('/\s*[\(\[]?\s*\b(?:INQ|BK)-[A-Za-z0-9-]+\s*[\)\]]?/i', '', (string)$r['title'])) ?: 'Conversation';
+            $r['reference'] = '';
+            return $r;
+        }, $st->fetchAll());
+        out(['success' => true, 'conversations' => $rows]);
     }
 
     case 'messages': {
+        try { completeFinishedBookings($db, $DB_NAME); } catch (Throwable $e) { error_log('customer-inbox-api: ' . $e->getMessage()); }
         $conv = ownConversation($db, $customerId, $_GET['conversation_id'] ?? 0);
         $st = $db->prepare('SELECT * FROM cib_messages WHERE conversation_id = ? ORDER BY id ASC');
         $st->execute([$conv['id']]);
-        out(['success' => true, 'messages' => array_map('shapeMessage', $st->fetchAll())]);
+        $db->prepare('UPDATE cib_conversations SET customer_read_at = ? WHERE id = ?')->execute([now(), $conv['id']]);
+        $rows = $st->fetchAll();
+        $qmap = quotesForMessages($db, $rows, true);          // Draft versions are never shown to customers
+        $pmap = paymentRequestsForMessages($db, $rows, true);   // "Pay Now" cards
+        out(['success' => true, 'messages' => array_map(function ($m) use ($qmap, $pmap, $db) {
+            $s = shapeMessage($m);
+            if (!empty($m['payment_request_id']) && isset($pmap[(int)$m['payment_request_id']])) $s['payment_request'] = $pmap[(int)$m['payment_request_id']];
+            if (!empty($m['feedback_booking_id']) && function_exists('feedbackRequestCard')) $s['feedback_request'] = feedbackRequestCard($db, (int)$m['feedback_booking_id']);   // "Rate Now" card
+            if (!empty($m['quotation_id']) && isset($qmap[(int)$m['quotation_id']])) $s['quotation'] = customerQuoteCard($qmap[(int)$m['quotation_id']]);
+            return $s;
+        }, $rows)]);
     }
 
     case 'send_message': {
@@ -207,20 +280,48 @@ switch ($action) {
         $db->prepare('INSERT INTO cib_messages (conversation_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,?,?)')
            ->execute([$conv['id'], 'customer', 'You', $text, $files ? json_encode($files) : null, now()]);
         $newId = (int)$db->lastInsertId();
-        $db->prepare('UPDATE cib_conversations SET updated_at = ? WHERE id = ?')->execute([now(), $conv['id']]);
+        $db->prepare('UPDATE cib_conversations SET updated_at = ?, customer_read_at = ? WHERE id = ?')->execute([now(), now(), $conv['id']]);
+        // Bell: the Sales Staff handling this inquiry (+ Admin / Manager) sees the new message.
+        $nfStaff = [];
+        try {
+            if (!empty($conv['inquiry_id'])) {
+                $ls = $db->prepare('SELECT assigned_staff_id FROM leads WHERE lead_id = ?');
+                $ls->execute([(int)$conv['inquiry_id']]);
+                if ($sid = (int)$ls->fetchColumn()) $nfStaff[] = $sid;
+            }
+        } catch (Throwable $e) { error_log('notify: could not read the assigned staff: ' . $e->getMessage()); }
+        notifySend($db, [
+            'type' => 'customer', 'kind' => 'message', 'ref' => (string)($conv['reference'] ?? ''),
+            'title' => 'New customer message',
+            'message' => nfUserName($db, $customerId) . ' sent a message about ' . $conv['title'] . '.',
+            'user_ids' => $nfStaff,
+            'exclude_user_id' => $customerId,
+        ]);
         out(['success' => true, 'message_id' => $newId]);
     }
 
     case 'list_tickets': {
-        $st = $db->prepare('SELECT id, ticket_number, subject, status, conversation_id, created_at, updated_at FROM cib_tickets WHERE customer_id = ? ORDER BY updated_at DESC, id DESC');
+        $st = $db->prepare("SELECT t.id, t.ticket_number, t.subject, t.status, t.conversation_id, t.created_at, t.updated_at,
+                (SELECT message FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+                (SELECT attachments FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
+                (SELECT COUNT(*) FROM cib_ticket_messages m WHERE m.ticket_id = t.id AND m.sender_type <> 'customer'
+                    AND m.created_at > COALESCE(t.customer_read_at, '1970-01-01 00:00:00')) AS unread
+            FROM cib_tickets t WHERE t.customer_id = ? ORDER BY t.updated_at DESC, t.id DESC");
         $st->execute([$customerId]);
-        out(['success' => true, 'tickets' => $st->fetchAll()]);
+        $rows = array_map(function ($r) {
+            if ((string)$r['last_message'] === '' && !empty($r['last_attachments'])) $r['last_message'] = 'Sent an attachment';
+            unset($r['last_attachments']);
+            $r['unread'] = (int)$r['unread'];
+            return $r;
+        }, $st->fetchAll());
+        out(['success' => true, 'tickets' => $rows]);
     }
 
     case 'ticket_messages': {
         $ticket = ownTicket($db, $customerId, $_GET['ticket_id'] ?? 0);
         $st = $db->prepare('SELECT * FROM cib_ticket_messages WHERE ticket_id = ? ORDER BY id ASC');
         $st->execute([$ticket['id']]);
+        $db->prepare('UPDATE cib_tickets SET customer_read_at = ? WHERE id = ?')->execute([now(), $ticket['id']]);
         out(['success' => true, 'messages' => array_map('shapeMessage', $st->fetchAll())]);
     }
 
@@ -232,7 +333,8 @@ switch ($action) {
         if ($text === '' && !$files) fail('Type a reply or attach a file.');
         $db->prepare('INSERT INTO cib_ticket_messages (ticket_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,?,?)')
            ->execute([$ticket['id'], 'customer', 'You', $text, $files ? json_encode($files) : null, now()]);
-        $db->prepare('UPDATE cib_tickets SET updated_at = ? WHERE id = ?')->execute([now(), $ticket['id']]);
+        $db->prepare('UPDATE cib_tickets SET updated_at = ?, customer_read_at = ? WHERE id = ?')->execute([now(), now(), $ticket['id']]);
+        notifyTicketStaff($db, $ticket, $customerId, 'New customer reply', 'replied on');
         out(['success' => true]);
     }
 
@@ -263,6 +365,7 @@ switch ($action) {
             $db->rollBack();
             throw $e;
         }
+        notifyTicketStaff($db, ['id' => $ticketId, 'ticket_number' => $number, 'subject' => $subject], $customerId, 'New support ticket', 'submitted');
         out(['success' => true, 'conversation_id' => $conversationId, 'ticket' => ['id' => $ticketId, 'ticket_number' => $number, 'subject' => $subject, 'status' => 'Open']]);
     }
 
@@ -270,6 +373,22 @@ switch ($action) {
         if (!$isPost) fail('POST required.', 405);
         $ticket = ownTicket($db, $customerId, $_POST['ticket_id'] ?? 0);
         $db->prepare("UPDATE cib_tickets SET status = 'Resolved', updated_at = ? WHERE id = ?")->execute([now(), $ticket['id']]);
+        if ($ticket['status'] !== 'Resolved') {
+            $db->prepare('INSERT INTO cib_ticket_activity (ticket_id, action, performed_by, performed_by_role, created_at) VALUES (?,?,?,?,?)')
+               ->execute([$ticket['id'], 'Ticket marked as resolved by the customer', '', 'Customer', now()]);
+            notifyTicketStaff($db, $ticket, $customerId, 'Ticket resolved by customer', 'marked as resolved');
+        }
+        out(['success' => true]);
+    }
+
+    case 'reopen_ticket': {
+        if (!$isPost) fail('POST required.', 405);
+        $ticket = ownTicket($db, $customerId, $_POST['ticket_id'] ?? 0);
+        if (!preg_match('/resolved|closed/i', $ticket['status'])) fail('This ticket is not resolved.');
+        $db->prepare("UPDATE cib_tickets SET status = 'Open', updated_at = ?, customer_read_at = ? WHERE id = ?")->execute([now(), now(), $ticket['id']]);
+        $db->prepare('INSERT INTO cib_ticket_activity (ticket_id, action, performed_by, performed_by_role, created_at) VALUES (?,?,?,?,?)')
+           ->execute([$ticket['id'], 'Ticket reopened by the customer', '', 'Customer', now()]);
+        notifyTicketStaff($db, $ticket, $customerId, 'Ticket reopened', 'reopened');
         out(['success' => true]);
     }
 

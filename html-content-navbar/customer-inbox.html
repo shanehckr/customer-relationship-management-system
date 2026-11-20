@@ -1,0 +1,140 @@
+<main class="cib-page" id="cibPage" data-api-url="customer-inbox-api.php">
+  <header class="cib-page-header">
+    <h2>INBOX</h2>
+  </header>
+
+  <nav class="cib-tabs" aria-label="Inbox sections" role="tablist">
+    <button class="cib-tab" id="cibMessagesTab" type="button" role="tab" aria-controls="cibMessagesPanel" aria-selected="true">Messages</button>
+    <button class="cib-tab" id="cibConcernsTab" type="button" role="tab" aria-controls="cibConcernsPanel" aria-selected="false">My Concerns</button>
+  </nav>
+
+  <section class="cib-panel cib-messages-panel is-active" id="cibMessagesPanel" role="tabpanel" aria-labelledby="cibMessagesTab">
+    <aside class="cib-list-pane" aria-label="Conversations">
+      <div class="cib-list-header">
+        <div class="cib-list-item-top"><h2>Conversations</h2><span id="cibConversationCount" class="cib-list-meta"></span></div>
+        <div class="cib-search-row cib-conversation-search-row">
+          <input class="cib-search" id="cibConversationSearch" type="search" placeholder="Search conversations…" autocomplete="off" aria-label="Search conversations">
+        </div>
+      </div>
+      <p class="cib-state" id="cibConversationState" role="status">Loading conversations…</p>
+      <div class="cib-list" id="cibConversationList" aria-live="polite"></div>
+    </aside>
+
+    <section class="cib-thread" aria-label="Conversation messages">
+      <header class="cib-thread-header">
+        <button class="cib-back-button" type="button" data-back-to="cibMessagesPanel" aria-label="Back to conversations"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"></path></svg><span>Conversations</span></button>
+        <div class="cib-thread-heading">
+          <h2 id="cibThreadTitle">Choose a conversation</h2>
+          <p class="cib-thread-subtitle" id="cibThreadMeta">Your messages with the catering team appear here.</p>
+        </div>
+        <span class="cib-tag" id="cibThreadStatus" hidden></span>
+      </header>
+      <div class="cib-feed" id="cibMessageFeed" aria-live="polite" aria-label="Messages">
+        <p class="cib-state">Select a conversation to view its messages.</p>
+      </div>
+      <form class="cib-composer" id="cibMessageForm" enctype="multipart/form-data">
+        <input id="cibMessageConversationId" name="conversation_id" type="hidden">
+        <input id="cibMessageFiles" name="attachments[]" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+        <div class="cib-composer-tools">
+          <button class="cib-icon-button cib-attachment-button" id="cibAttachFile" type="button" aria-label="Attach files"><svg class="cib-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49L13.3 2.2a4 4 0 0 1 5.66 5.66L8.72 18.1a2 2 0 0 1-2.83-2.83l9.19-9.19"></path></svg></button>
+          <button class="cib-icon-button cib-attachment-button" id="cibAttachImage" type="button" aria-label="Attach images"><svg class="cib-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><path d="m21 15-5-5L5 21"></path></svg></button>
+        </div>
+        <div class="cib-composer-copy">
+          <textarea id="cibMessageText" name="message" rows="1" maxlength="5000" placeholder="Type your message…" aria-label="Type your message" disabled></textarea>
+          <span class="cib-file-label" id="cibMessageFileLabel" aria-live="polite"></span>
+        </div>
+        <button class="cib-icon-button cib-send-button" id="cibSendMessage" type="submit" aria-label="Send message" title="Send" disabled><svg class="cib-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7z"></path></svg></button>
+      </form>
+    </section>
+  </section>
+
+  <section class="cib-panel cib-concerns-panel" id="cibConcernsPanel" role="tabpanel" aria-labelledby="cibConcernsTab" hidden>
+    <aside class="cib-list-pane" aria-label="Support tickets">
+      <div class="cib-list-header">
+        <h2>My Support Tickets</h2>
+        <button class="cib-primary" id="cibOpenTicketModal" type="button">+ Create Support Ticket</button>
+        <div class="cib-search-row">
+          <input class="cib-search" id="cibTicketSearch" type="search" placeholder="Search tickets…" autocomplete="off" aria-label="Search tickets">
+        </div>
+      </div>
+      <p class="cib-state" id="cibTicketState" role="status">Loading support tickets…</p>
+      <div class="cib-list" id="cibTicketList" aria-live="polite"></div>
+      <div class="cib-assist"><strong>Need immediate assistance?</strong><br>Contact the support team through the contact details provided by your organization.</div>
+    </aside>
+
+    <section class="cib-thread" aria-label="Support ticket conversation">
+      <header class="cib-thread-header">
+        <button class="cib-back-button" type="button" data-back-to="cibConcernsPanel" aria-label="Back to support tickets"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"></path></svg><span>My Tickets</span></button>
+        <div class="cib-thread-heading">
+          <h2 id="cibTicketTitle">Choose a support ticket</h2>
+          <p class="cib-thread-subtitle" id="cibTicketMeta">Ticket updates and replies appear here.</p>
+        </div>
+        <div class="cib-ticket-actions">
+          <span class="badge-resolved" id="cibResolvedBadge" hidden><i class="bi bi-check-circle-fill" aria-hidden="true"></i> Resolved</span>
+          <button class="btn-reopen-ticket" id="cibReopenTicket" type="button" hidden><i class="bi bi-arrow-counterclockwise" aria-hidden="true"></i> Reopen Ticket</button>
+        </div>
+      </header>
+      <div class="cib-feed" id="cibTicketFeed" aria-live="polite" aria-label="Support ticket messages">
+        <p class="cib-state">Select a ticket to view its conversation.</p>
+      </div>
+      <form class="cib-composer cib-ticket-reply-composer" id="cibTicketReplyForm" enctype="multipart/form-data">
+        <input id="cibReplyTicketId" name="ticket_id" type="hidden">
+        <input id="cibReplyFiles" name="attachments[]" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" multiple hidden>
+        <div class="cib-composer-tools">
+          <button class="cib-icon-button cib-attachment-button" id="cibReplyAttach" type="button" aria-label="Attach a file or image"><svg class="cib-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49L13.3 2.2a4 4 0 0 1 5.66 5.66L8.72 18.1a2 2 0 0 1-2.83-2.83l9.19-9.19"></path></svg></button>
+        </div>
+        <div class="cib-composer-copy">
+          <textarea id="cibTicketReplyText" name="message" rows="1" maxlength="5000" placeholder="Type your reply regarding this support ticket…" aria-label="Type your reply" disabled></textarea>
+          <span class="cib-file-label" id="cibTicketReplyFileLabel" aria-live="polite"></span>
+        </div>
+        <button class="cib-icon-button cib-send-button" id="cibSendTicketReply" type="submit" aria-label="Send reply" title="Send" disabled><svg class="cib-icon-svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M22 2 11 13"></path><path d="M22 2 15 22l-4-9-9-4 20-7z"></path></svg></button>
+      </form>
+    </section>
+  </section>
+</main>
+
+<div class="modal fade cib-bootstrap-modal" id="createTicketModal" tabindex="-1" aria-labelledby="cibTicketModalTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content custom-modal-card cib-modal-card">
+      <header class="cib-modal-header">
+        <div>
+          <p class="cib-modal-eyebrow">CUSTOMER SUPPORT</p>
+          <h2 id="cibTicketModalTitle">Create Support Ticket</h2>
+        </div>
+        <button class="cib-icon-button cib-modal-close" id="cibCloseTicketModal" type="button" aria-label="Close create support ticket form">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m6 6 12 12M18 6 6 18"></path></svg>
+        </button>
+      </header>
+      <form id="cibCreateTicketForm" action="customer-inbox-api.php?action=create_ticket" method="post">
+        <div class="cib-ticket-form-grid">
+          <label class="cib-field" for="ticketSubject">Subject
+            <input id="ticketSubject" name="subject" type="text" maxlength="160" required placeholder="What do you need help with?">
+          </label>
+          <label class="cib-field" for="ticketDescription">Concern details
+            <textarea id="ticketDescription" name="description" rows="6" required placeholder="Describe your concern..."></textarea>
+          </label>
+        </div>
+        <p class="cib-state cib-form-state" id="cibCreateTicketState" role="status" aria-live="polite" hidden></p>
+        <footer class="cib-modal-actions">
+          <button class="cib-secondary" id="cibCancelTicketModal" type="button">Cancel</button>
+          <button class="cib-primary" id="cibSubmitTicket" type="submit">Create Ticket</button>
+        </footer>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="cib-discard-confirm" id="confirmTicketCloseModal" hidden>
+  <section class="custom-modal-card p-3 cib-discard-card" role="alertdialog" aria-modal="true" aria-labelledby="confirmTicketCloseModalTitle" aria-describedby="confirmTicketCloseModalDescription">
+    <div class="modal-body px-2 py-2">
+      <h5 class="fw-bold fs-5 mb-2 modal-heading-text" id="confirmTicketCloseModalTitle">Discard changes?</h5>
+      <p class="modal-delete-text fs-6 mb-4" id="confirmTicketCloseModalDescription">
+        You have unsaved information in <strong class="fw-bold text-highlight">this support ticket</strong>. Are you sure you want to discard it?
+      </p>
+      <div class="d-flex flex-column flex-sm-row justify-content-end gap-2 gap-sm-3 mt-3 cib-discard-actions">
+        <button type="button" class="btn modal-btn-white px-4 py-2" id="cibKeepTicketEditing">Keep Editing</button>
+        <button type="button" class="btn modal-btn-danger px-4 py-2" id="cibDiscardTicketChanges">Discard Changes</button>
+      </div>
+    </div>
+  </section>
+</div>

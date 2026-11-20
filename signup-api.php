@@ -15,14 +15,9 @@ declare(strict_types=1);
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
-session_set_cookie_params([
-    "httponly" => true,
-    "secure"   => false,   // XAMPP uses HTTP. Set true when the site runs on HTTPS.
-    "samesite" => "Lax",
-]);
-session_start();
+// Shared session setup (secure cookie settings). Public endpoint: an expired login just counts as logged out.
+define("SESSION_NO_REDIRECT", true);
+require_once __DIR__ . "/session-init.php";
 
 require_once __DIR__ . "/config/database.php";
 
@@ -216,8 +211,12 @@ try {
             if ($len < 2 || $len > 100) {
                 fail("Enter your full name (2 to 100 characters).", 422, ["step" => 3]);
             }
-            if ($email === "" || strlen($email) > 150 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-                fail("Enter a valid email address.", 422, ["field" => "email"]);
+            if (
+                $email === "" || strlen($email) > 150 ||
+                !filter_var($email, FILTER_VALIDATE_EMAIL) ||
+                !preg_match('/@gmail\.com$/i', $email)   // Gmail only (example.com, yahoo.com, etc. are rejected)
+            ) {
+                fail("Enter a valid Gmail address, like yourname@gmail.com.", 422, ["field" => "email"]);
             }
             if (!preg_match("/^[A-Za-z0-9_.]{4,30}$/", $username)) {
                 fail("Username must be 4 to 30 characters: letters, numbers, dot or underscore.", 422, ["field" => "username"]);

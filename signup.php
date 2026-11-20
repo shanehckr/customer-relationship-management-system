@@ -3,16 +3,9 @@
 
 /** Customer sign-up wizard. All steps are handled by js-InAllPages/signup.js + signup-api.php. */
 
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
-
-session_set_cookie_params([
-    "httponly" => true,
-    "secure" => false,     // Local XAMPP uses HTTP; enable secure cookies under HTTPS.
-    "samesite" => "Lax"
-]);
-
-session_start();
+// Shared session setup (secure cookie settings). Public page: an expired login just counts as logged out.
+define("SESSION_NO_REDIRECT", true);
+require_once __DIR__ . "/session-init.php";
 
 // Logged-in users do not need to sign up.
 if (isset($_SESSION["user_id"])) {
@@ -32,12 +25,13 @@ if (empty($_SESSION["signup_csrf_token"])) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CRM - Sign Up</title>
 
-  <link rel="preload" as="image" href="backgroundPicture/background-lightmode.png">
-  <link rel="preload" as="image" href="backgroundPicture/background-darkmode.png">
+  <link rel="preload" as="image" href="background-picture/background-lightmode.png">
+  <link rel="preload" as="image" href="background-picture/background-darkmode.png">
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="css-InAllPages/stylesheet-login.css">
-  <script src="js-InAllPages/theme.js"></script>
+     <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+     <link rel="stylesheet" href="all-pages-css/cookie-consent.css">
+  <script src="all-pages-js/theme.js"></script>
 </head>
 <body class="d-flex align-items-center justify-content-center min-vh-100 p-3 p-md-4">
 
@@ -157,10 +151,10 @@ if (empty($_SESSION["signup_csrf_token"])) {
             <p class="reset-desc su-desc">You'll use these to log in next time.</p>
 
             <div class="mb-3">
-              <label for="suEmail" class="form-label">Email</label>
+              <label for="suEmail" class="form-label">Gmail</label>
               <div class="input-wrapper position-relative">
                 <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
-                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="you@example.com" required>
+                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="yourname@gmail.com" required>
               </div>
             </div>
 
@@ -200,7 +194,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
 
             <label class="su-terms" for="suTerms">
               <input type="checkbox" id="suTerms" class="su-check" name="terms" value="1">
-              <span>I agree to the <a href="terms.html" target="_blank" rel="noopener">Terms and Privacy Policy</a>.</span>
+              <span>I agree to the <a href="terms.php" target="_blank" rel="noopener">Terms and Privacy Policy</a>.</span>
             </label>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suCreateBtn">Create Account</button>
@@ -212,7 +206,9 @@ if (empty($_SESSION["signup_csrf_token"])) {
     </section>
 
   </main>
-
-  <script src="js-InAllPages/signup.js"></script>
+  
+  <script src="all-pages-js/signup.js"></script>
+    <script src="all-pages-js/loading.js"></script>
+  <script src="all-pages-js/cookie-consent.js" defer></script>
 </body>
-</html>
+</html> 

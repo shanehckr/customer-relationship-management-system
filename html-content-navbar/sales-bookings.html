@@ -1,0 +1,85 @@
+<!-- Sales Staff: Bookings (the confirmed bookings I handle).
+     Same page as Admin + Manager > Bookings (manager-admin-bookings.html): pages.js (crmInitManagerBookings)
+     builds the cards, filters and the booking detail screen from the API, so no booking data is typed here.
+     It keeps the id "managerBookingsPage" on purpose, because that is what pages.js looks for.
+     Backend: GET sales-bookings-api.php?action=list -> { success: true, bookings: [ {...} ] }
+     (same fields as the Admin/Manager Bookings page: booking_ref, customer_name, event_title, event_date,
+      location, arrangement, expected_guests, quotation_amount, amount_paid, payment_status,
+      assigned_staff, booking_status).
+     data-calendar-page = the page the "View Calendar" button opens. -->
+<div class="iq-page iq-page--sales" id="managerBookingsPage" data-mode="sales" data-api="sales-bookings-api.php?action=list" data-calendar-page="admin-manager-sales-calendar.html">
+
+  <!-- LIST VIEW -->
+  <div id="bkListView">
+    <div class="mb-4">
+      <h2 class="fw-bold text-uppercase mb-1">BOOKINGS</h2>
+     
+    </div>
+
+    <!-- Search + View Calendar on the same row -->
+    <div class="bk-search-row mb-3">
+      <div class="position-relative">
+        <i class="bi bi-search search-icon position-absolute top-50 translate-middle-y ms-3" aria-hidden="true"></i>
+        <input type="search" id="bkSearchInput" class="form-control table-search-input ps-5"
+               placeholder="Search bookings by reference, event name, customer, or assigned staff..." aria-label="Search bookings" autocomplete="off">
+      </div>
+      <button type="button" class="btn csi-outline-btn bk-calendar-btn" id="bkCalendarBtn">
+        <i class="bi bi-calendar4" aria-hidden="true"></i><span class="bk-calendar-label">View Calendar</span>
+      </button>
+    </div>
+
+    <!-- Filters: same dropdowns and date box as Admin + Manager Bookings -->
+    <div class="bk-filters">
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Booking Status</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkStatusMenu" data-filter="status"></ul>
+      </div>
+
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Payment Status</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkPaymentMenu" data-filter="payment"></ul>
+      </div>
+
+      <div class="dropdown">
+        <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                data-bs-toggle="dropdown" aria-expanded="false">
+          <span>Assigned Staff</span>
+          <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+        </button>
+        <ul class="dropdown-menu custom-dropdown-menu" id="bkStaffMenu" data-filter="staff"></ul>
+      </div>
+
+      <div class="bk-date-range">
+        <input type="date" id="bkDate" aria-label="Event date">
+      </div>
+    </div>
+
+    <div class="iq-pool-head">
+      <h3 class="iq-pool-title">Active Booking Operations</h3>
+      <span class="text-muted">Cavite &amp; Metro Manila Services</span>
+    </div>
+
+    <p class="iq-state" id="bkState">Loading bookings...</p>
+
+    <!-- Cards are inserted here -->
+    <div class="iq-grid" id="bkGrid"></div>
+
+    <!-- Shown when the search / filters match nothing (shared "No results found" design) -->
+    <div class="crm-no-results-state iq-no-results" id="bkNoResults" role="status" hidden>
+      <i class="bi bi-search" aria-hidden="true"></i>
+      <p class="crm-no-results-title">No results found</p>
+      <p class="crm-no-results-description">Try changing your search or filters.</p>
+    </div>
+  </div>
+
+  <!-- DETAIL VIEW: filled by pages.js -->
+  <div id="bkDetailView" hidden></div>
+</div>

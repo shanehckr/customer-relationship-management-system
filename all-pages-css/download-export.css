@@ -1,0 +1,95 @@
+/* ==========================================================================
+   DownloadExport.css - static styles for the report PDF print layout.
+
+   DownloadExport.js fetches this file and places its contents in the hidden
+   print window only. Do not add it to the CRM app shell; its global rules
+   (body, h2, thead, tr, @page, etc.) are intended only for the PDF document.
+
+   The JS replaces __CRM_PDF_GENERATED_FOOTER__ with the current footer text
+   and sets --stat-cols on the print document body.
+   ========================================================================== */
+/* ---------- PAGE ----------
+   TOP margin 0 = the browser prints no date / title line at the top.
+   The footer boxes get their own 14mm side padding (the page side margins are 0). */
+@page {
+  size: A4;
+  margin: 0 0 14mm 0;
+  @bottom-left  { content: "__CRM_PDF_GENERATED_FOOTER__"; /* filled by DownloadExport.js */ padding-left: 14mm;  font: 9px 'Segoe UI', Arial, sans-serif; color: #777; }   /* text comes from the JS */
+  @bottom-right { content: "Page " counter(page) " of " counter(pages); padding-right: 14mm; font: 9px 'Segoe UI', Arial, sans-serif; color: #777; }
+}
+
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { margin: 0; font-family: 'Segoe UI', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+table.page { width: 100%; border-collapse: collapse; }
+table.page > thead > tr > td, table.page > tbody > tr > td { border: 0; padding: 0 14mm; }
+/* every tab after the first starts on a NEW page */
+table.sec + table.sec { break-before: page; page-break-before: always; }
+/* white space at the top of every page of a tab */
+.gap { height: 12mm; }
+.brand { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 0 0 16px; border-bottom: 1px solid #ddd; }
+.brand img { width: 76px; height: 76px; }
+.brand h1 { margin: 0; font: 700 30px Georgia, 'Times New Roman', serif; letter-spacing: .5px; text-transform: uppercase; }
+h2 { text-align: center; margin: 22px 0 4px; font-size: 22px; letter-spacing: .6px; text-transform: uppercase; }
+.period { text-align: center; color: #555; margin: 0 0 18px; }
+.period b { color: #111; text-transform: uppercase; }
+.stats { display: grid; grid-template-columns: repeat(var(--stat-cols, 4), 1fr); gap: 10px; margin-bottom: 18px; }
+.st { border: 1px solid #d5d9d7; border-radius: 8px; padding: 10px 12px; }
+.st span { display: block; font-size: 11px; color: #555; margin-bottom: 4px; }
+.st b { font-size: 20px; }
+.st small { display: block; margin-top: 4px; font-size: 10px; line-height: 1.3; color: #555; }
+
+/* CHARTS: two per row. A chart that is alone in its row ("wide") fills the whole width:
+   the chart on the left, its count table on the right. */
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+.charts section { border: 1px solid #d5d9d7; border-radius: 8px; padding: 10px 12px; break-inside: avoid; min-width: 0; }
+.charts section.wide { grid-column: 1 / -1; display: grid; grid-template-columns: 3fr 2fr; column-gap: 18px; align-items: center; }
+.charts section.wide h3 { grid-column: 1 / -1; }
+.charts section.wide .rp-chart, .charts section.wide .rp-hchart { margin-bottom: 0; }
+h3 { margin: 0 0 8px; font-size: 13px; }
+
+/* vertical chart */
+.rp-chart { position: relative; padding: 6px 2px 0 40px; margin-bottom: 10px; }
+.rp-ytitle { position: absolute; left: 0; top: 6px; height: 140px; display: flex; align-items: center; writing-mode: vertical-rl; transform: rotate(180deg); font-size: 9px; color: #555; }
+.rp-area { position: relative; height: 140px; }
+.rp-grid { position: absolute; left: 0; right: 0; height: 1px; background: #e3e5e4; }
+.rp-ytick { position: absolute; right: 100%; margin-right: 6px; transform: translateY(50%); font-size: 9px; line-height: 1; color: #555; }
+.rp-cols, .rp-xlabels { display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: 6px; }
+.rp-cols { position: absolute; inset: 0; z-index: 1; }
+.rp-col { height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; }
+.rp-val { font-size: 10px; font-weight: 700; margin-bottom: 2px; }
+.rp-bar { width: 70%; max-width: 40px; border-radius: 3px 3px 0 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.rp-xlabels { margin-top: 5px; }
+.rp-xlabels span { text-align: center; font-size: 8px; line-height: 1.2; }
+
+/* horizontal chart (same markup as the page: crmHChartHTML) */
+.rp-hchart { padding: 4px 2px 0; margin-bottom: 10px; }
+.rp-hrow { display: grid; grid-template-columns: 78px 1fr; column-gap: 8px; align-items: center; margin-bottom: 8px; }
+.rp-hname { text-align: right; font-size: 9px; line-height: 1.2; }
+.rp-htrack { display: flex; align-items: center; }
+.rp-hbar { flex: none; height: 16px; border-radius: 0 3px 3px 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.rp-hval { margin-left: 5px; font-size: 10px; font-weight: 700; }
+.rp-haxis { display: flex; justify-content: space-between; margin: 2px 30px 0 86px; padding-top: 3px; border-top: 1px solid #e3e5e4; font-size: 9px; color: #555; }
+
+/* count tables: mini = next to each chart (Stage | Count | %), data = the big report table */
+table.mini, table.data { width: 100%; border-collapse: collapse; font-size: 11px; }
+table.mini { font-size: 10px; }
+table.mini th, table.mini td, table.data th, table.data td { border-bottom: 1px solid #e3e5e4; padding: 6px 8px; text-align: left; }
+table.mini th, table.mini td { padding: 4px 6px; }
+table.mini th, table.data th { background: #f3f5f4; font-size: 10px; text-transform: uppercase; letter-spacing: .3px; }
+table.mini td:nth-child(n+2), table.mini th:nth-child(n+2) { text-align: right; width: 44px; }
+thead { display: table-header-group; }          /* table header repeats on every page of a long table */
+tr { break-inside: avoid; }
+.tot td { font-weight: 700; background: #f8f9f8; }
+.none { text-align: center; color: #777; padding: 14px; }
+
+/* rate bars (Customer Engagement, etc.) */
+.perf { border: 1px solid #d5d9d7; border-radius: 8px; padding: 10px 12px; margin-bottom: 18px; break-inside: avoid; }
+.perf h3 { margin: 0 0 2px; }
+.perf-sub { margin: 0 0 10px; font-size: 10px; color: #555; }
+.perf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 18px; }
+.perf-top { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.perf-top b { font-size: 18px; }
+.perf-track { height: 8px; border-radius: 4px; background: #e3e5e4; overflow: hidden; }
+.perf-track i { display: block; height: 100%; background: #2bb673; border-radius: 4px; }
+.perf-note { margin-top: 4px; font-size: 9px; color: #555; }
+.keep { break-inside: avoid; page-break-inside: avoid; }   /* a small table stays in one piece (no lone Total row on the next page) */

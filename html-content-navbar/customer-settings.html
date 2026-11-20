@@ -1,0 +1,155 @@
+<!-- customer-settings.html - Customer > Profile Settings (loaded into the app shell by navbar.js).
+     Behaviour: all-pages-js/customer-settings.js   Data: customer-account-api.php
+     Styles: shared classes of all-pages.css (settings-title, modal-input-field, modal-btn-save ...)
+             plus the small "Customer Profile Settings" block at the end of all-pages-css/all-pages.css. -->
+
+<div class="cs-page" id="csPage">
+
+  <!-- ============ PROFILE SETTINGS HOME ============ -->
+  <section class="cs-view is-active" data-cs-view="home">
+    <h2 class="settings-title mb-1">Profile Settings</h2>
+    <p class="settings-description mb-4">Manage your account information and security settings.</p>
+
+    <div class="card rounded-4 p-4 mb-3">
+      <div class="cs-profile">
+        <div class="cs-avatar" data-cs-avatar><span data-cs-initials></span></div>
+        <div class="cs-profile-text">
+          <div class="cs-profile-name" data-cs-name>Loading...</div>
+          <div class="cs-profile-email" data-cs-email></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card rounded-4 overflow-hidden mb-3">
+      <button type="button" class="cs-row" data-cs-go="personal">
+        <span class="cs-row-icon"><i class="bi bi-person"></i></span>
+        <span class="cs-row-text">
+          <span class="cs-row-title">Personal Information</span>
+          <span class="cs-row-desc">Manage your profile, contact details, and personal information.</span>
+        </span>
+        <i class="bi bi-chevron-right cs-row-chevron"></i>
+      </button>
+      <button type="button" class="cs-row" data-cs-go="password">
+        <span class="cs-row-icon"><i class="bi bi-shield-check"></i></span>
+        <span class="cs-row-text">
+          <span class="cs-row-title">Password &amp; Security</span>
+          <span class="cs-row-desc">Change your password and manage account security.</span>
+        </span>
+        <i class="bi bi-chevron-right cs-row-chevron"></i>
+      </button>
+    </div>
+  </section>
+
+  <!-- ============ PERSONAL INFORMATION ============ -->
+  <section class="cs-view" data-cs-view="personal">
+    <button type="button" class="cs-back" data-cs-go="home"><i class="bi bi-arrow-left"></i> Back to Profile Settings</button>
+    <h2 class="settings-title mb-1">Personal Information</h2>
+    <p class="settings-description mb-4">Manage your profile photo, contact details, and personal information.</p>
+
+    <div class="card rounded-4 p-4 mb-3">
+      <h5 class="mb-1">Profile Photo</h5>
+
+      <div class="cs-photo-wrap">
+        <div class="cs-avatar is-large" data-cs-avatar><span data-cs-initials></span></div>
+        <div class="cs-photo-actions">
+          <button type="button" class="btn modal-btn-save px-4" id="csPhotoBtn"><i class="bi bi-upload me-2"></i>Upload Photo</button>
+          <button type="button" class="btn modal-btn-danger px-4" id="csPhotoRemove" style="display:none">Remove Photo</button>
+          <input type="file" id="csPhotoInput" accept="image/jpeg,image/png,image/webp" hidden>
+        </div>
+      </div>
+    </div>
+
+    <form class="card rounded-4 p-4 mb-3" id="csPersonalForm" novalidate autocomplete="off">
+      <h5 class="mb-1">Personal Details</h5>
+      <p class="settings-description mb-3">Update your full name, login email address, and contact number.</p>
+      <div class="cs-alert" id="csPersonalAlert" role="alert"></div>
+
+      <div class="mb-3">
+        <label class="modal-input-label" for="csFullName">Full name <span class="cs-req">*</span></label>
+        <input class="form-control modal-input-field" type="text" id="csFullName" maxlength="100" autocomplete="name">
+        <div class="cs-error" data-cs-err="full_name"></div>
+      </div>
+
+      <div class="mb-3">
+        <label class="modal-input-label" for="csEmail">Email address <span class="cs-req">*</span></label>
+        <input class="form-control modal-input-field" type="email" id="csEmail" maxlength="150" autocomplete="email">
+        <div class="settings-description mt-1">Changing your email address requires verification before the new email becomes your login email.</div>
+        <div class="cs-error" data-cs-err="email"></div>
+      </div>
+
+      <div class="cs-verify" id="csVerifyBox">
+        <p class="mb-2">Enter the 6-digit code we sent to <strong id="csVerifyEmail"></strong>.</p>
+        <div class="cs-verify-row">
+          <input class="form-control modal-input-field cs-code" type="text" id="csVerifyCode" inputmode="numeric" maxlength="6" placeholder="------" autocomplete="one-time-code">
+          <button type="button" class="btn modal-btn-save px-4" id="csVerifyBtn">Verify Email</button>
+          <button type="button" class="cs-link" id="csResendBtn">Resend code</button>
+          <button type="button" class="cs-link" id="csVerifyCancel">Cancel</button>
+        </div>
+        <div class="cs-error" data-cs-err="code"></div>
+      </div>
+
+      <div class="mb-3">
+        <label class="modal-input-label" for="csPhone">Contact number <span class="cs-req">*</span></label>
+        <input class="form-control modal-input-field" type="tel" id="csPhone" maxlength="20" inputmode="tel" autocomplete="tel" placeholder="+63 917 123 4567">
+        <div class="cs-error" data-cs-err="phone"></div>
+      </div>
+
+      <div class="cs-actions">
+        <button type="button" class="btn modal-btn-cancel px-4" id="csPersonalCancel">Cancel</button>
+        <button type="submit" class="btn modal-btn-save px-4" id="csPersonalSave">Save Changes</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- ============ PASSWORD & SECURITY ============ -->
+  <section class="cs-view" data-cs-view="password">
+    <button type="button" class="cs-back" data-cs-go="home"><i class="bi bi-arrow-left"></i> Back to Profile Settings</button>
+    <h2 class="settings-title mb-1">Password &amp; Security</h2>
+    <p class="settings-description mb-4">Change your password and manage your account security.</p>
+
+    <form class="card rounded-4 p-4 mb-3" id="csPasswordForm" novalidate autocomplete="off">
+      <div class="cs-alert" id="csPasswordAlert" role="alert"></div>
+      <div class="mb-3">
+        <label class="modal-input-label" for="csCurrentPass">Current password <span class="cs-req">*</span></label>
+        <div class="settings-password-group">
+          <input class="form-control modal-input-field" type="password" id="csCurrentPass" maxlength="72" autocomplete="current-password" placeholder="Enter your current password">
+          <button type="button" class="btn settings-password-toggle" data-cs-eye="csCurrentPass" aria-label="Show password"><i class="bi bi-eye-slash"></i></button>
+        </div>
+        <div class="cs-error" data-cs-err="current_password"></div>
+      </div>
+      <div class="mb-3">
+        <label class="modal-input-label" for="csNewPass">New password <span class="cs-req">*</span></label>
+        <div class="settings-password-group">
+          <input class="form-control modal-input-field" type="password" id="csNewPass" maxlength="72" autocomplete="new-password" placeholder="Enter new password">
+          <button type="button" class="btn settings-password-toggle" data-cs-eye="csNewPass" aria-label="Show password"><i class="bi bi-eye-slash"></i></button>
+        </div>
+        <div class="cs-error" data-cs-err="new_password"></div>
+      </div>
+      <div class="mb-3">
+        <label class="modal-input-label" for="csConfirmPass">Confirm new password <span class="cs-req">*</span></label>
+        <div class="settings-password-group">
+          <input class="form-control modal-input-field" type="password" id="csConfirmPass" maxlength="72" autocomplete="new-password" placeholder="Re-enter new password">
+          <button type="button" class="btn settings-password-toggle" data-cs-eye="csConfirmPass" aria-label="Show password"><i class="bi bi-eye-slash"></i></button>
+        </div>
+        <div class="cs-error" data-cs-err="confirm_password"></div>
+      </div>
+
+      <div class="cs-reqs">
+        <h5 class="mb-2">Password Requirements</h5>
+        <ul>
+          <li data-cs-rule="len">At least 8 characters long</li>
+          <li data-cs-rule="case">Includes at least one uppercase letter and one lowercase letter</li>
+          <li data-cs-rule="num">Includes at least one number (0-9)</li>
+          <li data-cs-rule="diff">Must be different from your current password</li>
+        </ul>
+      </div>
+
+      <div class="cs-actions">
+        <button type="button" class="btn modal-btn-cancel px-4" id="csPasswordCancel">Cancel</button>
+        <button type="submit" class="btn modal-btn-save px-4" id="csPasswordSave">Update Password</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="cs-toast" id="csToast" role="status" aria-live="polite"></div>
+</div>

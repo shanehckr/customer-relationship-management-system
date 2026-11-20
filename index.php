@@ -7,19 +7,9 @@ declare(strict_types=1);
  * Loads the shared application layout from includes/app-layout.php.
  */
 
-// Configure session security before starting the session.
-ini_set("session.use_strict_mode", "1");
-ini_set("session.use_only_cookies", "1");
-
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_set_cookie_params([
-        "httponly" => true,
-        "secure" => false,         // Local XAMPP uses HTTP; enable secure cookies when using HTTPS.
-        "samesite" => "Lax"
-    ]);
-
-    session_start();
-}
+// Shared session setup: secure cookie settings + 30-minute inactivity timeout.
+// No SESSION_API / SESSION_NO_REDIRECT here: an expired session sends the user to login.php?timeout=1.
+require_once __DIR__ . "/session-init.php";
 
 // Allow only users with a valid authenticated session.
 if (

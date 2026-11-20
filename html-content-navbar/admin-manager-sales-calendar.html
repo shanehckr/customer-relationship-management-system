@@ -1,0 +1,107 @@
+<!-- Admin + Manager + Sales Staff: Calendar (ONE shared page for all three roles).
+     No data is written here: pages.js (crmInitCalendar) draws the Month / Week / Day / Agenda views
+     from the list the backend returns:  calendar-api.php?action=list
+     Both Catering Operations > Calendar (Admin, Manager) and Inquiries > Calendar (Sales Staff)
+     open this same file. -->
+<div class="cal-page" id="calendarPage" data-api="calendar-api.php?action=list">
+
+  <!-- Calendar (hidden while a booking is open) -->
+  <div id="calListView">
+
+  <!-- Title + month navigation -->
+  <div class="cal-head">
+    <div class="cal-head-text">
+      <h2 class="fw-bold text-uppercase mb-1">Calendar</h2>
+   
+    </div>
+    <div class="cal-nav">
+      <div class="cal-month-switch">
+        <button type="button" class="cal-arrow" id="calPrev" aria-label="Previous"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
+        <span class="cal-label" id="calLabel" aria-live="polite">&nbsp;</span>
+        <button type="button" class="cal-arrow" id="calNext" aria-label="Next"><i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </div>
+      <button type="button" class="btn modal-btn-cancel cal-today" id="calToday">Today</button>
+    </div>
+  </div>
+
+  <!-- Legend + view switch -->
+  <div class="cal-toolbar">
+    <div class="cal-legend" aria-label="Arrangements">
+      <span class="cal-legend-title">Arrangements:</span>
+      <span class="cal-legend-item"><span class="cal-dot is-pickup"></span><i class="bi bi-bag" aria-hidden="true"></i>Customer Pickup</span>
+      <span class="cal-legend-item"><span class="cal-dot is-delivery"></span><i class="bi bi-truck" aria-hidden="true"></i>Food Delivery</span>
+      <span class="cal-legend-item"><span class="cal-dot is-onsite"></span><i class="bi bi-people" aria-hidden="true"></i>On-site Catering</span>
+    </div>
+    <div class="cal-views" role="group" aria-label="Calendar view">
+      <button type="button" class="cal-view-btn is-active" data-cal-view="month" aria-pressed="true">Month</button>
+      <button type="button" class="cal-view-btn" data-cal-view="week" aria-pressed="false">Week</button>
+      <button type="button" class="cal-view-btn" data-cal-view="day" aria-pressed="false">Day</button>
+      <button type="button" class="cal-view-btn" data-cal-view="agenda" aria-pressed="false">Agenda</button>
+    </div>
+  </div>
+
+  <p class="cal-state" id="calState" role="status">Loading calendar...</p>
+
+  <!-- The selected view is drawn here -->
+  <div class="cal-body" id="calBody"></div>
+
+  </div><!-- /#calListView -->
+
+  <!-- Booking details (opens from the event window: View Booking Details) -->
+  <div id="calBookingView" hidden></div>
+
+  <!-- Event details (opens when an event is clicked) -->
+  <div class="modal fade" id="calEventModal" tabindex="-1" aria-labelledby="calDetailTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content cal-pop">
+        <div class="cal-pop-head">
+          <div class="cal-pop-head-main">
+            <div class="cal-pop-ref-row">
+              <span class="cal-pop-ref"><i class="bi bi-hash" aria-hidden="true"></i><span id="calDetailRef">—</span></span>
+              <span class="stage-pill stage-new cal-pop-status" id="calDetailStatus" hidden>—</span>
+            </div>
+            <h5 class="cal-pop-title" id="calDetailTitle">—</h5>
+          </div>
+          <button type="button" class="cal-pop-close" data-bs-dismiss="modal" aria-label="Close"><i class="bi bi-x-lg" aria-hidden="true"></i></button>
+        </div>
+
+        <div class="cal-pop-body">
+          <div class="cal-pop-row">
+            <span class="iq-avatar cal-pop-avatar" id="calDetailCustomerAvatar" aria-hidden="true">?</span>
+            <div><span class="cal-pop-label">Customer Name</span><span class="cal-pop-value is-lg" id="calDetailCustomer">—</span></div>
+          </div>
+          <div class="cal-pop-row">
+            <span class="iq-avatar cal-pop-avatar" id="calDetailStaffAvatar" aria-hidden="true">?</span>
+            <div><span class="cal-pop-label">Assigned Staff</span><span class="cal-pop-value is-lg" id="calDetailStaff">—</span></div>
+          </div>
+          <div class="cal-pop-cols">
+            <div class="cal-pop-row">
+              <span class="cal-pop-icon"><i class="bi bi-calendar4" aria-hidden="true"></i></span>
+              <div><span class="cal-pop-label">Event Date</span><span class="cal-pop-value" id="calDetailDate">—</span></div>
+            </div>
+            <div class="cal-pop-row">
+              <span class="cal-pop-icon"><i class="bi bi-clock" aria-hidden="true"></i></span>
+              <div><span class="cal-pop-label">Event Time</span><span class="cal-pop-value" id="calDetailTime">—</span></div>
+            </div>
+            <div class="cal-pop-row">
+              <span class="cal-pop-icon"><i class="bi bi-people" aria-hidden="true"></i></span>
+              <div><span class="cal-pop-label">Guests (PAX)</span><span class="cal-pop-value" id="calDetailGuests">—</span></div>
+            </div>
+            <div class="cal-pop-row is-plain">
+              <div><span class="cal-pop-label">Arrangement</span><span class="cal-arr-pill cal-pop-arr" id="calDetailArrangement">—</span></div>
+            </div>
+          </div>
+          <div class="cal-pop-row">
+            <span class="cal-pop-icon"><i class="bi bi-geo-alt" aria-hidden="true"></i></span>
+            <div><span class="cal-pop-label">Event Location</span><span class="cal-pop-value is-light" id="calDetailLocation">—</span></div>
+          </div>
+        </div>
+
+        <div class="cal-pop-foot">
+          <button type="button" class="cal-pop-cta" id="calViewBooking">View Booking Details<i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

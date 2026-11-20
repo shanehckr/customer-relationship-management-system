@@ -1,0 +1,123 @@
+<!-- Admin + Manager: Inbox (READ-ONLY monitoring of every Sales conversation and every Support ticket).
+     pages.js (crmInitManagerInbox) fills the lists and the message thread from the API, so no data is typed here.
+     There is no reply box on purpose: Admin and Manager can only read. Replies are handled by the assigned staff
+     (Sales Staff: sales-inbox-api.php, Customer Service Staff: cs-inbox-api.php).
+     It reuses the Customer Service inbox layout (.csi-*), so the look matches the other inboxes.
+     .iq-page--sales gives it the same page inset as Tickets / Bookings / Inquiries (same title position).
+     Backend: manager-admin-inbox-api.php
+       ?action=list_conversations -> { success, conversations: [...], viewer_role }
+       ?action=conversation_messages&conversation_id=ID -> { success, conversation, messages: [...] }
+       ?action=list_tickets -> { success, tickets: [...], viewer_role }
+       ?action=ticket_messages&ticket_id=ID -> { success, ticket, messages: [...] } -->
+<div class="iq-page iq-page--sales csi-page mi-page" id="managerInboxPage" data-api="manager-admin-inbox-api.php">
+
+  <div class="mb-4">
+    <h2 class="fw-bold text-uppercase mb-1">Customer Conversation Inbox</h2>
+  </div>
+
+  <!-- Tabs -->
+  <div class="mi-top">
+    <ul class="nav nav-tabs settings-tabs mi-tabs" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button type="button" class="nav-link active" data-mi-tab="sales" role="tab" aria-selected="true">
+          <i class="bi bi-chat-left-text" aria-hidden="true"></i><span>Sales Conversations</span>
+          <span class="mi-count" id="miSalesCount" hidden>0</span>
+        </button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button type="button" class="nav-link" data-mi-tab="support" role="tab" aria-selected="false">
+          <i class="bi bi-chat-dots-fill" aria-hidden="true"></i><span>Support Tickets</span>
+          <span class="mi-count mi-count--warn" id="miSupportCount" hidden>0</span>
+        </button>
+      </li>
+    </ul>
+  </div>
+
+  <div class="card csi-shell" id="miShell">
+
+    <!-- LEFT: list -->
+    <section class="csi-list-pane" aria-label="Conversations">
+      <div class="csi-list-head">
+        <div class="csi-list-title">
+          <h3 class="iq-pool-title"><i class="bi bi-chat-dots-fill" aria-hidden="true"></i><span id="miListTitle">Conversations</span></h3>
+          <span class="stage-pill stage-won" id="miUnread" hidden>0 Unread</span>
+        </div>
+
+        <div class="position-relative mb-3">
+          <i class="bi bi-search search-icon position-absolute top-50 translate-middle-y ms-3" aria-hidden="true"></i>
+          <input type="search" id="miSearch" class="form-control table-search-input ps-5"
+                 placeholder="Search customer or inquiry ID..." aria-label="Search conversations" autocomplete="off">
+        </div>
+
+        <div class="mi-filters">
+          <div class="dropdown">
+            <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+              <span id="miStaffLabel">All Sales Staff</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+            </button>
+            <ul class="dropdown-menu custom-dropdown-menu" id="miStaffMenu" data-mi-filter="staff"></ul>
+          </div>
+          <div class="dropdown">
+            <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
+                    data-bs-toggle="dropdown" aria-expanded="false">
+              <span id="miReadLabel">All Messages</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+            </button>
+            <ul class="dropdown-menu custom-dropdown-menu" id="miReadMenu" data-mi-filter="read">
+              <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="all">All Messages</a></li>
+              <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="unread">Unread</a></li>
+              <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="read">Read</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mi-sort">
+          <span>Sorted by: <strong>Latest Activity</strong></span>
+          <button type="button" class="mi-clear" id="miClear">Clear Filters</button>
+        </div>
+      </div>
+
+      <p class="iq-state" id="miListState">Loading conversations...</p>
+      <!-- Placed BEFORE the list, so "No results found" shows right under the filters (not at the bottom) -->
+      <div class="crm-no-results-state iq-no-results" id="miNoResults" role="status" hidden>
+        <i class="bi bi-search" aria-hidden="true"></i>
+        <p class="crm-no-results-title">No results found</p>
+        <p class="crm-no-results-description">Try changing your search or filters.</p>
+      </div>
+      <div class="csi-list" id="miList"></div>
+    </section>
+
+    <!-- RIGHT: thread (read-only) -->
+    <section class="csi-thread" aria-label="Messages">
+      <div class="csi-empty" id="miEmpty">
+        <i class="bi bi-chat-dots" aria-hidden="true"></i>
+        <p class="mb-0">Select a conversation to view its messages.</p>
+      </div>
+
+      <div class="csi-thread-body" id="miThread" hidden>
+        <div class="csi-thread-head">
+          <button type="button" class="btn iq-back csi-back" id="miBack"><i class="bi bi-arrow-left" aria-hidden="true"></i>Back</button>
+          <span class="iq-avatar" id="miAvatar" aria-hidden="true">--</span>
+          <div class="iq-head-main">
+            <div class="iq-customer"><span id="miName"></span><span class="csi-ref" id="miRef"></span></div>
+            <span class="csi-subject" id="miSubject"></span>
+          </div>
+          <div class="csi-head-actions">
+            <span class="stage-pill" id="miPriority" hidden></span>
+            <span class="stage-pill" id="miStatus"></span>
+            <button type="button" class="btn csi-outline-btn" id="miOpen">
+              <i class="bi bi-folder2-open" aria-hidden="true"></i><span id="miOpenLabel">Open Inquiry Details</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="csi-feed mi-feed" id="miFeed"></div>
+
+        <!-- Instead of the reply box -->
+        <div class="mi-readonly">
+          <span><i class="bi bi-lock" aria-hidden="true"></i>Read-only monitoring view for <strong id="miRole2">Admin</strong>. <span id="miHandled">Customer replies are handled by assigned Sales Staff.</span></span>
+          <span id="miResponsible"></span>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
