@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/config/environment.php';
+
 /**
  * session-init.php - ONE place for session setup. Require it instead of calling session_start() yourself.
  *

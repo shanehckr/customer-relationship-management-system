@@ -99,6 +99,7 @@ if (!(($method === "GET" && $action === "list") || ($method === "POST" && in_arr
 try {
     require_once __DIR__ . "/config/database.php";   // gives $conn (mysqli)
     require_once __DIR__ . "/notifications-helper.php";   // bell notifications (see notifications-api.php)
+    require_once __DIR__ . "/includes/Mail/EmailNotificationService.php";
 
     $me = ticketsRows(
         $conn,
@@ -383,6 +384,32 @@ try {
                 "page" => "customer-inbox.html",
             ]],
         ]);
+        if ($resolved) {
+            $recipient = EmailNotificationService::customerRecipient($db, (int) $ticket["customer_id"]);
+            EmailNotificationService::queue(
+                $db,
+                (int) $ticket["customer_id"],
+                $recipient["email"],
+                $recipient["name"],
+                "support_ticket_resolved",
+                "Support ticket resolved - " . $nfRef,
+                [
+                    "heading" => "Support Ticket Resolved",
+                    "greeting" => $recipient["name"],
+                    "message" => "Your support concern has been resolved.",
+                    "rows" => [
+                        "Ticket reference" => $nfRef,
+                        "Ticket subject" => (string) $ticket["subject"],
+                        "Status" => "Resolved",
+                    ],
+                    "button_text" => "View My Concerns",
+                    "button_url" => rtrim(EmailNotificationService::baseUrl($db), "/") . "/customer-inbox.html",
+                ],
+                "support_ticket_resolved:" . $ticketId,
+                "ticket",
+                $ticketId
+            );
+        }
     }
 
     ticketsRespond(200, [

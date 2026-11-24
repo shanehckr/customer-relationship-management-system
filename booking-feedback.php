@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 /**
  * booking-feedback.php - customer feedback (rating, comments, photos) for a booking.
  *
@@ -93,6 +94,44 @@ function completeFinishedBookings(AppDatabase $db, string $crm = ''): void {
         $history = $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, remarks)
                                  VALUES (?, 'booking', 'Confirmed', 'Completed', 'Automatically completed after the event date.')");
         foreach ($eligible as $bookingId) $history->execute([(int)$bookingId]);
+        foreach ($eligible as $bookingId) {
+            $row = $db->prepare('SELECT * FROM bookings WHERE booking_id = ? LIMIT 1');
+            $row->execute([(int) $bookingId]);
+            $booking = $row->fetch();
+            if (!$booking || empty($booking['customer_id'])) continue;
+            $recipient = EmailNotificationService::customerRecipient(
+                $db,
+                (int) $booking['customer_id'],
+                (string) ($booking['customer_email'] ?? ''),
+                (string) ($booking['customer_name'] ?? '')
+            );
+            $ref = (string) ($booking['booking_ref'] ?: 'BK-' . str_pad((string) $bookingId, 4, '0', STR_PAD_LEFT));
+            $event = trim((string) ($booking['event_title'] ?? '')) !== '' ? trim((string) $booking['event_title']) : 'your event';
+            EmailNotificationService::queue(
+                $db,
+                (int) $booking['customer_id'],
+                $recipient['email'],
+                $recipient['name'],
+                'booking_completed',
+                'Booking completed - ' . $ref,
+                [
+                    'heading' => 'Booking Completed',
+                    'greeting' => $recipient['name'],
+                    'message' => 'Thank you for choosing Espinosilla\'s Kainan. We invite you to share feedback about your experience.',
+                    'rows' => [
+                        'Booking reference' => $ref,
+                        'Event name' => $event,
+                        'Event date' => !empty($booking['event_date']) ? date('F j, Y', strtotime((string) $booking['event_date'])) : '',
+                        'Status' => 'Completed',
+                    ],
+                    'button_text' => 'View My Bookings',
+                    'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-bookings.html',
+                ],
+                'booking_completed:' . (int) $bookingId,
+                'booking',
+                (int) $bookingId
+            );
+        }
     } catch (Throwable $e) { error_log('booking-feedback: auto-complete failed: ' . $e->getMessage()); return; }
 
     try {

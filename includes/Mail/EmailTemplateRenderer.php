@@ -6,6 +6,7 @@ final class EmailTemplateRenderer
     private const TEMPLATE_FILES = [
         'password_reset' => 'password-reset.php',
         'payment_received' => 'payment-received.php',
+        'notification' => 'notification.php',
         'system_test' => 'system-test.php',
     ];
 

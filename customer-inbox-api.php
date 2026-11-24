@@ -69,6 +69,7 @@ $identity->execute([$customerId]);
 if (!$identity->fetchColumn()) fail('Please log in again.', 401);
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 require_once __DIR__ . '/booking-feedback.php';       // "please rate us" message + card after an event is completed
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 
 /* ------------------------- 4. HELPERS ------------------------- */
 function now(): string { return date('Y-m-d H:i:s'); }
@@ -312,6 +313,31 @@ switch ($action) {
             throw $e;
         }
         notifyTicketStaff($db, ['id' => $ticketId, 'ticket_number' => $number, 'subject' => $subject], $customerId, 'New support ticket', 'submitted');
+        $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+        EmailNotificationService::queue(
+            $db,
+            $customerId,
+            $recipient['email'],
+            $recipient['name'],
+            'support_ticket_received',
+            'Support ticket received - ' . $number,
+            [
+                'heading' => 'Support Ticket Received',
+                'greeting' => $recipient['name'],
+                'message' => 'We received your support concern and will review it.',
+                'rows' => [
+                    'Ticket reference' => $number,
+                    'Ticket subject' => $subject,
+                    'Submission date' => date('F j, Y', strtotime(now())),
+                    'Initial status' => 'Open',
+                ],
+                'button_text' => 'View My Concerns',
+                'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inbox.html',
+            ],
+            'support_ticket_received:' . $ticketId,
+            'ticket',
+            $ticketId
+        );
         out(['success' => true, 'conversation_id' => $conversationId, 'ticket' => ['id' => $ticketId, 'ticket_number' => $number, 'subject' => $subject, 'status' => 'Open']]);
     }
 

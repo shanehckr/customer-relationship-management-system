@@ -18,6 +18,7 @@ require __DIR__ . '/inquiry-common.php';
 require __DIR__ . '/quotations-schema.php';
 require __DIR__ . '/bookings-schema.php';
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 $staff = requireSalesStaff();
 $action = $_GET['action'] ?? '';
 
@@ -204,6 +205,33 @@ if ($action === 'update_stage') {
             ],
         ]);
     }
+    if ($declining) {
+        $recipient = EmailNotificationService::customerRecipient($db, (int) $lead['customer_id'], (string) ($lead['customer_email'] ?? ''), (string) ($lead['customer_name'] ?? ''));
+        EmailNotificationService::queue(
+            $db,
+            (int) $lead['customer_id'],
+            $recipient['email'],
+            $recipient['name'],
+            'inquiry_declined',
+            'Inquiry declined - ' . $ref,
+            [
+                'heading' => 'Inquiry Declined',
+                'greeting' => $recipient['name'],
+                'message' => 'We are unable to proceed with this inquiry.',
+                'rows' => [
+                    'Inquiry reference' => $ref,
+                    'Event name' => $evPlain,
+                    'Status' => 'Declined',
+                    'Explanation' => $reason,
+                ],
+                'button_text' => 'View My Inquiries',
+                'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inquiries.html',
+            ],
+            'inquiry_declined:' . $iid,
+            'lead',
+            $iid
+        );
+    }
     $quote = quotesByInquiry($db, [$iid], false, (string)($lead['customer_name'] ?? ''))[$iid] ?? null;
     out(['success' => true, 'quotation' => $quote,
          'message' => $declining ? 'Inquiry declined. The customer was notified.' : ($reopening ? 'Inquiry reopened. The customer was notified.' : 'Stage updated.')]);
@@ -323,6 +351,51 @@ if ($action === 'quotation_send') {
             'message' => 'Your quotation for ' . $nfEvent . ' is ready (' . quotePeso($q['total']) . '). Open My Inquiries to accept or decline it.',
         ],
     ]);
+    $recipient = EmailNotificationService::customerRecipient($db, (int) $lead['customer_id'], (string) ($lead['customer_email'] ?? ''), (string) ($lead['customer_name'] ?? ''));
+    $items = json_decode((string) ($q['items'] ?? ''), true);
+    $itemRows = [];
+    if (is_array($items)) {
+        foreach ($items as $item) {
+            if (!is_array($item)) continue;
+            $label = trim((string) ($item['description'] ?? $item['name'] ?? 'Menu item'));
+            $quantity = (float) ($item['quantity'] ?? 1);
+            $amount = (float) ($item['amount'] ?? ((float) ($item['unit_price'] ?? 0) * $quantity));
+            $itemRows[$label] = 'Qty ' . rtrim(rtrim(number_format($quantity, 3, '.', ''), '0'), '.') . ' - PHP ' . number_format($amount, 2);
+        }
+    }
+    $rows = [
+        'Inquiry reference' => $nfRef,
+        'Quotation reference' => quoteRef($iid),
+        'Quotation version' => 'v' . (int) $q['version'],
+        'Event name' => $nfEvent,
+        'Event date' => !empty($lead['event_date']) ? date('F j, Y', strtotime((string) $lead['event_date'])) : '',
+        'Service arrangement' => arrangementDisplay((string) ($lead['arrangement'] ?? '')),
+        'Quotation validity' => !empty($q['valid_until']) ? deadlineLabel((string) $q['valid_until'], $q['valid_until_time'] ?? null) : '',
+        'Total quotation amount' => 'PHP ' . number_format((float) $q['total'], 2),
+    ];
+    foreach ($itemRows as $label => $value) $rows['Item: ' . $label] = $value;
+    EmailNotificationService::queue(
+        $db,
+        (int) $lead['customer_id'],
+        $recipient['email'],
+        $recipient['name'],
+        (int) $q['version'] === 1 ? 'quotation_available' : 'quotation_revised',
+        ((int) $q['version'] === 1 ? 'Quotation available' : 'Revised quotation available') . ' - ' . quoteRef($iid),
+        [
+            'heading' => (int) $q['version'] === 1 ? 'Quotation Available' : 'Revised Quotation Available',
+            'greeting' => $recipient['name'],
+            'message' => (int) $q['version'] === 1
+                ? 'A new quotation is ready for your review.'
+                : 'The revised quotation is ready for your review.',
+            'amount' => 'PHP ' . number_format((float) $q['total'], 2),
+            'rows' => $rows,
+            'button_text' => 'Review the Quotation',
+            'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inquiries.html',
+        ],
+        'quotation_' . ((int) $q['version'] === 1 ? 'available' : 'revised') . ':' . (int) $q['quotation_id'] . ':v' . (int) $q['version'],
+        'quotation',
+        (int) $q['quotation_id']
+    );
     $quote = quotesByInquiry($db, [$iid], false, (string)($lead['customer_name'] ?? ''))[$iid];
     out(['success' => true, 'message' => 'Quotation sent to the customer.', 'quotation' => $quote, 'stage' => 'Quotation Sent']);
 }

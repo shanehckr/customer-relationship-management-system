@@ -58,6 +58,29 @@ final class EmailService
         return ($this->config['enabled'] ?? false) === true;
     }
 
+    public function sendControlledTestMessage(string $recipientEmail): void
+    {
+        if (PHP_SAPI !== 'cli') {
+            throw new RuntimeException('Controlled mail tests are available only from the command line.');
+        }
+        if (getenv('CRM_MAIL_ENABLED') !== '0' || $this->isEnabled()) {
+            throw new RuntimeException('Disable business email notifications before running a controlled test.');
+        }
+        $recipientEmail = trim($recipientEmail);
+        if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
+            throw new InvalidArgumentException('A valid test recipient email is required.');
+        }
+
+        $identity = $this->resolveSender('crm_notifications', []);
+        $rendered = $this->renderer->render('system_test', []);
+        $this->sendWithPhpMailer([
+            'recipient_email' => $recipientEmail,
+            'recipient_name' => 'CRM SMTP Test Recipient',
+            'reply_to_email' => $identity['email'],
+            'email_subject' => 'Catering CRM SMTP configuration test',
+        ], $identity, $rendered);
+    }
+
     /**
      * Store an encrypted, deduplicated email request. Required: type, recipient, template,
      * template_data and dedupe_key. sender may be crm_notifications, customer_service,

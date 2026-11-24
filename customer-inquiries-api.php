@@ -14,6 +14,7 @@ require __DIR__ . '/inquiry-common.php';
 require __DIR__ . '/quotations-schema.php';
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 require_once __DIR__ . '/booking-deadlines.php';        // CUSTOMER_MIN_DAYS_BEFORE_EVENT
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 
 $customerId = (int)sessionFirst(['customer_id', 'user_id', 'id']);
 if (!$customerId) fail('Please log in again.', 401);
@@ -264,6 +265,32 @@ if ($action === 'create') {
         'message' => 'Thank you! We received your inquiry for ' . $eventName . '. Please wait while our team reviews it.',
         'user_ids' => [$customerId], 'include_admins' => false,
     ]);
+    $recipient = EmailNotificationService::customerRecipient($db, $customerId, $email, $name);
+    EmailNotificationService::queue(
+        $db,
+        $customerId,
+        $recipient['email'],
+        $recipient['name'],
+        'inquiry_received',
+        'Inquiry received - ' . $ref,
+        [
+            'heading' => 'Inquiry Received',
+            'greeting' => $recipient['name'],
+            'message' => 'We received your inquiry. Submission of an inquiry does not confirm a booking or reserve the event date.',
+            'rows' => [
+                'Inquiry reference' => $ref,
+                'Event name' => $eventName,
+                'Event date' => date('F j, Y', strtotime($eventDate)),
+                'Service arrangement' => arrangementDisplay($arrangement),
+                'Submission status' => 'Submitted',
+            ],
+            'button_text' => 'View My Inquiries',
+            'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inquiries.html',
+        ],
+        'inquiry_received:' . $leadId,
+        'lead',
+        $leadId
+    );
     out(['success' => true, 'message' => 'Inquiry submitted. We will be in touch soon.', 'inquiry_ref' => $ref, 'inquiry_id' => $leadId]);
 }
 
@@ -290,7 +317,7 @@ if ($action === 'quotation_respond') {
     $db->beginTransaction();
     try {
         // the quotation must belong to one of THIS customer's inquiries
-        $st = $db->prepare("SELECT q.*, l.`$LEAD_PK` AS lead_pk, l.stage AS lead_stage, l.event_name AS lead_event_name, l.assigned_staff_id AS lead_staff_id FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
+        $st = $db->prepare("SELECT q.*, l.`$LEAD_PK` AS lead_pk, l.stage AS lead_stage, l.event_name AS lead_event_name, l.event_date AS lead_event_date, l.assigned_staff_id AS lead_staff_id FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
                             WHERE q.quotation_id = ? AND l.customer_id = ? FOR UPDATE");
         $st->execute([(int)($_POST['quotation_id'] ?? 0), $customerId]);
         $q = $st->fetch();
@@ -356,6 +383,36 @@ if ($action === 'quotation_respond') {
         'user_ids' => !empty($q['lead_staff_id']) ? [(int)$q['lead_staff_id']] : [],
         'exclude_user_id' => $customerId,
     ]);
+    if ($decision === 'accept') {
+        $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+        EmailNotificationService::queue(
+            $db,
+            $customerId,
+            $recipient['email'],
+            $recipient['name'],
+            'deposit_payment_required',
+            'Deposit payment required - ' . quoteRef($iid),
+            [
+                'heading' => 'Deposit Payment Required',
+                'greeting' => $recipient['name'],
+                'message' => 'You accepted the quotation. Acceptance does not confirm a booking. Pay the verified 20% deposit to reserve the event date.',
+                'amount' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
+                'rows' => [
+                    'Inquiry or quotation reference' => quoteRef($iid),
+                    'Event name' => $nfEvent,
+                    'Event date' => !empty($q['lead_event_date']) ? date('F j, Y', strtotime((string) $q['lead_event_date'])) : '',
+                    'Total quotation amount' => 'PHP ' . number_format((float) $q['total'], 2),
+                    'Required deposit' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
+                    'Quotation validity' => !empty($q['valid_until']) ? deadlineLabel((string) $q['valid_until'], $q['valid_until_time'] ?? null) : '',
+                ],
+                'button_text' => 'Review My Inquiries',
+                'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inquiries.html',
+            ],
+            'deposit_payment_required:' . (int) $q['quotation_id'],
+            'quotation',
+            (int) $q['quotation_id']
+        );
+    }
     $quote = quotesByInquiry($db, [$iid], true)[$iid] ?? null;
     out(['success' => true, 'decision' => $decision, 'quotation' => $quote,
          'message' => $decision === 'accept'

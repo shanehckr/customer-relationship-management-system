@@ -231,10 +231,13 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
         $mail = [
             'to_email'    => (string)($lead['customer_email'] ?? ''),
             'to_name'     => (string)($lead['customer_name'] ?? ''),
+            'customer_id' => (int)($lead['customer_id'] ?? 0),
+            'booking_id'  => $bookingId,
             'booking_ref' => $bookingRef,
             'event_name'  => (string)($lead['event_name'] ?? ''),
             'event_date'  => (string)($lead['event_date'] ?? ''),
             'location'    => (string)($lead['event_location'] ?? ''),
+            'arrangement' => arrangementDisplay($arrangement),
             'paid'        => $paid,
             'total'       => $total,
             'balance'     => $balance,
@@ -278,7 +281,7 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
                 error_log('Payment email skipped for ' . $mail['booking_ref'] . ': no valid customer email (got "' . $mail['to_email'] . '")');
             } else {
                 sendPaymentEmail($mail);
-                error_log('Payment email sent for ' . $mail['booking_ref'] . ' to ' . $mail['to_email']);
+                error_log('Payment email queued for booking ' . $mail['booking_ref']);
             }
         } catch (Throwable $e) {
             error_log('Payment email failed for ' . $mail['booking_ref'] . ': ' . $e->getMessage());
@@ -341,7 +344,7 @@ function emailBalancePayment(AppDatabase $db, array $mail, int $customerId, int 
             return;
         }
         sendPaymentEmail($mail);
-        error_log('Balance payment email sent for ' . $ref . ' to ' . $mail['to_email']);
+        error_log('Balance payment email queued for booking ' . $ref);
     } catch (Throwable $e) {
         error_log('Balance payment email failed for ' . ($mail['booking_ref'] ?? '?') . ': ' . $e->getMessage());
     }
@@ -427,10 +430,13 @@ function finalizeBalancePayment(AppDatabase $db, int $reqId, array $pay): void {
         $mail = [
             'to_email'    => '',                                   // looked up after the commit (inquiry email, then account email)
             'to_name'     => (string)($b['customer_name'] ?? ''),
+            'customer_id' => (int)($b['customer_id'] ?? $req['customer_id'] ?? 0),
+            'booking_id'  => (int)$b['booking_id'],
             'booking_ref' => (string)(($b['booking_ref'] ?? '') !== '' ? $b['booking_ref'] : 'BK-' . str_pad((string)$b['booking_id'], 4, '0', STR_PAD_LEFT)),
             'event_name'  => $ev,
             'event_date'  => (string)($b['event_date'] ?? ''),
             'location'    => (string)($b['location'] ?? ''),
+            'arrangement' => arrangementDisplay((string)($b['arrangement'] ?? '')),
             'paid'        => $paid,
             'total'       => $total,
             'balance'     => $balance,
