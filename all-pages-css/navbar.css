@@ -20,15 +20,15 @@
   --section-gap: 1.5rem;
   --field-gap: 1rem;
   /* Shared CRM palette: forest green for primary actions, mint for accents. */
-  --bg-color: #101815;
-  --panel-bg: #17231d;
-  --card-bg: #1b2922;
+  --bg-color: #000000;
+  --panel-bg: #091a14;
+  --card-bg: #091a14;
   --text-main: #ffffff;
   --text-muted: #b7c5bd;
   --border-color: rgba(183, 197, 189, 0.16);
   --primary-green: #156042;
   --accent-green: #2bb673;
-  --active-pill-bg: #156042;
+  --active-pill-bg: #3bb582;
   --notification-badge: #ff4d4f;
 }
 
@@ -445,7 +445,13 @@ html {
   cursor: pointer;
 }
 
-.sidebar-nav .nav-group-toggle .nav-text { flex: 1 1 auto; }
+.sidebar-nav .nav-group-toggle .nav-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* "Catering Operations" is long: a little less space around the ^ arrow so the FULL name and the arrow both fit in the pill */
+.sidebar-nav .nav-group-toggle { padding-right: 4px; }
+.sidebar-nav .nav-group-toggle .nav-text { letter-spacing: -0.02em; font-size: 12.5px; }
+.sidebar-nav .nav-group-toggle .nav-chevron { display: inline-block !important; flex: 0 0 auto; font-size: 11px; margin-left: auto; margin-right: 2px; opacity: .9; }
+.sidebar-nav .nav-group-toggle .nav-text + .nav-chevron { margin-left: -4px; }
 
 .nav-chevron {
   margin-left: auto;
@@ -667,3 +673,38 @@ html.sidebar-is-collapsed .crm-sidebar .nav-submenu .nav-sublink {
 }
 
 .user-avatar-btn.has-photo .user-avatar-initial { visibility: hidden; }
+
+
+/* Sidebar Inbox: red dot on the icon while there are unread messages (drawn by navbar.js, same for every role).
+   It sits on top of the icon's own white dot. */
+.sidebar-nav .nav-link .crm-unread-dot {
+  position: absolute;
+  display: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  pointer-events: none;
+  z-index: 3;
+}
+.sidebar-nav .nav-link.has-unread .crm-unread-dot { display: block; }
+
+
+/* Admin / Manager / Sales / CS sidebar: the green selected pill ends inside the sidebar,
+   with the same space on the left and the right (8px each). The gap is made with the list padding, so link widths cannot override it.
+   Expanded sidebar only; collapsed and phone sidebars are not touched. */
+@media (min-width: 769px) {
+  html:not(.role-customer):not(.sidebar-is-collapsed) .crm-sidebar:not(.collapsed) .sidebar-nav ul {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    box-sizing: border-box !important;
+    max-width: 100% !important;
+  }
+  html:not(.role-customer):not(.sidebar-is-collapsed) .crm-sidebar:not(.collapsed) .sidebar-nav ul > li,
+  html:not(.role-customer):not(.sidebar-is-collapsed) .crm-sidebar:not(.collapsed) .sidebar-nav .nav-link:not(.nav-sublink) {
+    box-sizing: border-box !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin-right: 0 !important;
+  }
+}

@@ -1,6 +1,6 @@
 /**
  * signup.js - Customer Sign-Up wizard (4 steps)
- *   1 mobile number -> 2 OTP -> 3 full name -> 4 email / username / password
+ *   1 email -> 2 OTP (sent by email, valid 5 minutes) -> 3 full name -> 4 mobile number / username / password
  * Talks to signup-api.php (send_otp, verify_otp, create_account).
  */
 (function () {
@@ -18,10 +18,13 @@
   var alertBox = $("suAlert");
   var otp = Array.prototype.slice.call(form.querySelectorAll(".otp-input"));
 
+  var OTP_EXPIRY_SECONDS = 300;   // 5 minutes
+  var RESEND_SECONDS = 30;
+
   var state = {
     step: 1,
-    phone: "",           // 10 digits entered in step 1
-    verifiedPhone: "",   // set after step 2 succeeds
+    email: "",           // email entered in step 1
+    verifiedEmail: "",   // set after step 2 succeeds
     resendLeft: 0,
     expiryLeft: 0,
     ticker: null,
@@ -108,7 +111,7 @@
     $("suCount").textContent = "Step " + n + " of 4";
     clearAlert();
 
-    var focusId = { 1: "suPhone", 3: "suFullName", 4: "suEmail" }[n];
+    var focusId = { 1: "suEmail", 3: "suFullName", 4: "suPhone" }[n];
     if (focusId) $(focusId).focus();
     if (n === 2) otp[0].focus();
   }
@@ -119,7 +122,69 @@
     });
   });
 
-  /* ---------------- step 1: phone ---------------- */
+  /* ---------------- step 1: email ---------------- */
+
+  var emailInput = $("suEmail");
+  var EMAIL_RE = /^[^\s@]+@gmail\.com$/i;   // Gmail only; use /^[^\s@]+@[^\s@]+\.[^\s@]+$/ to allow any provider
+
+  function maskEmail(addr) {
+    var at = addr.indexOf("@");
+    var name = addr.slice(0, at);
+    var shown = name.slice(0, Math.min(2, name.length));
+    return shown + "\u2022\u2022\u2022\u2022" + addr.slice(at);
+  }
+
+  function sendCode(isResend) {
+    var address = emailInput.value.trim().toLowerCase();
+    if (!EMAIL_RE.test(address)) {
+      showStep(1);
+      return markInvalid(emailInput, "Enter a valid Gmail address, like yourname@gmail.com.");
+    }
+
+    // already verified this exact email: no need for another code
+    if (!isResend && state.verifiedEmail === address) {
+      showStep(3);
+      return;
+    }
+
+    var btn = isResend ? $("suResendBtn") : $("suSendBtn");
+    if (isResend) {
+      state.busy = true;
+      btn.disabled = true;
+      btn.textContent = "Sending...";
+    } else {
+      setBusy(btn, true, "Sending...");
+    }
+
+    api("send_otp", { email: address }).then(function (res) {
+      if (isResend) {
+        state.busy = false;
+        renderTimers();
+      } else {
+        setBusy(btn, false);
+      }
+
+      if (!res.success) {
+        if (res.resend_in) {
+          state.resendLeft = res.resend_in;
+          renderTimers();
+        }
+        showAlert(res.message || "We could not send the code. Try again.");
+        return;
+      }
+
+      state.email = address;
+      state.verifiedEmail = "";
+      $("suMasked").textContent = maskEmail(address);
+      clearOtp();
+      // the code is valid for 5 minutes, whatever the server says
+      startTimers(res.resend_in || RESEND_SECONDS, OTP_EXPIRY_SECONDS);
+      showStep(2);
+      if (isResend) showAlert("A new code was sent to your email.", "success");
+    });
+  }
+
+  /* ---------------- phone helpers (used on step 4) ---------------- */
 
   var phoneInput = $("suPhone");
 
@@ -138,59 +203,6 @@
     var formatted = formatPhone(cleanPhone(phoneInput.value));
     if (phoneInput.value !== formatted) phoneInput.value = formatted;
   });
-
-  function maskPhone(d) {
-    return "+63 " + d.slice(0, 3) + " \u2022\u2022\u2022 " + d.slice(-4);
-  }
-
-  function sendCode(isResend) {
-    var digits = cleanPhone(phoneInput.value);
-    if (!/^9\d{9}$/.test(digits)) {
-      showStep(1);
-      return markInvalid(phoneInput, "Enter a valid Philippine mobile number, like 917 123 4567.");
-    }
-
-    // already verified this exact number: no need for another code
-    if (!isResend && state.verifiedPhone === digits) {
-      showStep(3);
-      return;
-    }
-
-    var btn = isResend ? $("suResendBtn") : $("suSendBtn");
-    if (isResend) {
-      state.busy = true;
-      btn.disabled = true;
-      btn.textContent = "Sending...";
-    } else {
-      setBusy(btn, true, "Sending...");
-    }
-
-    api("send_otp", { phone: digits }).then(function (res) {
-      if (isResend) {
-        state.busy = false;
-        renderTimers();
-      } else {
-        setBusy(btn, false);
-      }
-
-      if (!res.success) {
-        if (res.resend_in) {
-          state.resendLeft = res.resend_in;
-          renderTimers();
-        }
-        showAlert(res.message || "We could not send the code. Try again.");
-        return;
-      }
-
-      state.phone = digits;
-      state.verifiedPhone = "";
-      $("suMasked").textContent = maskPhone(digits);
-      clearOtp();
-      startTimers(res.resend_in || 30, res.expires_in || 300);
-      showStep(2);
-      if (isResend) showAlert("A new code is on its way.", "success");
-    });
-  }
 
   /* ---------------- step 2: OTP ---------------- */
 
@@ -259,6 +271,9 @@
       ? "Code expires in " + formatTime(state.expiryLeft)
       : "This code has expired. Request a new one.";
 
+    var verifyBtn = $("suVerifyBtn");
+    if (!state.busy) verifyBtn.disabled = state.expiryLeft <= 0;
+
     var resend = $("suResendBtn");
     if (state.busy && resend.disabled) return;   // "Sending..." is showing
     if (state.resendLeft > 0) {
@@ -284,6 +299,10 @@
   }
 
   function verifyCode() {
+    if (state.expiryLeft <= 0) {
+      showAlert("This code has expired. Request a new one.");
+      return;
+    }
     var code = getCode();
     if (code.length !== 6) {
       showAlert("Enter all 6 digits.");
@@ -299,7 +318,7 @@
       setBusy(btn, false);
 
       if (res.success) {
-        state.verifiedPhone = state.phone;
+        state.verifiedEmail = state.email;
         clearInterval(state.ticker);
         showStep(3);
         return;
@@ -308,6 +327,7 @@
       if (res.expired) {
         state.expiryLeft = 0;
         state.resendLeft = 0;
+        clearInterval(state.ticker);
         renderTimers();
       }
       clearOtp();
@@ -320,7 +340,7 @@
     if (!state.busy) sendCode(true);
   });
 
-  $("suChangePhone").addEventListener("click", function () {
+  $("suChangeEmail").addEventListener("click", function () {
     showStep(1);
   });
 
@@ -349,7 +369,8 @@
   });
 
   var FIELD_IDS = {
-    email: "suEmail",
+    email: "suEmail",   // lives on step 1 (handled separately below)
+    phone: "suPhone",
     username: "suUsername",
     password: "suPassword",
     confirm_password: "suConfirm",
@@ -357,14 +378,15 @@
   };
 
   function createAccount() {
-    var email = $("suEmail");
+    var phone = $("suPhone");
     var username = $("suUsername");
     var password = $("suPassword");
     var confirm = $("suConfirm");
     var terms = $("suTerms");
 
-    if (!/^[^\s@]+@gmail\.com$/i.test(email.value.trim())) {
-      return markInvalid(email, "Enter a valid Gmail address, like yourname@gmail.com.");
+    var phoneDigits = cleanPhone(phone.value);
+    if (!/^9\d{9}$/.test(phoneDigits)) {
+      return markInvalid(phone, "Enter a valid Philippine mobile number, like 917 123 4567.");
     }
     if (!/^[A-Za-z0-9_.]{4,30}$/.test(username.value.trim())) {
       return markInvalid(username, "Username must be 4 to 30 characters: letters, numbers, dot or underscore.");
@@ -387,7 +409,8 @@
 
     api("create_account", {
       full_name: $("suFullName").value,
-      email: email.value.trim(),
+      email: state.verifiedEmail,
+      phone: phoneDigits,
       username: username.value.trim(),
       password: pw,
       confirm_password: confirm.value,
@@ -404,7 +427,7 @@
       setBusy(btn, false);
 
       if (res.restart) {
-        state.verifiedPhone = "";
+        state.verifiedEmail = "";
         showStep(1);
         showAlert(res.message);
         return;
@@ -412,6 +435,12 @@
       if (res.step === 3) {
         showStep(3);
         showAlert(res.message);
+        return;
+      }
+      if (res.field === "email") {
+        state.verifiedEmail = "";
+        showStep(1);
+        markInvalid(emailInput, res.message);
         return;
       }
       if (res.field && FIELD_IDS[res.field]) {

@@ -11,20 +11,10 @@
        ?action=ticket_messages&ticket_id=ID -> { success, ticket, messages: [...] } -->
 <div class="iq-page iq-page--sales csi-page mi-page" id="managerInboxPage" data-api="manager-admin-inbox-api.php">
 
-  <header class="mi-page-heading">
-    <span class="mi-heading-icon" aria-hidden="true"><i class="bi bi-chat-square-text-fill"></i></span>
-    <div class="mi-heading-copy">
-      <h2>Customer Conversations</h2>
-      <p>Manage and respond to customer inquiries, bookings, and support messages.</p>
-    </div>
-    <svg class="mi-heading-art" viewBox="0 0 280 150" aria-hidden="true" focusable="false">
-      <path d="M16 96 136 42l127 40-10 56-126 9L16 126Z" />
-      <path d="m28 91 105 47 116-49-1 48-113 13-107-25Z" />
-      <path d="m31 86 103 44 107-40-47-38-65 23-48-20Z" />
-      <rect x="172" y="19" width="66" height="49" rx="18" />
-      <path d="M190 35h31m-31 12h22" />
-    </svg>
-  </header>
+  <!-- Same heading block as the Sales Staff / Customer inbox, so the title sits in the same position -->
+  <div class="mb-4">
+    <h2 class="fw-bold text-uppercase mb-1">INBOX</h2>
+  </div>
 
   <!-- Tabs -->
   <div class="mi-top">
@@ -68,14 +58,14 @@
           <div class="dropdown">
             <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                     data-bs-toggle="dropdown" aria-expanded="false">
-              <span id="miStaffLabel">Sales</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+              <span id="miStaffLabel">All Sales Staff</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
             </button>
             <ul class="dropdown-menu custom-dropdown-menu" id="miStaffMenu" data-mi-filter="staff"></ul>
           </div>
           <div class="dropdown">
             <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                     data-bs-toggle="dropdown" aria-expanded="false">
-              <span id="miReadLabel">Status</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+              <span id="miReadLabel">All Messages</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
             </button>
             <ul class="dropdown-menu custom-dropdown-menu" id="miReadMenu" data-mi-filter="read">
               <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="all">All Messages</a></li>
@@ -109,7 +99,7 @@
           <button type="button" class="btn iq-back csi-back" id="miBack"><i class="bi bi-arrow-left" aria-hidden="true"></i>Back</button>
           <span class="iq-avatar" id="miAvatar" aria-hidden="true">--</span>
           <div class="iq-head-main">
-            <div class="iq-customer"><span id="miName"></span><span class="csi-ref" id="miRef"></span></div>
+            <div class="iq-customer"><span id="miName"></span> <span class="csi-ref" id="miRef"></span></div>
             <span class="csi-subject" id="miSubject"></span>
           </div>
           <div class="csi-head-actions">

@@ -1641,17 +1641,20 @@ function crmAvDetailHTML(record, mine) {
     "</div>" +
     '<section class="card iq-detail-card av-d-card">' +
       '<div class="av-d-card-head"><h3 class="iq-section-title">Event Details</h3><span class="av-d-tag">' + (mine ? "Assigned Inquiry Record" : "Available Inquiry Record") + '</span></div>' +
-      '<div class="av-d-grid">' +
-        field("Event Name", dash(f.title), "is-lg is-wide") +
+      '<div class="av-d-grid av-d-even">' +
+        field("Event Name", dash(f.title)) +
         field("Event Date", dash(f.eventDate)) +
         (f.eventTime ? field(f.timeLabel, dash(f.eventTime)) : "") +
         field("Catering Arrangement", dash(f.arrangement)) +
         (f.hasPax ? field("Number of Guests (PAX)", dash(f.guestsNum ? f.guestsNum + " Guests" : ""), "is-green") : "") +
       "</div>" +
-      '<div class="av-d-split">' +
-        field(f.locationLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
-        '<div><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
+      '<div class="av-d-addr">' +
+        '<div class="av-d-subhead">' + crmEscape(f.locationLabel) + "</div>" +
+        '<div class="av-d-grid av-d-even av-d-addr-grid">' +
+          field(/deliver/i.test(f.arrangement) ? "Street / Address" : /pick-?up/i.test(f.arrangement) ? "Pickup Location" : "Venue / Address", dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
+        "</div>" +
       "</div>" +
+      '<div class="av-d-addr"><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
     "</section>" +
     '<section class="card iq-detail-card av-d-card">' +
       '<div class="av-d-card-head"><h3 class="iq-section-title">Customer Information</h3></div>' +
@@ -1740,19 +1743,24 @@ function crmAvMineDetailHTML(record) {
       field("Contact Number", dash(pick(["customer_phone", "contact_number", "phone", "phone_number"]))) +
     "</div>");
 
-  // C. Event Information
+  // C. Event Information (ONE card: event facts on top, address below, special requests last)
+  const addrTitle = f.locationLabel;
+  const addrLabel = /deliver/i.test(f.arrangement) ? "Street / Address" : /pick-?up/i.test(f.arrangement) ? "Pickup Location" : "Venue / Address";
   const secC = card("C", "Event Information", "",
-    '<div class="av-d-grid av-d-grid-3">' +
-      field("Event Name", dash(f.title), "is-lg is-wide") +
+    '<div class="av-d-grid av-d-even">' +
+      field("Event Name", dash(f.title)) +
       field("Event Date", dash(f.eventDate)) +
       (f.eventTime ? field(f.timeLabel, dash(f.eventTime)) : "") +
-      (f.hasPax ? field("Number of Guests (PAX)", crmEscape(guests), "is-green") : "") +
       field("Catering Arrangement", dash(f.arrangement)) +
+      (f.hasPax ? field("Number of Guests (PAX)", crmEscape(guests), "is-green") : "") +
     "</div>" +
-    '<div class="av-d-split">' +
-      field(f.locationLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
-      '<div><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
-    "</div>");
+    '<div class="av-d-addr">' +
+      '<div class="av-d-subhead">' + crmEscape(addrTitle) + "</div>" +
+      '<div class="av-d-grid av-d-even av-d-addr-grid">' +
+        field(addrLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
+      "</div>" +
+    "</div>" +
+    '<div class="av-d-addr"><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>");
 
   // D. Food Orders
   const items = [record.food_orders, record.menu_items, record.items].find(Array.isArray) || [];
@@ -1800,7 +1808,7 @@ function crmAvMineDetailHTML(record) {
               '<button type="button" class="btn av-d-btn av-d-btn-warn" data-av-action="quotation-revise">Prepare Revised Version</button>'
             : "")) +
     "</div>";
-  const secF = card("F", "Quotation Information",
+  const secF = card("E", "Quotation Information",
     (qStatus ? '<span class="stage-pill ' + qStatusClass + ' av-d-head-pill">' + crmEscape(qStatus) + "</span>" : "") +
       (hasQuote ? '<span class="av-d-total">' + crmEscape(crmAvMoney(qAmountRaw)) + "</span>" : ""),
     (hasQuote
@@ -1820,7 +1828,7 @@ function crmAvMineDetailHTML(record) {
   const bRef = crmInquiryPick(b, ["reference", "booking_ref", "ref"]) || pick(["booking_ref", "booking_reference", "linked_booking"]);
   const bStatus = crmInquiryPick(b, ["status", "booking_status"]) || pick(["booking_status"]);
   const secG = bRef
-    ? card("G", "Linked Booking", '<span class="av-d-head-pill-ok stage-pill stage-won">Booking Created</span><span class="av-d-ref">' + crmEscape(bRef) + "</span>",
+    ? card("F", "Linked Booking", '<span class="av-d-head-pill-ok stage-pill stage-won">Booking Created</span><span class="av-d-ref">' + crmEscape(bRef) + "</span>",
         '<div class="av-d-grid">' +
           field("Booking Reference", dash(bRef), "is-green") +
           field("Booking Status", dash(bStatus)) +
@@ -3078,17 +3086,24 @@ function crmInitManagerInbox(root) {
     salesCount: $("#miSalesCount"), supportCount: $("#miSupportCount"),
   };
 
+  // "N Unread" pill on the right of the list header (same pill as the Sales / CS inbox)
+  const unreadPill = document.createElement("span");
+  unreadPill.className = "stage-pill stage-won mi-unread-pill";
+  unreadPill.hidden = true;
+  const pillRow = el.listTitle && (el.listTitle.closest(".csi-list-title") || el.listTitle.parentElement);
+  if (pillRow) pillRow.appendChild(unreadPill);
+
   // One config per tab, so both tabs share the same code.
   const TABS = {
     sales: {
       list: "list_conversations", listKey: "conversations", messages: "conversation_messages", idParam: "conversation_id", itemKey: "conversation",
-      title: "Conversations", search: "Search customer, inquiry, or message...", allStaff: "Sales", staffWord: "Sales",
+      title: "Conversations", search: "Search customer, inquiry, or message...", allStaff: "All Sales Staff", staffWord: "Sales",
       empty: "No sales conversations yet.", openLabel: "Open Inquiry Details", openIcon: "bi-folder2-open",
       handled: "Customer replies are handled by assigned Sales Staff.", responsible: "Responsible Sales Staff",
     },
     support: {
       list: "list_tickets", listKey: "tickets", messages: "ticket_messages", idParam: "ticket_id", itemKey: "ticket",
-      title: "Support Tickets", search: "Search customer or ticket ID...", allStaff: "Support", staffWord: "CS",
+      title: "Support Tickets", search: "Search customer or ticket ID...", allStaff: "All Customer Service Staff", staffWord: "CS",
       empty: "No support tickets yet.", openLabel: "View Ticket Details", openIcon: "bi-ticket-detailed",
       handled: "Customer replies are handled by assigned Customer Service Staff.", responsible: "Responsible Customer Service Staff",
     },
@@ -3184,7 +3199,7 @@ function crmInitManagerInbox(root) {
     if (st.staff !== "all" && !names.includes(st.staff)) st.staff = "all";
     el.staffMenu.innerHTML = dropdownItems([{ value: "all", label: cfg().allStaff }].concat(names.map((n) => ({ value: n, label: n }))), st.staff);
     el.staffLabel.textContent = st.staff === "all" ? cfg().allStaff : st.staff;
-    el.readLabel.textContent = { all: "Status", unread: "Unread", read: "Read" }[st.read];
+    el.readLabel.textContent = { all: "All Messages", unread: "Unread", read: "Read" }[st.read];
     el.unreadToggle.setAttribute("aria-pressed", st.read === "unread" ? "true" : "false");
     el.all.classList.toggle("is-active", st.staff === "all" && st.read === "all" && !el.search.value.trim());
     el.all.setAttribute("aria-pressed", st.staff === "all" && st.read === "all" && !el.search.value.trim() ? "true" : "false");
@@ -3207,20 +3222,21 @@ function crmInitManagerInbox(root) {
     const unread = items().filter((t) => t.unread > 0).length;
     el.unread.hidden = unread === 0;
     el.unread.textContent = String(unread);
+    unreadPill.hidden = unread === 0;
+    unreadPill.textContent = unread + " Unread";
 
     el.list.innerHTML = rows.map((t) =>
       '<button type="button" class="csi-item' + (t.unread > 0 ? " is-unread" : "") + '" data-id="' + crmEscape(t.id) + '"' +
       (t.id === st.id ? ' aria-current="true"' : "") + ">" +
-        '<span class="csi-item-top">' +
-          crmAvatarHTML(crmTicketInitials(t.name), t.photo, "csi-item-avatar") +
-          '<span class="csi-item-name">' + crmEscape(t.name) + "</span>" +
-          '<span class="csi-item-time">' + crmEscape(listTime(t.lastAt)) + "</span>" +
+        crmAvatarHTML(crmTicketInitials(t.name), t.photo, "csi-item-avatar") +
+        '<span class="mi-item-main">' +
+          '<span class="mi-item-line mi-item-sub"><span class="csi-ref">' + crmEscape(t.ref) + "</span>" +
+            '<span class="mi-item-staff' + (t.staff ? "" : " is-unassigned") + '"><i class="bi bi-person" aria-hidden="true"></i><span>' + crmEscape(t.staff || "Unassigned") + "</span></span></span>" +
+          '<span class="mi-item-line"><span class="csi-item-name">' + crmEscape(t.name) + "</span>" +
+            '<span class="csi-item-time">' + crmEscape(listTime(t.lastAt)) + "</span></span>" +
+          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape(t.lastMessage || t.subject) + "</span>" +
+            (t.unread > 0 ? '<span class="csi-dot" aria-label="Unread"></span>' : "") + "</span>" +
         "</span>" +
-        '<span class="csi-item-meta"><span class="mi-item-ref"><span class="csi-ref">' + crmEscape(t.ref) + "</span>" +
-          '<span class="mi-item-staff">' + crmEscape(t.staff || "Unassigned") + "</span></span>" +
-          (t.unread > 0 ? '<span class="csi-dot" aria-label="Unread"></span>' : "") + "</span>" +
-        (t.subject ? '<span class="mi-item-title">' + crmEscape(t.subject) + "</span>" : "") +
-        '<span class="csi-item-preview">' + crmEscape(t.lastMessage || t.subject) + "</span>" +
       "</button>"
     ).join("");
 
@@ -6134,11 +6150,17 @@ function crmInitMenuManagement(page) {
     modal('mmDiscardModal').hide();
   });
 
+  // Portion tiers are available for every category (Bilao may still use a single price instead).
+  function syncTierPanel(category) {
+    const cat = category || form.elements.category.value;
+    $('mmTiers').hidden = false;
+    $('mmPrice').placeholder = cat === 'Bilao' ? 'e.g. 1,150 (or add portion tiers below)' : 'Tier prices are entered below';
+  }
   function resetForm(item) {
     form.reset();
     ['item_name', 'category', 'display_price', 'serving_specs', 'tiers', 'photo'].forEach((n) => fieldError(n, ''));
       setDd($('mmCategoryDd'), item ? item.category : 'Lechon', false);
-      $('mmTiers').hidden = !!(item && item.category === 'Bilao');
+      syncTierPanel();
     $('mmFormError').hidden = true;
     state.editId = item ? item.id : null;
     $('mmFormTitle').textContent = item ? 'Edit Menu Item' : 'Add New Menu Item';
@@ -6156,15 +6178,18 @@ function crmInitMenuManagement(page) {
     let ok = true;
     const category = form.elements.category.value;
     const need = { item_name: 'Enter the item name.' };
-    if (category === 'Bilao') need.display_price = 'Enter the item price.';
     Object.keys(need).forEach((n) => {
       const empty = !form.elements[n].value.trim();
       fieldError(n, empty ? need[n] : ''); if (empty) ok = false;
     });
-    const tierCheck = category === 'Bilao' ? { tiers: [], error: '' } : readTiers();
+    const tierCheck = readTiers();
     fieldError('tiers', tierCheck.error);
     if (tierCheck.error) ok = false;
     if (category !== 'Bilao' && !tierCheck.tiers.length) { fieldError('tiers', 'Add at least one price tier.'); ok = false; }
+    // Bilao: either portion tiers or one item price
+    if (category === 'Bilao' && !tierCheck.tiers.length && !form.elements.display_price.value.trim()) {
+      fieldError('display_price', 'Add a portion tier below or enter the item price.'); ok = false;
+    }
     const file = form.elements.photo.files[0];
     if (!file && !state.editId) { fieldError('photo', 'Upload a photo of the item.'); ok = false; }
     else if (file && !/^image\/(png|jpe?g|webp)$/.test(file.type)) { fieldError('photo', 'Use a PNG, JPG or WEBP photo.'); ok = false; }
@@ -6206,7 +6231,7 @@ function crmInitMenuManagement(page) {
       const pickedPhoto = form.elements.photo.files[0];
       if (pickedPhoto) { const small = await shrinkPhoto(pickedPhoto); if (small) body.set('photo', small, small.name); }
       body.set('csrf_token', state.csrf);
-      body.set('tiers', JSON.stringify(form.elements.category.value === 'Bilao' ? [] : readTiers().tiers));
+      body.set('tiers', JSON.stringify(readTiers().tiers));
       if (state.editId) body.set('menu_item_id', state.editId);
       const data = await call(state.editId ? 'edit' : 'add', body);
       if (state.editId) state.items = state.items.map((i) => (i.id === data.item.id ? data.item : i));
@@ -6279,9 +6304,7 @@ function crmInitMenuManagement(page) {
   $('mmCategoryDd').addEventListener('click', (e) => {
     const option = e.target.closest('.custom-dropdown-item');
     if (!option) return;
-    const category = option.dataset.value;
-    $('mmTiers').hidden = category === 'Bilao';
-    $('mmPrice').placeholder = category === 'Bilao' ? 'e.g. 1,150' : 'Tier prices are entered below';
+    syncTierPanel(option.dataset.value);
   });
   $('mmAddTier').addEventListener('click', () => {
     if (tierBox().children.length >= MAX_TIERS) return;

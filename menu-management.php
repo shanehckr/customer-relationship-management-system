@@ -371,12 +371,18 @@ try {
             respond(400, ["success" => false, "message" => "Choose a valid category."]);
         }
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
-        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
-        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
-        $tierPrices = array_column($tiers, "price");
-        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
-        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
-        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
+        // Every category can use portion tiers. Lechon and Viands need at least one;
+        // Bilao may use tiers too, or a single item price when it has no tiers.
+        if ($category !== "Bilao" && !$tiers) respond(400, ["success" => false, "message" => "Add at least one pricing tier."]);
+        if (!$tiers && $price === "") respond(400, ["success" => false, "message" => "Add a pricing tier or enter an item price."]);
+        if ($tiers) {
+            $tierPrices = array_column($tiers, "price");
+            $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+            $basePrice = null;
+        } else {
+            $basePrice = menu_base_price($price);
+            if ($basePrice === null) respond(400, ["success" => false, "message" => "Enter a valid item price."]);
+        }
         if ($tiers && !$tiersReady) {
             respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }
@@ -431,12 +437,18 @@ try {
         }
 
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
-        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
-        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
-        $tierPrices = array_column($tiers, "price");
-        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
-        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
-        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
+        // Every category can use portion tiers. Lechon and Viands need at least one;
+        // Bilao may use tiers too, or a single item price when it has no tiers.
+        if ($category !== "Bilao" && !$tiers) respond(400, ["success" => false, "message" => "Add at least one pricing tier."]);
+        if (!$tiers && $price === "") respond(400, ["success" => false, "message" => "Add a pricing tier or enter an item price."]);
+        if ($tiers) {
+            $tierPrices = array_column($tiers, "price");
+            $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+            $basePrice = null;
+        } else {
+            $basePrice = menu_base_price($price);
+            if ($basePrice === null) respond(400, ["success" => false, "message" => "Enter a valid item price."]);
+        }
         if ($tiers && !$tiersReady) {
             respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }

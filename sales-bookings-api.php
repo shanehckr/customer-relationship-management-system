@@ -95,7 +95,8 @@ if ($action === 'list') {
             'booking_ref' => $ref,
             'booking_label' => (trim((string)($b['event_title'] ?? '')) !== '' ? trim((string)$b['event_title']) . ' (' . $ref . ')' : $ref),
             'inquiry_id' => $b['inquiry_id'] !== null ? (int)$b['inquiry_id'] : null,
-            'customer_name' => $b['customer_name'], 'event_title' => $b['event_title'],
+            'customer_name' => trim((string)($b['customer_name'] ?? '')) !== '' ? $b['customer_name'] : ($lead['customer_name'] ?? ''),   // fall back to the inquiry's customer when the booking row has no name
+            'event_title' => $b['event_title'],
             'customer_phone' => $lead['customer_phone'] ?? '', 'customer_email' => $lead['customer_email'] ?? '',
             'customer_photo' => $lead['customer_photo'] ?? '',
             'event_date' => $b['event_date'], 'event_time' => $b['event_time'],
