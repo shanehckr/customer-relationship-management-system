@@ -11,9 +11,20 @@
        ?action=ticket_messages&ticket_id=ID -> { success, ticket, messages: [...] } -->
 <div class="iq-page iq-page--sales csi-page mi-page" id="managerInboxPage" data-api="manager-admin-inbox-api.php">
 
-  <div class="mb-4">
-    <h2 class="fw-bold text-uppercase mb-1">Customer Conversation Inbox</h2>
-  </div>
+  <header class="mi-page-heading">
+    <span class="mi-heading-icon" aria-hidden="true"><i class="bi bi-chat-square-text-fill"></i></span>
+    <div class="mi-heading-copy">
+      <h2>Customer Conversations</h2>
+      <p>Manage and respond to customer inquiries, bookings, and support messages.</p>
+    </div>
+    <svg class="mi-heading-art" viewBox="0 0 280 150" aria-hidden="true" focusable="false">
+      <path d="M16 96 136 42l127 40-10 56-126 9L16 126Z" />
+      <path d="m28 91 105 47 116-49-1 48-113 13-107-25Z" />
+      <path d="m31 86 103 44 107-40-47-38-65 23-48-20Z" />
+      <rect x="172" y="19" width="66" height="49" rx="18" />
+      <path d="M190 35h31m-31 12h22" />
+    </svg>
+  </header>
 
   <!-- Tabs -->
   <div class="mi-top">
@@ -39,28 +50,32 @@
     <section class="csi-list-pane" aria-label="Conversations">
       <div class="csi-list-head">
         <div class="csi-list-title">
-          <h3 class="iq-pool-title"><i class="bi bi-chat-dots-fill" aria-hidden="true"></i><span id="miListTitle">Conversations</span></h3>
-          <span class="stage-pill stage-won" id="miUnread" hidden>0 Unread</span>
+          <h3 class="iq-pool-title"><i class="bi bi-chat-dots-fill" aria-hidden="true"></i><span id="miListTitle">Conversations</span> <span class="mi-list-count" id="miListCount">0</span></h3>
+          <div class="mi-list-tools">
+            <span class="mi-sort-icon" aria-label="Sorted by latest activity" title="Sorted by latest activity"><i class="bi bi-sort-down" aria-hidden="true"></i></span>
+            <button type="button" class="mi-clear" id="miClear" aria-label="Clear filters" title="Clear filters"><i class="bi bi-funnel" aria-hidden="true"></i></button>
+          </div>
         </div>
 
         <div class="position-relative mb-3">
           <i class="bi bi-search search-icon position-absolute top-50 translate-middle-y ms-3" aria-hidden="true"></i>
           <input type="search" id="miSearch" class="form-control table-search-input ps-5"
-                 placeholder="Search customer or inquiry ID..." aria-label="Search conversations" autocomplete="off">
+                 placeholder="Search customer, inquiry, or message..." aria-label="Search conversations" autocomplete="off">
         </div>
 
         <div class="mi-filters">
+          <button type="button" class="mi-filter-all is-active" id="miAll" aria-pressed="true">All</button>
           <div class="dropdown">
             <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                     data-bs-toggle="dropdown" aria-expanded="false">
-              <span id="miStaffLabel">All Sales Staff</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+              <span id="miStaffLabel">Sales</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
             </button>
             <ul class="dropdown-menu custom-dropdown-menu" id="miStaffMenu" data-mi-filter="staff"></ul>
           </div>
           <div class="dropdown">
             <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                     data-bs-toggle="dropdown" aria-expanded="false">
-              <span id="miReadLabel">All Messages</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
+              <span id="miReadLabel">Status</span><i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
             </button>
             <ul class="dropdown-menu custom-dropdown-menu" id="miReadMenu" data-mi-filter="read">
               <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="all">All Messages</a></li>
@@ -68,11 +83,7 @@
               <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="read">Read</a></li>
             </ul>
           </div>
-        </div>
-
-        <div class="mi-sort">
-          <span>Sorted by: <strong>Latest Activity</strong></span>
-          <button type="button" class="mi-clear" id="miClear">Clear Filters</button>
+          <button type="button" class="mi-unread-toggle" id="miUnreadToggle" aria-pressed="false">Unread <span class="mi-unread-count" id="miUnread" hidden>0</span><span class="mi-switch" aria-hidden="true"></span></button>
         </div>
       </div>
 
@@ -104,8 +115,8 @@
           <div class="csi-head-actions">
             <span class="stage-pill" id="miPriority" hidden></span>
             <span class="stage-pill" id="miStatus"></span>
-            <button type="button" class="btn csi-outline-btn" id="miOpen">
-              <i class="bi bi-folder2-open" aria-hidden="true"></i><span id="miOpenLabel">Open Inquiry Details</span>
+            <button type="button" class="btn csi-outline-btn" id="miOpen" aria-label="Open conversation details" title="Open conversation details">
+              <i class="bi bi-three-dots" aria-hidden="true"></i><span class="visually-hidden" id="miOpenLabel">Open Inquiry Details</span>
             </button>
           </div>
         </div>

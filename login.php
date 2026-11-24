@@ -79,7 +79,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         u.email,
                         u.password_hash,
                         u.role_id,
-                        u.status,
+                        u.account_status AS status,
+                        u.failed_login_attempts,
+                        u.locked_until,
                         r.role_name
                      FROM users AS u
                      INNER JOIN roles AS r ON r.role_id = u.role_id
@@ -97,15 +99,36 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 $user = $statement->get_result()->fetch_assoc();
                 $statement->close();
 
-                // Verify the password hash and use a generic failure message.
-                if (
-                    !$user ||
-                    !password_verify($password, $user["password_hash"]) ||
-                    $user["status"] !== "Active"
-                ) {
+                $isLocked = $user && !empty($user["locked_until"]) && strtotime($user["locked_until"]) > time();
+                $validPassword = $user && password_verify($password, $user["password_hash"]);
+                $loginOk = $user && !$isLocked && $validPassword && $user["status"] === "Active";
+                $attemptedEmail = mb_substr($identifier, 0, 255);
+                $ipAddress = mb_substr((string)($_SERVER["REMOTE_ADDR"] ?? ""), 0, 45);
+                $attempt = $conn->prepare("INSERT INTO login_attempts (user_id, email_attempted, ip_address, success) VALUES (?, ?, ?, ?)");
+                $attemptUserId = $user ? (int)$user["user_id"] : null;
+                $attemptSuccess = $loginOk ? 1 : 0;
+                $attempt->bind_param("issi", $attemptUserId, $attemptedEmail, $ipAddress, $attemptSuccess);
+                $attempt->execute();
+                $attempt->close();
+
+                if (!$loginOk) {
+                    if ($user && !$isLocked) {
+                        $failure = $conn->prepare("UPDATE users SET
+                            failed_login_attempts = LEAST(3, failed_login_attempts + 1),
+                            locked_until = IF(failed_login_attempts >= 3, DATE_ADD(NOW(), INTERVAL 15 MINUTE), NULL),
+                            last_failed_login_at = NOW()
+                            WHERE user_id = ?");
+                        $failure->bind_param("i", $user["user_id"]);
+                        $failure->execute();
+                        $failure->close();
+                    }
                     $errorMessage = "Invalid username/email or password.";
                     $successMessage = "";
                 } else {
+                    $success = $conn->prepare("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = NOW() WHERE user_id = ?");
+                    $success->bind_param("i", $user["user_id"]);
+                    $success->execute();
+                    $success->close();
                     // Regenerate the session ID after authentication.
                     session_regenerate_id(true);
 
@@ -149,6 +172,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
   <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+  <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
   <script src="all-pages-js/theme.js"></script>
   <script>
     if (sessionStorage.getItem('pageTransition') === 'true') {
@@ -189,13 +213,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
           <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION["login_csrf_token"] ?? "", ENT_QUOTES, "UTF-8") ?>">
 
           <?php if ($successMessage !== "") : ?>
-            <div class="alert alert-success" role="status">
+            <div data-crm-toast="success" hidden>
               <?= htmlspecialchars($successMessage, ENT_QUOTES, "UTF-8") ?>
             </div>
           <?php endif; ?>
 
           <?php if ($errorMessage !== "") : ?>
-            <div class="alert alert-danger" role="alert">
+            <div data-crm-toast="error" hidden>
               <?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?>
             </div>
           <?php endif; ?>
@@ -243,5 +267,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <script src="all-pages-js/loading.js"></script>
   <script src="all-pages-js/function-for-login.js"></script>
 
+<script src="all-pages-js/toast.js?v=2"></script>
 </body>
 </html>

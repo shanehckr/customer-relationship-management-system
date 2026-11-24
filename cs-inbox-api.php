@@ -13,11 +13,7 @@
  */
 
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
-$DB_HOST = '127.0.0.1';
 $DB_NAME = 'catering_crm';
-$DB_USER = 'root';
-$DB_PASS = '';
-
 // Where the customer's name / email come from. Change to match your customers table.
 // If this lookup fails, the inbox still works and shows "Customer #id".
 $CUSTOMER_TABLE    = 'customers';
@@ -27,12 +23,7 @@ $CUSTOMER_EMAIL_COL = 'email';
 
 // Roles allowed to use this inbox (compared in lower case, "_" and "-" read as spaces).
 $ALLOWED_ROLES = ['customer service', 'cs staff', 'customer service staff', 'admin', 'manager'];
-$ROLE_SESSION_KEYS = ['role', 'user_role'];
-$NAME_SESSION_KEYS = ['user_name', 'name', 'full_name'];
-
-// TESTING ONLY: lets the page work when no staff is logged in (same idea as $TEST_CUSTOMER_ID
-// in customer-inbox-api.php). Set to false before going live.
-$ALLOW_TEST_STAFF = true;
+$ROLE_SESSION_KEY = 'role_name';
 
 $UPLOAD_DIR = __DIR__ . '/uploads/inbox';
 $UPLOAD_URL = 'uploads/inbox';
@@ -71,25 +62,23 @@ function normRole($r): string {
     return trim(preg_replace('/\s+/', ' ', preg_replace('/[_-]+/', ' ', strtolower((string)$r))));
 }
 $role = '';
-foreach ($ROLE_SESSION_KEYS as $k) { if (!empty($_SESSION[$k])) { $role = normRole($_SESSION[$k]); break; } }
-if ($role !== '') {
-    if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('You do not have access to the support inbox.', 403);
-} elseif (!$ALLOW_TEST_STAFF) {
-    fail('Please log in again.', 401);
-}
-$staffName = '';
-foreach ($NAME_SESSION_KEYS as $k) { if (!empty($_SESSION[$k])) { $staffName = trim((string)$_SESSION[$k]); break; } }
-if ($staffName === '') $staffName = 'Customer Service Staff';
+if (!empty($_SESSION[$ROLE_SESSION_KEY])) $role = normRole($_SESSION[$ROLE_SESSION_KEY]);
+$staffId = (int)($_SESSION['user_id'] ?? 0);
+if ($staffId < 1 || $role === '') fail('Please log in again.', 401);
+if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('You do not have access to the support inbox.', 403);
 
 /* ------------------------- 3. DATABASE ------------------------- */
-try {
-    $db = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4", $DB_USER, $DB_PASS, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-} catch (PDOException $e) {
-    fail('Database connection failed. Check the settings at the top of cs-inbox-api.php. (' . $e->getMessage() . ')', 500);
+require_once __DIR__ . '/config/database.php';
+$identity = $db->prepare("SELECT u.full_name, u.account_status, r.role_name FROM users u
+                          JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1");
+$identity->execute([$staffId]);
+$staffAccount = $identity->fetch();
+if (!$staffAccount || $staffAccount['account_status'] !== 'Active' ||
+    normRole($staffAccount['role_name']) !== $role ||
+    !in_array(normRole($staffAccount['role_name']), array_map('normRole', $ALLOWED_ROLES), true)) {
+    fail('Please log in again.', 401);
 }
+$staffName = trim((string)$staffAccount['full_name']) ?: 'Customer Service Staff';
 
 $CUSTOMER_PHOTO_SQL = 'NULL';   // customer profile photo (users.photo_path), see inboxPhotoUrl()
 /* The customer's account lives in the users table (there is no customers table):
@@ -108,30 +97,17 @@ try {
         $CUSTOMER_EMAIL_COL = $uCols['email'] ?? 'email';
         if (isset($uCols['photo_path'])) $CUSTOMER_PHOTO_SQL = "c.`{$uCols['photo_path']}`";
     }
-} catch (PDOException $e) { error_log('inbox: could not read the users table: ' . $e->getMessage()); }
+} catch (Throwable $e) { error_log('inbox: could not read the users table: ' . $e->getMessage()); }
 
 // The customer inbox creates these tables. Make sure they exist, then add the 2 columns this inbox needs.
-$db->exec("CREATE TABLE IF NOT EXISTS cib_tickets (
-    id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, ticket_number VARCHAR(30) DEFAULT '',
-    subject VARCHAR(160) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Open', conversation_id INT DEFAULT NULL,
-    created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_messages (
-    id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, sender_type VARCHAR(20) NOT NULL,
-    sender_name VARCHAR(120) DEFAULT '', message TEXT, attachments TEXT, created_at DATETIME NOT NULL, INDEX (ticket_id)
-) ENGINE=InnoDB");
-function ensureColumn(PDO $db, string $table, string $column, string $definition): void {
-    $st = $db->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
-    $st->execute([$column]);
-    if (!$st->fetch()) $db->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+function ensureColumn(AppDatabase $db, string $table, string $column, string $definition): void {
+    // Inbox columns are provisioned centrally from database/catering_crm.sql.
 }
 ensureColumn($db, 'cib_tickets', 'priority', "VARCHAR(20) NOT NULL DEFAULT 'Medium'");
 ensureColumn($db, 'cib_tickets', 'cs_read_at', 'DATETIME NULL DEFAULT NULL');
-$db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_activity (
-    id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, action VARCHAR(255) NOT NULL,
-    performed_by VARCHAR(120) NOT NULL DEFAULT '', performed_by_role VARCHAR(60) NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL, INDEX (ticket_id)
-) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
 /* ------------------------- 4. HELPERS ------------------------- */
 /** A customer's profile photo as a web path (uploads/profile/...), or '' when they have none. Staff never have photos. */
@@ -145,7 +121,7 @@ function inboxPhotoUrl($rel): string {
 function now(): string { return date('Y-m-d H:i:s'); }
 
 /** One ticket row with customer name / email, last message and unread count. */
-function ticketQuery(PDO $db, string $where, array $args): array {
+function ticketQuery(AppDatabase $db, string $where, array $args): array {
     global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL;
     $base = "t.id, t.customer_id, t.ticket_number, t.subject, t.status, t.priority, t.created_at, t.updated_at,
         (SELECT m.message FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_message,
@@ -160,7 +136,7 @@ function ticketQuery(PDO $db, string $where, array $args): array {
         $st = $db->prepare($sql);
         $st->execute($args);
         $rows = $st->fetchAll();
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         // customers table / columns not found: still show the tickets
         $st = $db->prepare("SELECT $base FROM cib_tickets t $where $order");
         $st->execute($args);
@@ -188,7 +164,7 @@ function ticketQuery(PDO $db, string $where, array $args): array {
     }, $rows);
 }
 
-function getTicket(PDO $db, $id): array {
+function getTicket(AppDatabase $db, $id): array {
     $rows = ticketQuery($db, 'WHERE t.id = ?', [(int)$id]);
     if (!$rows) fail('Support ticket not found.', 404);
     return $rows[0];

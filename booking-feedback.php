@@ -16,42 +16,17 @@
  * Feedback never breaks the page: if anything goes wrong here, the booking is returned with feedback = null.
  */
 
-function ensureBookingFeedbackSchema(PDO $db): void {
-    static $done = false;
-    if ($done) return;
-    $db->exec("CREATE TABLE IF NOT EXISTS booking_feedback (
-        id INT AUTO_INCREMENT PRIMARY KEY, booking_id INT NOT NULL, customer_id INT NULL,
-        rating TINYINT NOT NULL DEFAULT 0, comments TEXT NULL, images TEXT NULL, created_at DATETIME NULL,
-        KEY idx_booking_feedback_booking (booking_id),
-        UNIQUE KEY uq_feedback_booking (booking_id)
-    ) ENGINE=InnoDB");
-    foreach ([
-        'booking_id' => "INT NOT NULL", 'customer_id' => "INT NULL", 'rating' => "TINYINT NOT NULL DEFAULT 0",
-        'comments' => "TEXT NULL", 'images' => "TEXT NULL", 'created_at' => "DATETIME NULL",
-    ] as $col => $def) {
-        $st = $db->prepare("SHOW COLUMNS FROM `booking_feedback` LIKE ?");
-        $st->execute([$col]);
-        if (!$st->fetch()) $db->exec("ALTER TABLE `booking_feedback` ADD COLUMN `$col` $def");
-    }
-    // One feedback per booking: remove older duplicate rows (keep the newest), then add the unique key if it is missing.
-    try {
-        $ix = $db->prepare("SHOW INDEX FROM `booking_feedback` WHERE Key_name = ?");
-        $ix->execute(['uq_feedback_booking']);
-        if (!$ix->fetch()) {
-            $db->exec("DELETE f1 FROM booking_feedback f1 JOIN booking_feedback f2 ON f1.booking_id = f2.booking_id AND f1.id < f2.id");
-            $db->exec("ALTER TABLE `booking_feedback` ADD UNIQUE KEY uq_feedback_booking (booking_id)");
-        }
-    } catch (Throwable $e) { error_log('booking-feedback: could not add the unique key: ' . $e->getMessage()); }
-    $done = true;
+function ensureBookingFeedbackSchema(AppDatabase $db): void {
+    // Schema is provisioned centrally from database/catering_crm.sql.
 }
 
 /** [booking_id => feedback] for the given booking ids (bookings without feedback are simply missing). */
-function bookingFeedbackMap(PDO $db, array $ids): array {
+function bookingFeedbackMap(AppDatabase $db, array $ids): array {
     $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
     $map = [];
     if (!$ids) return $map;
     $in = implode(',', array_fill(0, count($ids), '?'));
-    $st = $db->prepare("SELECT booking_id, rating, comments, images, created_at FROM booking_feedback WHERE booking_id IN ($in) ORDER BY id");
+    $st = $db->prepare("SELECT booking_id, rating, comments, images, created_at FROM booking_feedback WHERE booking_id IN ($in) ORDER BY feedback_id");
     $st->execute($ids);
     foreach ($st->fetchAll() as $f) {
         $map[(int)$f['booking_id']] = [
@@ -65,7 +40,7 @@ function bookingFeedbackMap(PDO $db, array $ids): array {
 }
 
 /** Adds 'feedback' to every booking in the list. */
-function attachBookingFeedback(PDO $db, array &$rows): void {
+function attachBookingFeedback(AppDatabase $db, array &$rows): void {
     $map = [];
     try {
         ensureBookingFeedbackSchema($db);
@@ -81,7 +56,7 @@ function attachBookingFeedback(PDO $db, array &$rows): void {
 }
 
 /** Same for one booking. */
-function attachBookingFeedbackOne(PDO $db, array &$booking): void {
+function attachBookingFeedbackOne(AppDatabase $db, array &$booking): void {
     $list = [$booking];
     attachBookingFeedback($db, $list);
     $booking = $list[0];
@@ -92,19 +67,9 @@ function attachBookingFeedbackOne(PDO $db, array &$booking): void {
    ====================================================================================================== */
 
 /** Adds bookings.feedback_requested_at and cib_messages.feedback_booking_id when missing. $crm = database of the cib_* tables ('' = same database). */
-function ensureFeedbackRequestColumns(PDO $db, string $crm = ''): bool {
-    static $done = [];
-    if (isset($done[$crm])) return $done[$crm];
-    $ok = false;
-    try {
-        $st = $db->query("SHOW COLUMNS FROM `bookings` LIKE 'feedback_requested_at'");
-        if (!$st->fetch()) $db->exec("ALTER TABLE `bookings` ADD COLUMN `feedback_requested_at` DATETIME NULL");
-        $cv = $crm !== '' ? "`$crm`." : '';
-        $st = $db->query("SHOW COLUMNS FROM {$cv}`cib_messages` LIKE 'feedback_booking_id'");
-        if (!$st->fetch()) $db->exec("ALTER TABLE {$cv}`cib_messages` ADD COLUMN `feedback_booking_id` INT NULL");
-        $ok = true;
-    } catch (Throwable $e) { error_log('booking-feedback: feedback request columns: ' . $e->getMessage()); }
-    return $done[$crm] = $ok;
+function ensureFeedbackRequestColumns(AppDatabase $db, string $crm = ''): bool {
+    // All reminder columns are installed by database/catering_crm.sql.
+    return true;
 }
 
 /**
@@ -113,16 +78,21 @@ function ensureFeedbackRequestColumns(PDO $db, string $crm = ''): bool {
  *    message with a "Rate Now" card in the customer's inbox (once per booking) and the customer gets a bell notification.
  * Safe to call on every request; it never breaks the page.  $crm = the database name of cib_conversations / cib_messages.
  */
-function completeFinishedBookings(PDO $db, string $crm = ''): void {
+function completeFinishedBookings(AppDatabase $db, string $crm = ''): void {
     // deadlines first: unpaid bookings past their full-payment deadline are cancelled BEFORE they could be marked Completed
     try {
         if (is_file(__DIR__ . '/booking-deadlines.php')) { require_once __DIR__ . '/booking-deadlines.php'; runBookingDeadlinesThrottled($db, $crm); }
     } catch (Throwable $e) { error_log('booking-feedback: deadlines step failed: ' . $e->getMessage()); }
     try {
+        $eligible = $db->query("SELECT booking_id FROM bookings WHERE booking_status = 'Confirmed' AND event_date IS NOT NULL AND event_date < CURDATE()")
+                        ->fetchAll(AppDatabase::FETCH_COLUMN);
         $db->exec("UPDATE bookings
                    SET booking_status = 'Completed'
                    WHERE booking_status = 'Confirmed'
                      AND event_date IS NOT NULL AND event_date < CURDATE()");   // the event happened; any unpaid balance stays on the booking (see remindOverdueBalances)
+        $history = $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, remarks)
+                                 VALUES (?, 'booking', 'Confirmed', 'Completed', 'Automatically completed after the event date.')");
+        foreach ($eligible as $bookingId) $history->execute([(int)$bookingId]);
     } catch (Throwable $e) { error_log('booking-feedback: auto-complete failed: ' . $e->getMessage()); return; }
 
     try {
@@ -188,11 +158,10 @@ const BALANCE_REMIND_EVERY_DAYS  = 7;   // then remind again every this many day
  * Customer: asked to pay.  Assigned Sales Staff + Admin + Manager: told the balance is overdue.
  * Uses bookings.balance_reminded_at so nobody is reminded twice in the same period. Safe to call on every request.
  */
-function remindOverdueBalances(PDO $db): void {
+function remindOverdueBalances(AppDatabase $db): void {
     try {
         if (!function_exists('notifySend')) return;
         $st = $db->query("SHOW COLUMNS FROM `bookings` LIKE 'balance_reminded_at'");
-        if (!$st->fetch()) $db->exec("ALTER TABLE `bookings` ADD COLUMN `balance_reminded_at` DATETIME NULL");
 
         $due = (int)BALANCE_OVERDUE_AFTER_DAYS;
         $every = (int)BALANCE_REMIND_EVERY_DAYS;
@@ -235,11 +204,11 @@ function remindOverdueBalances(PDO $db): void {
 }
 
 /** What the customer's chat card needs: { booking_id, event_name, rated, rating }. */
-function feedbackRequestCard(PDO $db, int $bookingId): array {
+function feedbackRequestCard(AppDatabase $db, int $bookingId): array {
     $card = ['booking_id' => $bookingId, 'event_name' => '', 'rated' => false, 'rating' => 0];
     try {
         ensureBookingFeedbackSchema($db);
-        $st = $db->prepare('SELECT rating FROM booking_feedback WHERE booking_id = ? ORDER BY id DESC LIMIT 1');
+        $st = $db->prepare('SELECT rating FROM booking_feedback WHERE booking_id = ? ORDER BY feedback_id DESC LIMIT 1');
         $st->execute([$bookingId]);
         if ($r = $st->fetch()) { $card['rating'] = (int)$r['rating']; $card['rated'] = $card['rating'] > 0; }
         $st = $db->prepare('SELECT event_title FROM bookings WHERE booking_id = ?');

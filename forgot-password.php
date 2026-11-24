@@ -3,9 +3,6 @@ declare(strict_types=1);
 
 /** Forgot-password page: validates the request, stores a hashed token, and emails the reset link. */
 
-use PHPMailer\PHPMailer\Exception as MailException;
-use PHPMailer\PHPMailer\PHPMailer;
-
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 // Shared session setup (secure cookie settings). Public page: an expired login just counts as logged out.
@@ -13,16 +10,11 @@ define("SESSION_NO_REDIRECT", true);
 require_once __DIR__ . "/session-init.php";
 
 require_once __DIR__ . "/config/database.php";
-
-// Load PHPMailer from Composer (vendor/) or from a manual download (phpmailer/src/).
-if (is_file(__DIR__ . "/vendor/autoload.php")) {
-    require_once __DIR__ . "/vendor/autoload.php";
-} else {
-    require_once __DIR__ . "/phpmailer/src/Exception.php";
-    require_once __DIR__ . "/phpmailer/src/PHPMailer.php";
-    require_once __DIR__ . "/phpmailer/src/SMTP.php";
-}
-$mailConfig = require __DIR__ . "/config/mail.php";
+require_once __DIR__ . "/includes/Mail/EmailTemplateRenderer.php";
+require_once __DIR__ . "/includes/Mail/EmailService.php";
+require_once __DIR__ . "/includes/Mail/EmailQueueWorker.php";
+$emailService = EmailService::fromApplicationConfig($db);
+$mailConfig = $emailService->configuration();
 
 if (isset($_SESSION["user_id"])) {
     header("Location: index.php");
@@ -75,7 +67,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
             try {
                 $statement = $conn->prepare(
-                    "SELECT user_id, full_name, email, status
+                    "SELECT user_id, full_name, email, account_status AS status
                      FROM users
                      WHERE email = ?
                      LIMIT 1"
@@ -94,8 +86,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                     // Skip if a link was already requested in the last 60 seconds (prevents email spam).
                     $statement = $conn->prepare(
-                        "SELECT 1 FROM password_resets
-                         WHERE user_id = ? AND created_at > (NOW() - INTERVAL 60 SECOND)
+                        "SELECT 1 FROM password_reset_tokens
+                         WHERE user_id = ? AND used_at IS NULL AND created_at > (NOW() - INTERVAL 60 SECOND)
                          LIMIT 1"
                     );
                     $statement->bind_param("i", $userId);
@@ -105,61 +97,61 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
                     if ($recent) {
                         $errorMessage = "A reset link was just sent. Please wait a minute before asking for another one.";
+                    } elseif (($emailService->senderAvailability()["crm_notifications"] ?? "unavailable") !== "available"
+                        || !is_string($mailConfig["queue_encryption_key"] ?? null)
+                        || strlen($mailConfig["queue_encryption_key"]) !== 32) {
+                        $errorMessage = "Password reset email is temporarily unavailable. Please try again later.";
                     } else {
                         // Only the hash is stored; the raw token exists only in the email.
                         $token = bin2hex(random_bytes(32));
                         $tokenHash = hash("sha256", $token);
                         $minutes = (int) $mailConfig["token_minutes"];
 
-                        $statement = $conn->prepare("DELETE FROM password_resets WHERE user_id = ?");
+                        $statement = $conn->prepare("UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL");
                         $statement->bind_param("i", $userId);
                         $statement->execute();
                         $statement->close();
 
                         $statement = $conn->prepare(
-                            "INSERT INTO password_resets (user_id, token_hash, expires_at)
+                            "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
                              VALUES (?, ?, DATE_ADD(NOW(), INTERVAL ? MINUTE))"
                         );
                         $statement->bind_param("isi", $userId, $tokenHash, $minutes);
                         $statement->execute();
                         $statement->close();
 
-                        $link = rtrim($mailConfig["base_url"], "/") . "/reset-password.php?token=" . $token;
-                        $name = htmlspecialchars($user["full_name"], ENT_QUOTES, "UTF-8");
-
-                        $mail = new PHPMailer(true);
+                        $link = rtrim($mailConfig["base_url"], "/") . "/reset-password.php?token=" . rawurlencode($token);
                         try {
-                            $mail->isSMTP();
-                            $mail->Host = $mailConfig["host"];
-                            $mail->SMTPAuth = true;
-                            $mail->Username = $mailConfig["username"];
-                            $mail->Password = $mailConfig["password"];
-                            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-                            $mail->Port = (int) $mailConfig["port"];
-                            $mail->CharSet = "UTF-8";
+                            $mailId = $emailService->enqueue([
+                                "notification_type" => "password_reset",
+                                "recipient_email" => (string) $user["email"],
+                                "recipient_name" => (string) $user["full_name"],
+                                "user_id" => $userId,
+                                "sender" => "crm_notifications",
+                                "subject" => "Reset your Catering CRM password",
+                                "template_key" => "password_reset",
+                                "template_data" => [
+                                    "name" => (string) $user["full_name"],
+                                    "reset_url" => $link,
+                                    "expires_minutes" => $minutes,
+                                ],
+                                "dedupe_key" => "password-reset:" . $userId . ":" . $tokenHash,
+                                "related_record_type" => "user",
+                                "related_record_id" => $userId,
+                            ]);
 
-                            $mail->setFrom($mailConfig["from_email"], $mailConfig["from_name"]);
-                            $mail->addAddress($user["email"], $user["full_name"]);
-
-                            $mail->isHTML(true);
-                            $mail->Subject = "Reset your Catering CRM password";
-                            $mail->Body = "<p>Hi {$name},</p>"
-                                . "<p>We received a request to reset your password. Click the button below to choose a new one. "
-                                . "This link expires in {$minutes} minutes.</p>"
-                                . "<p><a href=\"{$link}\" style=\"background:#d97706;color:#fff;padding:10px 20px;border-radius:20px;text-decoration:none;\">Reset Password</a></p>"
-                                . "<p>Or copy this link into your browser:<br>{$link}</p>"
-                                . "<p>If you didn't request this, you can safely ignore this email.</p>";
-                            $mail->AltBody = "Hi {$user["full_name"]},\n\nReset your password using this link (expires in {$minutes} minutes):\n{$link}\n\nIf you didn't request this, ignore this email.";
-
-                            $mail->send();
+                            if (($mailConfig["enabled"] ?? false) === true) {
+                                $worker = new EmailQueueWorker($db, $emailService, $mailConfig);
+                                $worker->processOne($mailId);
+                            }
 
                             // Show only part of the address, like j***@gmail.com.
                             [$mailName, $mailDomain] = explode("@", (string) $user["email"], 2) + ["", ""];
                             $maskedEmail = mb_substr($mailName, 0, 1) . str_repeat("*", max(2, mb_strlen($mailName) - 1)) . "@" . $mailDomain;
-                            $successMessage = "A password reset link has been sent to " . $maskedEmail
+                            $successMessage = "A password reset email has been queued for " . $maskedEmail
                                 . ". The link expires in " . $minutes . " minutes.";
-                        } catch (MailException $e) {
-                            error_log("Password reset mail error: " . $mail->ErrorInfo);
+                        } catch (Throwable $e) {
+                            error_log("Password reset email could not be queued.");
                             $errorMessage = "We could not send the email right now. Please try again in a moment.";
                         }
                     }
@@ -186,6 +178,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+  <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
   <link rel="stylesheet" href="all-pages-css/cookie-consent.css">
   <script src="all-pages-js/theme.js"></script>
   <script>
@@ -224,11 +217,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
           <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION["forgot_csrf_token"] ?? "", ENT_QUOTES, "UTF-8") ?>">
 
           <?php if ($successMessage !== "") : ?>
-            <div class="alert alert-success" role="status"><?= htmlspecialchars($successMessage, ENT_QUOTES, "UTF-8") ?></div>
+            <div data-crm-toast="success" hidden><?= htmlspecialchars($successMessage, ENT_QUOTES, "UTF-8") ?></div>
           <?php endif; ?>
 
           <?php if ($errorMessage !== "") : ?>
-            <div class="alert alert-danger" role="alert"><?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?></div>
+            <div data-crm-toast="error" hidden><?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?></div>
           <?php endif; ?>
 
           <div class="mb-3">
@@ -251,5 +244,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
   <script src="all-pages-js/function-for-login.js"></script>
   <script src="all-pages-js/loading.js"></script>
   <script src="all-pages-js/cookie-consent.js" defer></script>
+<script src="all-pages-js/toast.js?v=2"></script>
 </body>
 </html>

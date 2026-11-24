@@ -1,29 +1,48 @@
-@import url("https://fonts.googleapis.com/css?family=Inter:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
 /* Theme variables */
 :root {
-  /* Dark theme defaults */
-  --bg-color: #000000;
-  --panel-bg: #091a14;
-  --card-bg: #091a14;
+  /* Shared desktop sizing system (rem values assume the browser's 16px default). */
+  --font-page-title: 1.5rem;
+  --font-section-title: 1.125rem;
+  --font-card-title: 1rem;
+  --font-body: .875rem;
+  --font-label: .8125rem;
+  --font-support: .8125rem;
+  --font-meta: .75rem;
+  --font-table-head: .8125rem;
+  --line-body: 1.5;
+  --sidebar-width: 15rem;
+  --topbar-height: 4rem;
+  --page-padding: 1.75rem;
+  --card-padding: 1.25rem;
+  --control-height: 2.75rem;
+  --section-gap: 1.5rem;
+  --field-gap: 1rem;
+  /* Shared CRM palette: forest green for primary actions, mint for accents. */
+  --bg-color: #101815;
+  --panel-bg: #17231d;
+  --card-bg: #1b2922;
   --text-main: #ffffff;
-  --text-muted: #ffffff;
-  --border-color: rgba(43, 182, 115, 0.15);
+  --text-muted: #b7c5bd;
+  --border-color: rgba(183, 197, 189, 0.16);
+  --primary-green: #156042;
   --accent-green: #2bb673;
-  --active-pill-bg: #3bb582;
+  --active-pill-bg: #156042;
   --notification-badge: #ff4d4f;
 }
 
 html.light-mode {
   /* Light theme overrides */
-  --bg-color: #f4f6f5;
+  --bg-color: #f4f7f5;
   --panel-bg: #ffffff;
   --card-bg: #ffffff;
   --text-main: #0d1b17;
-  --text-muted: #560736c;
-  --border-color: rgba(0, 0, 0, 0.08);
+  --text-muted: #5f7067;
+  --border-color: rgba(21, 96, 66, 0.13);
+  --primary-green: #156042;
   --accent-green: #2bb673;
-  --active-pill-bg: #3bb582;
+  --active-pill-bg: #156042;
   --notification-badge: #ff4d4f;
 }
 
@@ -34,6 +53,8 @@ html.light-mode {
 }
 
 body {
+  font-size: var(--font-body);
+  line-height: var(--line-body);
   background-color: var(--bg-color);
   color: var(--text-main);
   margin: 0;
@@ -65,7 +86,7 @@ body {
   flex: 1;
   overflow-y: auto !important;
   overflow-x: hidden !important;
-  height: calc(100vh - 80px);
+  height: calc(100vh - var(--topbar-height));
   scrollbar-width: thin !important;
   scrollbar-color: transparent transparent !important;
   transition: scrollbar-color 0.3s ease;
@@ -96,8 +117,8 @@ body {
 
 /* Sidebar navigation */
 .crm-sidebar {
-  width: 250px;
-  min-width: 250px;
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
   height: 100vh;
   background-color: var(--panel-bg) !important;
   border-right: 1px solid var(--border-color) !important;
@@ -108,7 +129,9 @@ body {
 }
 
 .sidebar-header {
-  height: 80px;
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  flex: 0 0 var(--topbar-height);
   border-bottom: 1px solid var(--border-color) !important;
   display: flex;
   align-items: center;
@@ -172,14 +195,14 @@ html.sidebar-is-collapsed .crm-sidebar .sidebar-nav {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 8px !important;
+  gap: 6px !important;
 }
 
 .sidebar-nav .nav-link {
   color: var(--text-main) !important;
   font-size: 13px;
   font-weight: 500;
-  padding: 10px 14px;
+  padding: 9px 12px;
   border-radius: 12px !important;
   transition: all 0.2s ease;
   white-space: nowrap !important;
@@ -240,7 +263,9 @@ html.sidebar-is-collapsed .crm-sidebar .sidebar-header {
 
 /* Header and profile menu */
 .top-navbar {
-  height: 80px;
+  height: var(--topbar-height);
+  min-height: var(--topbar-height);
+  flex: 0 0 var(--topbar-height);
   background-color: var(--panel-bg) !important;
   border-bottom: 1px solid var(--border-color) !important;
   flex-shrink: 0;
@@ -373,11 +398,13 @@ html.light-mode .moon-icon { display: block; }
   }
 
   .top-navbar {
-    height: 65px !important;
+    height: 56px !important;
+    min-height: 56px;
+    flex-basis: 56px;
   }
 
   .content-body {
-    height: calc(100vh - 65px);
+    height: calc(100vh - 56px);
   }
 
   .sidebar-nav .nav-link {

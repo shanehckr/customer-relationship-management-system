@@ -9,33 +9,7 @@ declare(strict_types=1);
  *   POST ?action=edit    Admin / Manager   multipart: menu_item_id + the same fields (photo is optional)
  *   POST ?action=delete  Admin / Manager   form: menu_item_id
  *
- * Run this SQL once (phpMyAdmin):
- *
- *   CREATE TABLE menu_items (
- *     menu_item_id  INT AUTO_INCREMENT PRIMARY KEY,
- *     item_name     VARCHAR(150) NOT NULL,
- *     category      VARCHAR(40)  NOT NULL,
- *     display_price VARCHAR(80)  NOT NULL,
- *     serving_specs VARCHAR(255) NOT NULL,
- *     photo_path    VARCHAR(255) NOT NULL,
- *     created_by    INT NULL,
- *     created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
- *     updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
- *     KEY idx_menu_category (category)
- *   );
- *
- * PAX / portion tiers (new). The table below is created AUTOMATICALLY the first time this file runs,
- * so you do not have to do anything. The SQL is here only for reference:
- *
- *   CREATE TABLE IF NOT EXISTS menu_item_tiers (
- *     tier_id          INT AUTO_INCREMENT PRIMARY KEY,
- *     menu_item_id     INT NOT NULL,
- *     tier_name        VARCHAR(100) NOT NULL,
- *     price            DECIMAL(10,2) NOT NULL DEFAULT 0,
- *     pax_description  VARCHAR(150) NOT NULL DEFAULT '',
- *     sort_order       INT NOT NULL DEFAULT 0,
- *     KEY idx_tier_item (menu_item_id)
- *   );
+ * Database structure is provisioned centrally from database/catering_crm.sql.
  *
  *   GET  ?action=token   Admin / Manager   returns a fresh CSRF token (the page asks for it again when the old one is stale)
  *   add / edit also accept  tiers  = JSON text:  [{"name":"1/4 KG Portion","price":230,"pax":"Good for 2-3 PAX"}]
@@ -52,7 +26,7 @@ require_once __DIR__ . '/session-init.php';
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
 
-const MENU_CATEGORIES = ["Best Sellers", "Bilao", "Catering Packages"];
+const MENU_CATEGORIES = ["Lechon", "Bilao", "Viands"];
 const MENU_UPLOAD_DIR = __DIR__ . "/uploads/menu/";
 const MENU_UPLOAD_URL = "uploads/menu/";
 const MENU_MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -152,24 +126,21 @@ function menu_item_json(array $row, array $tiers = []): array
         "price" => $row["display_price"],
         "specs" => $row["serving_specs"],
         "photo" => $row["photo_path"],
+        "status" => $row["status"] ?? "Active",
         "tiers" => $tiers
     ];
 }
 
-/** Creates the tiers table the first time (no manual SQL needed). */
+function menu_base_price(string $displayPrice): ?float
+{
+    if (!preg_match('/\d[\d,]*(?:\.\d+)?/', $displayPrice, $match)) return null;
+    return round((float)str_replace(',', '', $match[0]), 2);
+}
+
+/** Schema is provisioned centrally by database/catering_crm.sql. */
 function menu_ensure_tier_table(mysqli $conn): void
 {
-    $conn->query(
-        "CREATE TABLE IF NOT EXISTS menu_item_tiers (
-            tier_id INT AUTO_INCREMENT PRIMARY KEY,
-            menu_item_id INT NOT NULL,
-            tier_name VARCHAR(100) NOT NULL,
-            price DECIMAL(10,2) NOT NULL DEFAULT 0,
-            pax_description VARCHAR(150) NOT NULL DEFAULT '',
-            sort_order INT NOT NULL DEFAULT 0,
-            KEY idx_tier_item (menu_item_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-    );
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 }
 
 /** Reads + validates the posted tiers (JSON). Blank rows are ignored. */
@@ -214,7 +185,13 @@ function menu_read_tiers(): array
         if ($clean === "" || !is_numeric($clean) || (float) $clean < 0 || (float) $clean > 9999999.99) {
             respond(400, ["success" => false, "message" => "Tier $n needs a valid price."]);
         }
-        $out[] = ["name" => $name, "price" => round((float) $clean, 2), "pax" => $pax];
+        foreach ($out as $prior) {
+            if (mb_strtolower($prior["name"], "UTF-8") === mb_strtolower($name, "UTF-8")) {
+                respond(400, ["success" => false, "message" => "Portion tier names must be unique for this menu item."]);
+            }
+        }
+        $tierId = isset($row["tier_id"]) && is_numeric($row["tier_id"]) ? (int) $row["tier_id"] : 0;
+        $out[] = ["tier_id" => $tierId, "name" => $name, "price" => round((float) $clean, 2), "pax" => $pax];
     }
     return $out;
 }
@@ -227,14 +204,15 @@ function menu_load_tiers(mysqli $conn, array $ids): array
     }
     $in = implode(",", array_map("intval", $ids));   // integers only
     $result = $conn->query(
-        "SELECT menu_item_id, tier_name, price, pax_description
+        "SELECT menu_item_id, tier_id, tier_name, price, pax_description
          FROM menu_item_tiers
-         WHERE menu_item_id IN ($in)
+         WHERE menu_item_id IN ($in) AND is_active = 1
          ORDER BY menu_item_id ASC, sort_order ASC, tier_id ASC"
     );
     $by = [];
     foreach ($result->fetch_all(MYSQLI_ASSOC) as $r) {
         $by[(int) $r["menu_item_id"]][] = [
+            "tier_id" => (int) $r["tier_id"],
             "name" => $r["tier_name"],
             "price" => (float) $r["price"],
             "pax" => $r["pax_description"]
@@ -243,28 +221,80 @@ function menu_load_tiers(mysqli $conn, array $ids): array
     return $by;
 }
 
-/** Replaces all tiers of one item. */
+/** Update current tiers in place; retain referenced removed tiers as inactive history. */
 function menu_save_tiers(mysqli $conn, int $id, array $tiers): void
 {
     if (!($GLOBALS["tiersReady"] ?? true)) {
         return;   // the tiers table is not available: the rest of the menu still works
     }
-    $del = $conn->prepare("DELETE FROM menu_item_tiers WHERE menu_item_id = ?");
-    $del->bind_param("i", $id);
-    $del->execute();
-    if (!$tiers) {
-        return;
+    $existing = $conn->prepare("SELECT tier_id FROM menu_item_tiers WHERE menu_item_id = ? AND is_active = 1");
+    $existing->bind_param("i", $id);
+    $existing->execute();
+    $existingIds = array_map('intval', array_column($existing->get_result()->fetch_all(MYSQLI_ASSOC), 'tier_id'));
+    $submittedIds = [];
+    foreach ($tiers as $tier) {
+        if ($tier['tier_id'] > 0) {
+            if (!in_array($tier['tier_id'], $existingIds, true)) {
+                throw new RuntimeException("A submitted menu tier does not belong to this item.");
+            }
+            $submittedIds[] = $tier['tier_id'];
+        }
     }
+    if (count(array_unique($submittedIds)) !== count($submittedIds)) {
+        throw new RuntimeException("A menu tier was submitted more than once.");
+    }
+
+    $removedIds = array_values(array_diff($existingIds, $submittedIds));
+    foreach ($removedIds as $tierId) {
+        $refs = $conn->prepare(
+            "SELECT (SELECT COUNT(*) FROM inquiry_items WHERE tier_id = ?) +
+                    (SELECT COUNT(*) FROM quotation_items WHERE tier_id = ?) +
+                    (SELECT COUNT(*) FROM booking_items WHERE tier_id = ?) AS ref_count"
+        );
+        $refs->bind_param("iii", $tierId, $tierId, $tierId);
+        $refs->execute();
+        $referenced = (int) ($refs->get_result()->fetch_assoc()['ref_count'] ?? 0) > 0;
+        if ($referenced) {
+            $deactivate = $conn->prepare("UPDATE menu_item_tiers SET is_active = 0 WHERE tier_id = ? AND menu_item_id = ?");
+            $deactivate->bind_param("ii", $tierId, $id);
+            $deactivate->execute();
+        } else {
+            $delete = $conn->prepare("DELETE FROM menu_item_tiers WHERE tier_id = ? AND menu_item_id = ?");
+            $delete->bind_param("ii", $tierId, $id);
+            $delete->execute();
+        }
+    }
+
+    $upd = $conn->prepare(
+        "UPDATE menu_item_tiers SET tier_name = ?, price = ?, pax_description = ?, sort_order = ?, is_active = 1
+         WHERE tier_id = ? AND menu_item_id = ?"
+    );
+    $restore = $conn->prepare("SELECT tier_id FROM menu_item_tiers WHERE menu_item_id = ? AND tier_name = ? AND is_active = 0 LIMIT 1");
     $ins = $conn->prepare(
-        "INSERT INTO menu_item_tiers (menu_item_id, tier_name, price, pax_description, sort_order)
-         VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO menu_item_tiers (menu_item_id, tier_name, price, pax_description, sort_order, is_active)
+         VALUES (?, ?, ?, ?, ?, 1)"
     );
     foreach (array_values($tiers) as $order => $t) {
         $name = $t["name"];
         $price = $t["price"];
         $pax = $t["pax"];
-        $ins->bind_param("isdsi", $id, $name, $price, $pax, $order);
-        $ins->execute();
+        if ($t['tier_id'] > 0) {
+            $tierId = $t['tier_id'];
+            $upd->bind_param("sdsiii", $name, $price, $pax, $order, $tierId, $id);
+            $upd->execute();
+        } else {
+            $restore->bind_param("is", $id, $name);
+            $restore->execute();
+            $archived = $restore->get_result()->fetch_assoc();
+            if ($archived) {
+                $tierId = (int) $archived['tier_id'];
+                $upd->bind_param("sdsiii", $name, $price, $pax, $order, $tierId, $id);
+                $upd->execute();
+            } else {
+                $ins->bind_param("isdsi", $id, $name, $price, $pax, $order);
+                $ins->execute();
+            }
+        }
     }
 }
 
@@ -307,9 +337,10 @@ try {
     // ---------- LIST ----------
     if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
         $result = $conn->query(
-            "SELECT menu_item_id, item_name, category, display_price, serving_specs, photo_path
+            "SELECT menu_item_id, item_name, category, display_price, serving_specs, photo_path, status
              FROM menu_items
-             ORDER BY menu_item_id ASC"
+             WHERE status = 'Active' AND category IN ('Lechon', 'Bilao', 'Viands')
+             ORDER BY FIELD(category, 'Lechon', 'Bilao', 'Viands'), menu_item_id ASC"
         );
         $rows = $result->fetch_all(MYSQLI_ASSOC);
         $tiersById = $tiersReady ? menu_load_tiers($conn, array_column($rows, "menu_item_id")) : [];
@@ -333,28 +364,36 @@ try {
 
         $name = menu_text("item_name", 150, "Item name");
         $category = menu_text("category", 40, "Category");
-        $price = menu_text("display_price", 80, "Display price");
-        $specs = menu_text("serving_specs", 255, "Serving / PAX specs");
+        $price = trim((string) ($_POST["display_price"] ?? ""));
+        $specs = trim((string) ($_POST["serving_specs"] ?? ""));
+        if (mb_strlen($specs, "UTF-8") > 255) respond(400, ["success" => false, "message" => "Serving / PAX specs must be at most 255 characters."]);
         if (!in_array($category, MENU_CATEGORIES, true)) {
             respond(400, ["success" => false, "message" => "Choose a valid category."]);
         }
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
+        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
+        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
+        $tierPrices = array_column($tiers, "price");
+        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
+        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
         if ($tiers && !$tiersReady) {
-            respond(500, ["success" => false, "message" => "The tiers table could not be created. Give the database user CREATE permission, or save without tiers."]);
+            respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }
         $photo = menu_save_photo(true);
         $userId = (int) $_SESSION["user_id"];
 
         $conn->begin_transaction();
         $stmt = $conn->prepare(
-            "INSERT INTO menu_items (item_name, category, display_price, serving_specs, photo_path, created_by)
-             VALUES (?, ?, ?, ?, ?, ?)"
+            "INSERT INTO menu_items (item_name, category, base_price, display_price, serving_specs, photo_path, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?)"
         );
-        $stmt->bind_param("sssssi", $name, $category, $price, $specs, $photo, $userId);
+        $stmt->bind_param("ssssssi", $name, $category, $basePrice, $price, $specs, $photo, $userId);
         $stmt->execute();
         $id = (int) $conn->insert_id;
         menu_save_tiers($conn, $id, $tiers);
         $conn->commit();
+        $tiers = menu_load_tiers($conn, [$id])[$id] ?? [];
 
         respond(201, [
             "success" => true,
@@ -373,8 +412,9 @@ try {
         $id = (int) ($_POST["menu_item_id"] ?? 0);
         $name = menu_text("item_name", 150, "Item name");
         $category = menu_text("category", 40, "Category");
-        $price = menu_text("display_price", 80, "Display price");
-        $specs = menu_text("serving_specs", 255, "Serving / PAX specs");
+        $price = trim((string) ($_POST["display_price"] ?? ""));
+        $specs = trim((string) ($_POST["serving_specs"] ?? ""));
+        if (mb_strlen($specs, "UTF-8") > 255) respond(400, ["success" => false, "message" => "Serving / PAX specs must be at most 255 characters."]);
         if ($id < 1) {
             respond(400, ["success" => false, "message" => "Menu item not found."]);
         }
@@ -391,8 +431,14 @@ try {
         }
 
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
+        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
+        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
+        $tierPrices = array_column($tiers, "price");
+        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
+        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
         if ($tiers && !$tiersReady) {
-            respond(500, ["success" => false, "message" => "The tiers table could not be created. Give the database user CREATE permission, or save without tiers."]);
+            respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }
         $newPhoto = menu_save_photo(false);
         $photo = $newPhoto ?? $row["photo_path"];
@@ -400,13 +446,14 @@ try {
         $conn->begin_transaction();
         $stmt = $conn->prepare(
             "UPDATE menu_items
-             SET item_name = ?, category = ?, display_price = ?, serving_specs = ?, photo_path = ?
+             SET item_name = ?, category = ?, base_price = ?, display_price = ?, serving_specs = ?, photo_path = ?
              WHERE menu_item_id = ?"
         );
-        $stmt->bind_param("sssssi", $name, $category, $price, $specs, $photo, $id);
+        $stmt->bind_param("ssssssi", $name, $category, $basePrice, $price, $specs, $photo, $id);
         $stmt->execute();
         menu_save_tiers($conn, $id, $tiers);
         $conn->commit();
+        $tiers = menu_load_tiers($conn, [$id])[$id] ?? [];
 
         if ($newPhoto !== null) {
             menu_delete_photo($row["photo_path"]);
@@ -422,28 +469,15 @@ try {
         ]);
     }
 
-    // ---------- DELETE ----------
-    if ($action === "delete") {
+    // ---------- ARCHIVE (preserves all historical references) ----------
+    if ($action === "delete" || $action === "archive") {
         menu_require_manager($canManage);
-
         $id = (int) ($_POST["menu_item_id"] ?? 0);
-        $find = $conn->prepare("SELECT photo_path FROM menu_items WHERE menu_item_id = ? LIMIT 1");
-        $find->bind_param("i", $id);
-        $find->execute();
-        $row = $find->get_result()->fetch_assoc();
-        if (!$row) {
-            respond(404, ["success" => false, "message" => "Menu item not found."]);
-        }
-
-        $conn->begin_transaction();
-        $stmt = $conn->prepare("DELETE FROM menu_items WHERE menu_item_id = ?");
+        $stmt = $conn->prepare("UPDATE menu_items SET status = 'Archived', archived_at = CURRENT_TIMESTAMP WHERE menu_item_id = ? AND status = 'Active'");
         $stmt->bind_param("i", $id);
         $stmt->execute();
-        menu_save_tiers($conn, $id, []);     // removes its tiers
-        $conn->commit();
-        menu_delete_photo($row["photo_path"]);
-
-        respond(200, ["success" => true, "message" => "Menu item deleted."]);
+        if ($stmt->affected_rows < 1) respond(404, ["success" => false, "message" => "Active menu item not found."]);
+        respond(200, ["success" => true, "message" => "Menu item archived."]);
     }
 
     respond(400, ["success" => false, "message" => "Unknown action."]);

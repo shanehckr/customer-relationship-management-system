@@ -76,7 +76,7 @@ if ($userIds) {
         $us  = $db->prepare("SELECT * FROM `$DB_CRM`.users WHERE `$upk` IN ($in)");
         $us->execute($ids);
         foreach ($us->fetchAll() as $u) $users[(int)$u[$upk]] = $u;
-    } catch (PDOException $e) { error_log('calendar-api: could not read the users table: ' . $e->getMessage()); }
+    } catch (Throwable $e) { error_log('calendar-api: could not read the users table: ' . $e->getMessage()); }
 }
 
 $events = array_map(function ($b) use ($db, $users) {
@@ -106,7 +106,7 @@ $events = array_map(function ($b) use ($db, $users) {
         'event_time'      => $b['event_time'],
         'time'            => $b['event_time'],
         'location'        => $b['location'],
-        'arrangement'     => $b['arrangement'],
+        'arrangement'     => arrangementDisplay((string)$b['arrangement']),
         'customer_name'   => $b['customer_name'],
         'customer_phone'  => firstOf($cust, ['phone', 'phone_number', 'contact_number', 'contact_no', 'mobile', 'mobile_number', 'cellphone']),
         'customer_photo'  => $cust ? customerPhotoUrl($cust) : '',

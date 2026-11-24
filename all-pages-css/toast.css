@@ -1,0 +1,55 @@
+/* Shared transient notification surface. Kept separate from the in-app notification bell styles. */
+#crmToastViewport {
+  position: fixed;
+  z-index: 30000;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  width: min(420px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  display: grid;
+  gap: 10px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+.crm-toast {
+  --toast-color: #2563eb;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 9px 10px 9px 14px;
+  border: 1px solid color-mix(in srgb, var(--toast-color) 22%, #dfe5ec);
+  border-left: 4px solid var(--toast-color);
+  border-radius: 12px;
+  background: #fff;
+  color: #202938;
+  box-shadow: 0 8px 28px rgb(20 30 45 / 18%);
+  font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(-12px) scale(.98);
+  transition: opacity 180ms ease, transform 220ms cubic-bezier(.2,.8,.2,1);
+}
+.crm-toast.is-visible { opacity: 1; transform: translateY(0) scale(1); }
+.crm-toast__icon {
+  display: grid; place-items: center; width: 22px; height: 22px;
+  border-radius: 50%; background: color-mix(in srgb, var(--toast-color) 12%, white);
+  color: var(--toast-color); font-size: 14px; font-weight: 800;
+}
+.crm-toast__message { min-width: 0; overflow-wrap: anywhere; }
+.crm-toast__close {
+  display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: #667085;
+  font: 400 22px/1 system-ui, sans-serif; cursor: pointer;
+}
+.crm-toast__close:hover, .crm-toast__close:focus-visible { background: #f1f3f6; color: #202938; outline: none; }
+.crm-toast--success { --toast-color: #16834a; }
+.crm-toast--error { --toast-color: #c53535; }
+.crm-toast--warning { --toast-color: #a96800; }
+.crm-toast--info { --toast-color: #2563a9; }
+@media (prefers-reduced-motion: reduce) { .crm-toast { transition: none; } }
+@media (max-width: 480px) {
+  #crmToastViewport { width: calc(100vw - 20px); top: max(10px, env(safe-area-inset-top)); }
+  .crm-toast { min-height: 50px; padding: 8px; gap: 8px; font-size: 13px; }
+}

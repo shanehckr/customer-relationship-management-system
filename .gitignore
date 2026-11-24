@@ -1,7 +1,47 @@
 # Private database credentials
 /config.local.php
+/database/catering_crm (2).sql
 
 # Environment and secret files
 .env
 .env.*
 !.env.example
+
+# Local mail configuration and secret material must never be committed.
+/config/mail.local.php
+/config/mail.credentials.php
+/crm-secrets/
+/mail-config.php
+**/mail-config.php
+*.mail-secret
+
+# Runtime output and local scratch files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*.bak
+*.backup
+*.old
+/logs/
+/tmp/
+/cache/
+/sessions/
+session.save_path/
+
+# Private keys, certificates, and local TLS bundles
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+
+# Per-machine editor and operating-system metadata
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.DS_Store
+Thumbs.db
+desktop.ini

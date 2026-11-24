@@ -1,34 +1,5 @@
 <?php
-/**
- * xendit-api.php - Xendit online deposit payment (Invoice API, TEST MODE key by default).
- * Put it in the SAME folder as inquiry-common.php, quotations-schema.php and bookings-schema.php.
- * It replaces paymongo-api.php (same actions, same JSON, so the front-end only changes the file name).
- *
- * HOW IT WORKS:
- *   1. Customer accepts the quotation on their My Inquiries page.
- *   2. Customer clicks "Pay Deposit" -> POST ?action=create_checkout -> { checkout_url }  (a Xendit Invoice URL)
- *   3. Customer is redirected to Xendit's hosted checkout page and pays with any method enabled on your account.
- *   4. Xendit redirects back to ?action=return after payment.
- *   5. We verify with Xendit, create the booking automatically, and redirect to CUSTOMER_PAGE.
- *   6. No staff action needed: the booking is created and the inquiry moves to "Completed" by itself.
- *
- * ACTIONS:
- *   POST ?action=create_checkout  quotation_id (+ csrf)   -> { success, checkout_url }
- *   GET  ?action=return&id=..&result=success|cancel        -> verify + finalize; redirect to customer page
- *   POST ?action=webhook                                   -> Xendit "invoice paid" callback
- *                                                            (needs a public URL via ngrok / cloudflared; optional on localhost)
- *   GET  ?action=status&quotation_id=..                    -> { success, paid, status, booking_ref }
- *
- * TEST MODE: use the xnd_development_* secret key (Xendit dashboard > Settings > Developers > API keys,
- * with the TEST MODE switch on and "Money-in" set to Write). No real money is charged.
- * When you go live: put your xnd_production_* key in config.local.php on the live server ("xendit_secret_key").
- *
- * Booking creation (finalizePayment) is idempotent: the return page, webhook, and status polling
- * can all fire at the same time; only ONE booking is ever created.
- */
-// Shared session setup (30-minute timeout). This file mixes JSON calls, the customer coming back from Xendit
-// (a browser redirect) and Xendit's own webhook, so an expired session is NOT answered with a 401 here:
-// SESSION_NO_REDIRECT just treats the visitor as logged out, and the actions that need a login check it themselves.
+
 define('SESSION_NO_REDIRECT', true);
 require_once __DIR__ . '/session-init.php';
 
@@ -43,8 +14,6 @@ ensureQuotationsSchema($db);
 ensureBookingsSchema($db);
 ensurePaymentRequestsSchema($db);
 
-/* ------------------------- SETTINGS (edit these) ------------------------- */
-// SECRETS live in config.local.php (git-ignored), never in this file:  "xendit_secret_key" => "xnd_...",  "xendit_callback_token" => "...".
 $crmConfig = is_file(__DIR__ . '/config.local.php') ? (require __DIR__ . '/config.local.php') : [];
 define('XENDIT_SECRET_KEY',     (string)($crmConfig['xendit_secret_key'] ?? ''));       // Settings > Developers > API keys (Money-in = Write)
 define('XENDIT_CALLBACK_TOKEN', (string)($crmConfig['xendit_callback_token'] ?? ''));   // Settings > Developers > Callbacks (only needed for the webhook)
@@ -56,25 +25,11 @@ define('XENDIT_CURRENCY',       'PHP');
 define('XENDIT_INVOICE_SECONDS', 6 * 3600);                                      // fallback only: normally the checkout stays open until the payment deadline (see xenSecondsUntil)
 
 $TEST_CUSTOMER_ID = 0;   // TESTING only, same as customer-inquiries-api.php. Set to 0 when login works.
-
-$db->exec("CREATE TABLE IF NOT EXISTS xendit_payments (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    inquiry_id INT NOT NULL, quotation_id INT NOT NULL, customer_id INT NULL,
-    invoice_id VARCHAR(80) NULL, checkout_url TEXT NULL,
-    amount DECIMAL(12,2) NOT NULL,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending',
-    payment_id VARCHAR(80) NULL, method VARCHAR(40) NULL, booking_id INT NULL,
-    created_at DATETIME NOT NULL, paid_at DATETIME NULL,
-    UNIQUE KEY uq_xen_invoice (invoice_id), UNIQUE KEY uq_xen_payment (payment_id), INDEX idx_xen_inquiry (inquiry_id)
-) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
 /* the invoice expiry is saved so a still-open checkout page can be reused safely */
-function xenEnsureColumn(PDO $db, string $table, string $col, string $def): void {
-    try {
-        $c = $db->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
-        $c->execute([$col]);
-        if (!$c->fetch()) $db->exec("ALTER TABLE `$table` ADD COLUMN `$col` $def");
-    } catch (PDOException $e) { error_log('xendit-api: could not add ' . $table . '.' . $col . ': ' . $e->getMessage()); }
+function xenEnsureColumn(AppDatabase $db, string $table, string $col, string $def): void {
+    // Payment columns are provisioned centrally from database/catering_crm.sql.
 }
 xenEnsureColumn($db, 'xendit_payments', 'invoice_expires_at', 'DATETIME NULL');
 xenEnsureColumn($db, 'payment_requests', 'invoice_expires_at', 'DATETIME NULL');
@@ -141,7 +96,7 @@ function xenPaymentFrom(array $invoice): array {
 }
 
 /** Asks Xendit about a pending row; books it if it has been paid. Returns the (possibly updated) payment row. */
-function xenVerify(PDO $db, array $row): array {
+function xenVerify(AppDatabase $db, array $row): array {
     if ($row['status'] !== 'pending' || empty($row['invoice_id'])) return $row;
     [$code, $json] = xenRequest('GET', '/v2/invoices/' . rawurlencode($row['invoice_id']));
     if ($code === 200 && xenIsPaid($json)) finalizePayment($db, (int)$row['id'], xenPaymentFrom($json));
@@ -154,7 +109,7 @@ function xenVerify(PDO $db, array $row): array {
  * Money is in: create the booking (once), mark the quotation Accepted, the inquiry Completed, and tell the customer in the chat.
  * $pay = ['id' => payment reference, 'amount' => pesos paid, 'method' => label] from xenPaymentFrom().
  */
-function finalizePayment(PDO $db, int $payRowId, array $pay): void {
+function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
     global $DB_CRM, $LEAD_PK;
     $paid       = (float)$pay['amount'];
     $payId      = (string)$pay['id'];
@@ -176,6 +131,7 @@ function finalizePayment(PDO $db, int $payRowId, array $pay): void {
         $qs = $db->prepare('SELECT * FROM quotations WHERE quotation_id = ? FOR UPDATE');
         $qs->execute([$row['quotation_id']]);
         $q = $qs->fetch();
+        if ($q) $q = quoteHydrate($db, $q);
         $ex = $db->prepare('SELECT booking_id FROM bookings WHERE inquiry_id = ?');
         $ex->execute([$iid]);
         $existing = $ex->fetch();
@@ -206,21 +162,58 @@ function finalizePayment(PDO $db, int $payRowId, array $pay): void {
         $deposit = (float)$q['deposit_amount'];
         $balance = max(0, round($total - $paid, 2));
         $payStatus = $balance <= 0 ? 'Paid' : 'Partially Paid';
-        $db->prepare("INSERT INTO bookings (inquiry_id, customer_id, customer_name, event_title, event_date, event_time, location, arrangement, package,
-                quotation_amount, deposit_amount, amount_paid, remaining_balance, payment_status, payment_method, payment_reference, paid_at,
-                assigned_staff_id, assigned_staff, booking_status, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-           ->execute([$iid, $lead['customer_id'], $lead['customer_name'], $lead['event_name'], $lead['event_date'], ($lead['event_time'] ?? null) ?: null,
-                $lead['event_location'] ?? '', $lead['arrangement'] ?? '', $lead['package'] ?? '',
-                $total, $deposit, $paid, $balance, $payStatus, $method, $payId, now(),
-                $lead['assigned_staff_id'], $lead['assigned_staff_name'], 'Confirmed', now()]);
+        $versionId = syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
+        $temporaryRef = 'BK-TMP-' . bin2hex(random_bytes(8));
+        $eventTime = ($lead['event_time'] ?? null) ?: null;
+        $eventAddress = (string)($lead['event_location'] ?? '');
+        $arrangement = arrangementCanonical((string)($lead['arrangement'] ?? ''));
+        $db->prepare("INSERT INTO bookings
+            (booking_reference, booking_ref, lead_id, inquiry_id, quotation_version_id, customer_id, assigned_staff_id,
+             event_name, event_title, event_date, event_time, event_address, location, arrangement, expected_guests,
+             booking_status, quotation_total, quotation_amount, deposit_required, deposit_amount, amount_paid,
+             remaining_balance, payment_status, payment_method, payment_reference, paid_at, assigned_staff, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+           ->execute([$temporaryRef, $temporaryRef, $iid, $iid, $versionId, $lead['customer_id'], $lead['assigned_staff_id'],
+                $lead['event_name'], $lead['event_name'], $lead['event_date'], $eventTime, $eventAddress, $eventAddress,
+                $arrangement, $lead['expected_guests'], 'Confirmed', $total, $total, $deposit, $deposit, $paid,
+                $balance, $payStatus, $method, $payId, now(), $lead['assigned_staff_name'], now()]);
         $bookingId = (int)$db->lastInsertId();
         $bookingRef = 'BK-' . str_pad((string)$bookingId, 4, '0', STR_PAD_LEFT);
-        $db->prepare('UPDATE bookings SET booking_ref = ? WHERE booking_id = ?')->execute([$bookingRef, $bookingId]);
+        $db->prepare('UPDATE bookings SET booking_reference = ?, booking_ref = ? WHERE booking_id = ?')->execute([$bookingRef, $bookingRef, $bookingId]);
+
+        $db->prepare("INSERT INTO payments (booking_id, payment_reference, payment_type, amount, payment_status, paid_at)
+                      VALUES (?,?, 'DEPOSIT', ?, 'PAID', ?) ON DUPLICATE KEY UPDATE amount=VALUES(amount), payment_status='PAID', paid_at=VALUES(paid_at)")
+           ->execute([$bookingId, $bookingRef . '-DEPOSIT', $deposit, now()]);
+        $db->prepare("INSERT INTO payments (booking_id, payment_reference, payment_type, amount, payment_status, paid_at)
+                      VALUES (?,?, 'BALANCE', ?, ?, ?)
+                      ON DUPLICATE KEY UPDATE amount=VALUES(amount), payment_status=VALUES(payment_status), paid_at=VALUES(paid_at)")
+           ->execute([$bookingId, $bookingRef . '-BALANCE', $balance, $balance <= 0 ? 'PAID' : 'PENDING', $balance <= 0 ? now() : null]);
+        $depositPayment = $db->prepare("SELECT payment_id FROM payments WHERE booking_id = ? AND payment_type = 'DEPOSIT'");
+        $depositPayment->execute([$bookingId]);
+        $depositPaymentId = (int)$depositPayment->fetchColumn();
+        if ($depositPaymentId && $payId !== '') {
+            $paymentMethod = strtoupper(str_replace('PAYMAYA', 'MAYA', $method));
+            if (!in_array($paymentMethod, ['GCASH', 'MAYA'], true)) $paymentMethod = 'GCASH';
+            $db->prepare("INSERT INTO gateway_transactions
+                (payment_id, gateway_name, gateway_transaction_id, gateway_invoice_id, gateway_status, payment_method,
+                 request_reference, response_reference, amount, completed_at)
+                VALUES (?, 'XENDIT', ?, ?, 'PAID', ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE gateway_status='PAID', response_reference=VALUES(response_reference), completed_at=VALUES(completed_at)")
+               ->execute([$depositPaymentId, $payId, $row['invoice_id'] ?? null, $paymentMethod, $row['invoice_id'] ?? null, $payId, $paid, now()]);
+        }
+        $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, changed_by, remarks)
+                      VALUES (?, 'booking', NULL, 'Confirmed', ?, 'Deposit payment confirmed the booking.')")
+           ->execute([$bookingId, $lead['customer_id']]);
+        $db->prepare("INSERT INTO booking_items
+            (booking_id, menu_item_id, tier_id, item_name_snapshot, serving_option_snapshot, quantity, unit_price, subtotal)
+            SELECT ?, menu_item_id, tier_id, item_name_snapshot, serving_option_snapshot, quantity, unit_price, subtotal
+            FROM quotation_items WHERE quotation_version_id = ?")
+           ->execute([$bookingId, $versionId]);
 
         $db->prepare("UPDATE leads SET stage = 'Completed' WHERE `$LEAD_PK` = ?")->execute([$iid]);
         $db->prepare("UPDATE quotations SET status = 'Accepted', responded_at = COALESCE(responded_at, ?) WHERE quotation_id = ?")
            ->execute([now(), $q['quotation_id']]);
+        syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
         $db->prepare('UPDATE xendit_payments SET status = ?, payment_id = ?, method = ?, amount = ?, booking_id = ?, paid_at = ? WHERE id = ?')
            ->execute(['paid', $payId, $method, $paid, $bookingId, now(), $payRowId]);
         $evName = trim((string)($lead['event_name'] ?? ''));
@@ -279,7 +272,7 @@ function finalizePayment(PDO $db, int $payRowId, array $pay): void {
                     $ce = $db->prepare("SELECT email FROM `$DB_CRM`.users WHERE `" . usersPk($db, $DB_CRM) . "` = ?");
                     $ce->execute([(int)$lead['customer_id']]);
                     $mail['to_email'] = trim((string)$ce->fetchColumn());
-                } catch (PDOException $e) { /* users table differs: skip the fallback */ }
+                } catch (Throwable $e) { /* users table differs: skip the fallback */ }
             }
             if (!filter_var($mail['to_email'], FILTER_VALIDATE_EMAIL)) {
                 error_log('Payment email skipped for ' . $mail['booking_ref'] . ': no valid customer email (got "' . $mail['to_email'] . '")');
@@ -309,7 +302,7 @@ function redirectToCustomer(string $result, string $extra = ''): void {
 
 /* ------------------------- "Request Full Payment": remaining-balance payment ------------------------- */
 /** Asks Xendit about a Pending payment request; books it if it has been paid. Returns the (possibly updated) request row. */
-function xenVerifyRequest(PDO $db, array $req): array {
+function xenVerifyRequest(AppDatabase $db, array $req): array {
     if ($req['status'] === 'Pending' && !empty($req['invoice_id'])) {
         [$code, $json] = xenRequest('GET', '/v2/invoices/' . rawurlencode($req['invoice_id']));
         if ($code === 200 && xenIsPaid($json)) finalizeBalancePayment($db, (int)$req['id'], xenPaymentFrom($json));
@@ -323,7 +316,7 @@ function xenVerifyRequest(PDO $db, array $req): array {
  * Emails the customer after a "Request Full Payment" payment (same sendPaymentEmail() the deposit payment uses).
  * Runs AFTER the database commit; a mail problem is only logged and never undoes the payment.
  */
-function emailBalancePayment(PDO $db, array $mail, int $customerId, int $inquiryId): void {
+function emailBalancePayment(AppDatabase $db, array $mail, int $customerId, int $inquiryId): void {
     global $DB_CRM, $LEAD_PK;
     try {
         $ref = (string)$mail['booking_ref'];
@@ -334,14 +327,14 @@ function emailBalancePayment(PDO $db, array $mail, int $customerId, int $inquiry
                 $le = $db->prepare("SELECT customer_email FROM leads WHERE `$LEAD_PK` = ?");
                 $le->execute([$inquiryId]);
                 $mail['to_email'] = trim((string)$le->fetchColumn());
-            } catch (PDOException $e) { /* leads has no customer_email column: use the account email below */ }
+            } catch (Throwable $e) { /* leads has no customer_email column: use the account email below */ }
         }
         if (!filter_var($mail['to_email'], FILTER_VALIDATE_EMAIL) && $customerId) {
             try {
                 $ce = $db->prepare("SELECT email FROM `$DB_CRM`.users WHERE `" . usersPk($db, $DB_CRM) . "` = ?");
                 $ce->execute([$customerId]);
                 $mail['to_email'] = trim((string)$ce->fetchColumn());
-            } catch (PDOException $e) { /* users table differs: skip the fallback */ }
+            } catch (Throwable $e) { /* users table differs: skip the fallback */ }
         }
         if (!filter_var($mail['to_email'], FILTER_VALIDATE_EMAIL)) {
             error_log('Balance payment email skipped for ' . $ref . ': no valid customer email (got "' . $mail['to_email'] . '")');
@@ -358,7 +351,7 @@ function emailBalancePayment(PDO $db, array $mail, int $customerId, int $inquiry
  * Money is in for a payment request: add it to the booking (once), mark the request Paid, tell the customer in the chat.
  * Idempotent like finalizePayment(): the return page and the webhook can both call it, only one of them books the money.
  */
-function finalizeBalancePayment(PDO $db, int $reqId, array $pay): void {
+function finalizeBalancePayment(AppDatabase $db, int $reqId, array $pay): void {
     global $DB_CRM;
     $paid   = round((float)$pay['amount'], 2);
     $payId  = (string)$pay['id'];
@@ -408,6 +401,23 @@ function finalizeBalancePayment(PDO $db, int $reqId, array $pay): void {
            ->execute([$newPaid, $balance, $payStatus, $method, $payId, now(), $b['booking_id']]);
         $db->prepare("UPDATE payment_requests SET status = 'Paid', payment_id = ?, method = ?, paid_amount = ?, paid_at = ? WHERE id = ?")
            ->execute([$payId, $method, $paid, now(), $reqId]);
+        $slot = $db->prepare("SELECT payment_id FROM payments WHERE booking_id = ? AND payment_type = 'BALANCE' FOR UPDATE");
+        $slot->execute([$b['booking_id']]);
+        $balancePaymentId = (int)$slot->fetchColumn();
+        if ($balancePaymentId) {
+            $db->prepare("UPDATE payments SET amount = ?, payment_status = 'PAID', paid_at = ? WHERE payment_id = ?")
+               ->execute([$paid, now(), $balancePaymentId]);
+            if ($payId !== '') {
+                $paymentMethod = strtoupper(str_replace('PAYMAYA', 'MAYA', $method));
+                if (!in_array($paymentMethod, ['GCASH', 'MAYA'], true)) $paymentMethod = 'GCASH';
+                $db->prepare("INSERT INTO gateway_transactions
+                    (payment_id, gateway_name, gateway_transaction_id, gateway_status, payment_method,
+                     request_reference, response_reference, amount, completed_at)
+                    VALUES (?, 'XENDIT', ?, 'PAID', ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE gateway_status='PAID', response_reference=VALUES(response_reference), completed_at=VALUES(completed_at)")
+                   ->execute([$balancePaymentId, $payId, $paymentMethod, (string)$reqId, $payId, $paid, now()]);
+            }
+        }
 
         $ev = trim((string)($b['event_title'] ?? ''));
         $say('Payment received: ' . quotePeso($paid) . ' via ' . $method . ' (Ref. ' . $payId . '). '
@@ -483,12 +493,16 @@ if ($action === 'create_checkout') {
     if (empty($_SESSION['csrf_token']) || !hash_equals($_SESSION['csrf_token'], (string)$token)) fail('Session expired. Refresh and try again.', 403);
     if (XENDIT_SECRET_KEY === '' || strpos(XENDIT_SECRET_KEY, 'PASTE_YOUR') !== false) fail('Xendit is not set up yet: put your secret key in config.local.php (xendit_secret_key).', 500);
 
-    $st = $db->prepare("SELECT q.*, l.stage AS lead_stage, l.event_name, l.event_date AS lead_event_date, l.customer_name, l.customer_email
-                        FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
+    $st = $db->prepare("SELECT q.*, qv.valid_until, qv.valid_until_time, qv.deposit_rate, qv.deposit_amount,
+                               qv.subtotal, qv.discount_amount, qv.additional_charges, qv.total_amount AS normalized_total,
+                               l.stage AS lead_stage, l.event_name, l.event_date AS lead_event_date, l.customer_name, l.customer_email
+                        FROM quotations q JOIN quotation_versions qv ON qv.quotation_id=q.quotation_id AND qv.version_number=q.version
+                        JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
                         WHERE q.quotation_id = ? AND l.customer_id = ?");
     $st->execute([(int)($_POST['quotation_id'] ?? 0), $customerId]);
     $q = $st->fetch();
     if (!$q) fail('Quotation not found.', 404);
+    $q = quoteHydrate($db, $q);
     $iid = (int)$q['inquiry_id'];
     if ($q['lead_stage'] === 'Declined') fail('This inquiry was declined.', 409);
     if (!in_array($q['status'], ['Sent', 'Accepted'], true)) fail('This quotation is no longer open for payment (' . strtolower($q['status']) . ').', 409);

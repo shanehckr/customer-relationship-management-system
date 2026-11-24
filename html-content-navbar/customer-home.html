@@ -1,55 +1,50 @@
 <main id="customerHomePage" class="customer-home-page" data-api-url="customer-home-api.php?action=summary" aria-busy="true">
   <header class="ch-page-header">
-    <h1 class="ch-greeting" id="homeGreeting">Welcome back</h1>
-    <p class="ch-date" id="homeTodayDate"></p>
+    <div class="ch-welcome-copy">
+      <h1 class="ch-greeting" id="homeGreeting">Welcome back.</h1>
+      <p class="ch-welcome-subtitle">Welcome to Espinosilla's Kainan. Let's make your next occasion special.</p>
+    </div>
+    <p class="ch-date" id="homeTodayDate"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4M8 14h2M14 14h2M8 17h2"/></svg><span id="homeTodayDateLabel"></span></p>
   </header>
   <p class="ch-status" id="homeDashboardStatus" role="status" aria-live="polite">Loading dashboard...</p>
 
-  <section class="ch-card ch-empty-state ch-error-state" id="homeErrorState" aria-labelledby="homeErrorTitle" hidden>
-    <span class="ch-eyebrow">DASHBOARD</span>
-    <span class="ch-empty-icon" aria-hidden="true"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5M12 16.4v.1"/></svg></span>
-    <h2 id="homeErrorTitle">Dashboard unavailable</h2>
-    <p id="homeErrorMessage">Dashboard data could not be loaded. Check the Home API and try again.</p>
+  <section class="ch-hero" aria-labelledby="homeHeroTitle">
+    <div class="ch-hero-copy">
+      <p class="ch-hero-kicker">Your next gathering <span aria-hidden="true">—</span></p>
+      <h2 id="homeHeroTitle">Planning a special occasion?</h2>
+      <p>Discover our catering services and let us help you plan your event.</p>
+      <button class="ch-button ch-hero-button" id="homeStartInquiryButton" type="button" data-home-route="new-inquiry">Start a Catering Inquiry <span aria-hidden="true">→</span></button>
+    </div>
+    <svg class="ch-hero-leaves" viewBox="0 0 64 48" aria-hidden="true"><path d="M31 43C15 41 6 31 4 15c15 1 25 9 27 28ZM33 40C30 24 37 11 53 4c3 16-3 29-20 36ZM31 45c-1-10 3-17 13-23"/></svg>
+    <div class="ch-hero-photo" role="img" aria-label="Freshly prepared catering food"></div>
+  </section>
+
+  <section class="ch-summary-grid" aria-label="Your activity">
+    <article class="ch-summary-card" aria-labelledby="homeSummaryInquiryTitle">
+      <div class="ch-summary-art" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="14" y="12" width="36" height="46" rx="4"/><path d="M25 12V8h14v8H25zM23 27h18M23 36h18M23 45h12M46 5l5-4M53 12h7"/><circle cx="19" cy="27" r="1"/><circle cx="19" cy="36" r="1"/><circle cx="19" cy="45" r="1"/></svg></div>
+      <div class="ch-summary-copy"><h2 id="homeSummaryInquiryTitle">My Inquiries</h2><p class="ch-summary-state" id="homeInquirySummaryState">No inquiries yet.</p><p class="ch-summary-description" id="homeInquirySummaryDescription">Your submitted catering requests will appear here.</p><a href="html-content-navbar/customer-inquiries.html" class="ch-summary-link" data-home-route="inquiries">View Inquiries <span aria-hidden="true">→</span></a></div>
+    </article>
+    <article class="ch-summary-card" aria-labelledby="homeSummaryBookingTitle">
+      <div class="ch-summary-art" aria-hidden="true"><svg viewBox="0 0 64 64"><rect x="9" y="12" width="46" height="46" rx="7"/><path d="M9 24h46M21 7v11M43 7v11M23 39l7 7 13-14M57 8l5-5M58 18h5"/></svg></div>
+      <div class="ch-summary-copy"><h2 id="homeSummaryBookingTitle">My Bookings</h2><p class="ch-summary-state" id="homeBookingSummaryState">No bookings yet.</p><p class="ch-summary-description" id="homeBookingSummaryDescription">Your confirmed catering events will appear here.</p><a href="html-content-navbar/customer-bookings.html" class="ch-summary-link" data-home-route="bookings">View Bookings <span aria-hidden="true">→</span></a></div>
+    </article>
+  </section>
+
+  <section class="ch-how-it-works" aria-labelledby="homeHowTitle"><h2 id="homeHowTitle">How It Works <span aria-hidden="true">—</span></h2><p class="ch-how-intro">A simple process to book your catering with us.</p>
+    <ol class="ch-how-grid">
+      <li><span class="ch-how-number">01</span><svg class="ch-how-icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M12 7h18l7 7v27H12zM30 7v8h8M18 22h13M18 28h13M18 34h9M8 12v30h24"/></svg><strong>Submit an Inquiry</strong><p>Share your event details, preferred services, and requirements.</p></li>
+      <li><span class="ch-how-number">02</span><svg class="ch-how-icon" viewBox="0 0 48 48" aria-hidden="true"><path d="M10 5h21l8 8v30H10zM31 5v9h8M16 22h17M16 28h17M16 34h11M29 36l4 4 9-10"/></svg><strong>Receive a Quotation</strong><p>Get a personalized quotation based on your needs.</p></li>
+      <li><span class="ch-how-number">03</span><svg class="ch-how-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="10" width="38" height="29" rx="4"/><path d="M5 19h38M12 29h10M31 29h5M31 34h5"/><circle cx="35" cy="35" r="8"/><path d="M35 31v8M32 34h6"/></svg><strong>Accept and Pay Deposit</strong><p>Approve the quotation and complete the required 20% deposit payment.</p></li>
+      <li><span class="ch-how-number">04</span><svg class="ch-how-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="10" width="36" height="34" rx="5"/><path d="M6 20h36M15 5v10M33 5v10M17 31l6 6 11-12"/></svg><strong>Booking Confirmed</strong><p>Your booking is confirmed after payment verification and your date is reserved.</p></li>
+    </ol>
+  </section>
+
+  <section class="ch-card ch-error-state" id="homeErrorState" aria-labelledby="homeErrorTitle" hidden>
+    <h2 id="homeErrorTitle">Dashboard unavailable</h2><p id="homeErrorMessage">Dashboard data could not be loaded. Check the Home API and try again.</p>
     <button class="ch-button ch-button-secondary ch-retry" id="homeRetryButton" type="button">Try again</button>
   </section>
 
-  <section class="ch-card ch-empty-state" id="homeEmptyState" aria-labelledby="homeEmptyTitle" hidden>
-    <span class="ch-eyebrow">UPCOMING BOOKING</span>
-    <span class="ch-empty-icon" aria-hidden="true"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span>
-    <h2 id="homeEmptyTitle">No upcoming bookings yet</h2>
-    <p>Once your booking is confirmed, you can track its progress here.</p>
-  </section>
-
-  <section class="ch-card ch-overview-card" id="homeInquiryState" aria-labelledby="homeInquiryTitle" hidden>
-    <div class="ch-overview-head"><div><span class="ch-eyebrow">ACTIVE INQUIRY</span><h2 id="homeInquiryTitle">—</h2></div><span class="ch-status-badge" id="homeInquiryStatus">—</span></div>
-    <div class="ch-detail-grid">
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Event date</span><span class="ch-detail-value" id="homeInquiryDate">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.4-3.3 2.8-5.2 6-5.2s5.6 1.9 6 5.2"/><path d="M16 5.6a3 3 0 0 1 0 5.8M18.2 14.6c1.6.6 2.6 2.1 2.8 4.4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Expected guests</span><span class="ch-detail-value" id="homeInquiryGuests">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v8M4.5 3v5.2c0 1.5 1 2.8 2.5 2.8s2.5-1.3 2.5-2.8V3M7 11v10M17 3c-2 1.5-3 4-3 7 0 1.7 1 2.7 3 3v8M17 3v18"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Service arrangement</span><span class="ch-detail-value" id="homeServiceArrangement">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Venue</span><span class="ch-detail-value" id="homeInquiryVenue">—</span></span></div>
-    </div>
-    <ol class="ch-stepper" id="homeInquiryStepper" aria-label="Inquiry progress">
-      <li data-step-index="0"><span class="ch-step-dot">1</span><span>Submitted</span></li><li data-step-index="1"><span class="ch-step-dot">2</span><span>Under Review</span></li><li data-step-index="2"><span class="ch-step-dot">3</span><span>Quotation</span></li><li data-step-index="3"><span class="ch-step-dot">4</span><span>Confirmation</span></li><li data-step-index="4"><span class="ch-step-dot">5</span><span>Completed</span></li>
-    </ol>
-    <footer class="ch-card-footer"><span>Inquiry reference <strong id="homeInquiryReference">—</strong></span><div class="ch-actions"><a class="ch-button ch-button-secondary" href="customer-inquiries.html" data-home-route="inquiries">View Inquiry Details</a><a class="ch-button ch-button-primary" href="customer-inbox.html" data-home-route="inbox">Open Messages / Quotation</a></div></footer>
-  </section>
-
-  <section class="ch-card ch-overview-card" id="homeBookingState" aria-labelledby="homeBookingTitle" hidden>
-    <div class="ch-overview-head"><div><span class="ch-eyebrow">UPCOMING BOOKING</span><h2 id="homeBookingTitle">—</h2></div><span class="ch-status-badge is-confirmed" id="homeBookingStatus">Confirmed</span></div>
-    <div class="ch-detail-grid">
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Event date</span><span class="ch-detail-value" id="homeBookingDate">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8.5" r="3.2"/><path d="M3 19.5c.4-3.3 2.8-5.2 6-5.2s5.6 1.9 6 5.2"/><path d="M16 5.6a3 3 0 0 1 0 5.8M18.2 14.6c1.6.6 2.6 2.1 2.8 4.4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Expected guests</span><span class="ch-detail-value" id="homeBookingGuests">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v8M4.5 3v5.2c0 1.5 1 2.8 2.5 2.8s2.5-1.3 2.5-2.8V3M7 11v10M17 3c-2 1.5-3 4-3 7 0 1.7 1 2.7 3 3v8M17 3v18"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Service arrangement</span><span class="ch-detail-value" id="homeBookingServiceArrangement">—</span></span></div>
-      <div class="ch-detail-item"><span class="ch-detail-icon"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21z"/><circle cx="12" cy="10" r="2.4"/></svg></span><span class="ch-detail-text"><span class="ch-detail-label">Venue</span><span class="ch-detail-value" id="homeBookingVenue">—</span></span></div>
-    </div>
-    <p class="ch-progress-note"><svg class="ch-ico ch-ico-sm" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg> Progress statuses are updated by the catering team.</p>
-    <ol class="ch-stepper" id="homeBookingStepper" aria-label="Booking progress">
-      <li data-step-index="0"><span class="ch-step-dot">1</span><span>Inquiry Received</span></li><li data-step-index="1"><span class="ch-step-dot">2</span><span>In Progress</span></li><li data-step-index="2"><span class="ch-step-dot">3</span><span>Quotation Sent</span></li><li data-step-index="3"><span class="ch-step-dot">4</span><span>Awaiting Your Response</span></li><li data-step-index="4"><span class="ch-step-dot">5</span><span>Booking Confirmation</span></li>
-    </ol>
-    <footer class="ch-card-footer"><span>Booking reference <strong id="homeBookingReference">—</strong></span><div class="ch-actions"><a class="ch-button ch-button-secondary" href="customer-bookings.html" data-home-route="bookings">View Booking Details</a><a class="ch-button ch-button-primary" href="customer-bookings.html#payment" data-home-route="booking-payment">Payment Details</a></div></footer>
-  </section>
-
-  <section class="ch-card ch-cta-card" aria-labelledby="homeCtaTitle"><span class="ch-cta-mark" aria-hidden="true"><svg class="ch-ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v8M4.5 3v5.2c0 1.5 1 2.8 2.5 2.8s2.5-1.3 2.5-2.8V3M7 11v10M17 3c-2 1.5-3 4-3 7 0 1.7 1 2.7 3 3v8M17 3v18"/></svg></span><div class="ch-cta-copy"><span class="ch-eyebrow">YOUR NEXT GATHERING</span><h2 id="homeCtaTitle">Planning your first event?</h2><p id="homeCtaDescription">Tell us the occasion, your preferred menu, and the number of guests. We will prepare a personalized quotation for you.</p></div><button class="ch-button ch-button-primary" id="homeStartInquiryButton" type="button" data-home-route="new-inquiry">Start a catering inquiry <span aria-hidden="true">&#8594;</span></button></section>
-
-  <section class="ch-how-it-works" aria-labelledby="homeHowTitle"><h2 class="ch-eyebrow" id="homeHowTitle">HOW IT WORKS</h2><ol class="ch-how-grid"><li><span class="ch-how-number">1</span><strong>Send inquiry</strong><p>Tell us your event details.</p></li><li><span class="ch-how-number">2</span><strong>Receive quotation</strong><p>We prepare a personalized quote.</p></li><li><span class="ch-how-number">3</span><strong>Confirm booking</strong><p>Approve the quotation to reserve your date.</p></li><li><span class="ch-how-number">4</span><strong>Track progress</strong><p>Follow preparation and delivery here.</p></li></ol></section>
+  <!-- Retained as hidden record detail templates for existing home booking deep-link behavior. -->
+  <section class="ch-card ch-overview-card" id="homeInquiryState" hidden aria-hidden="true"><h2 id="homeInquiryTitle"></h2><span id="homeInquiryStatus"></span><span id="homeInquiryDate"></span><span id="homeInquiryGuests"></span><span id="homeServiceArrangement"></span><span id="homeInquiryVenue"></span><span id="homeInquiryReference"></span><ol id="homeInquiryStepper"></ol><a href="html-content-navbar/customer-inquiries.html" data-home-route="inquiries">View Inquiry Details</a></section>
+  <section class="ch-card ch-overview-card" id="homeBookingState" hidden aria-hidden="true"><h2 id="homeBookingTitle"></h2><span id="homeBookingStatus"></span><span id="homeBookingDate"></span><span id="homeBookingGuests"></span><span id="homeBookingServiceArrangement"></span><span id="homeBookingVenue"></span><span id="homeBookingReference"></span><ol id="homeBookingStepper"></ol><a href="html-content-navbar/customer-bookings.html" data-home-route="bookings">View Booking Details</a><a href="html-content-navbar/customer-bookings.html#payment" data-home-route="booking-payment">Payment Details</a></section>
 </main>

@@ -16,19 +16,31 @@ require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see
 
 /** Admin / Manager only. Accepts "Admin", "Administrator", "System Admin", "Manager", "Sales Manager", etc. */
 function requireAdminManager(): array {
-    $id = (int)sessionFirst(['user_id', 'id', 'staff_id', 'admin_id', 'manager_id']);
+    $id = (int)($_SESSION['user_id'] ?? 0);
     if (!$id) fail('Please log in again.', 401);
-    $rawRole = sessionFirst(['role', 'user_role', 'role_name', 'user_type', 'account_type', 'position', 'userRole']);
-    $role = normRole($rawRole);
-    $isAdmin   = $role !== '' && str_contains($role, 'admin');
-    $isManager = $role !== '' && str_contains($role, 'manager');
-    if (!$isAdmin && !$isManager) {
-        // shows what the session really holds, so a wrong key/value is easy to spot
-        $keys = implode(', ', array_keys($_SESSION));
-        fail('You do not have access to this page. (Session role: "' . $rawRole . '". Session keys: ' . $keys . ')', 403);
+    $sessionRole = normRole($_SESSION['role_name'] ?? '');
+    if ($sessionRole === '') fail('Please log in again.', 401);
+
+    try {
+        global $db;
+        $identity = $db->prepare('SELECT u.account_status, u.full_name, r.role_name FROM users u
+                                  JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1');
+        $identity->execute([$id]);
+        $account = $identity->fetch();
+    } catch (Throwable $e) {
+        error_log('manager-admin-inquiries: account authorization lookup failed: ' . $e->getMessage());
+        fail('Unable to verify your account.', 500);
     }
+    if (!$account || $account['account_status'] !== 'Active') fail('Please log in again.', 401);
+
+    $role = normRole($account['role_name']);
+    $isAdmin = str_contains($role, 'admin');
+    $isManager = str_contains($role, 'manager');
+    if (!$isAdmin && !$isManager) fail('You do not have access to this page.', 403);
+    if ($sessionRole !== $role) fail('Your role changed. Please log in again.', 403);
+
     $r = $isAdmin ? 'admin' : 'manager';
-    return ['id' => $id, 'role' => $r, 'name' => sessionFirst(['user_name', 'name', 'full_name']) ?: ucfirst($r)];
+    return ['id' => $id, 'role' => $r, 'name' => trim((string)$account['full_name']) ?: ucfirst($r)];
 }
 $user = requireAdminManager();
 $action = $_GET['action'] ?? '';
@@ -36,7 +48,7 @@ $action = $_GET['action'] ?? '';
 /** Sales Staff accounts for the Reassign dropdown.
  *  Looks in EVERY table of both databases that has an id + name + role column (so a newly created account is found
  *  wherever your "create user" page saves it), keeps roles that contain "sales", and removes duplicates. */
-function salesStaffList(PDO $db): array {
+function salesStaffList(AppDatabase $db): array {
     global $DB_CRM, $DB_CATERING;
     $found = [];   // key (lowercase name) => ['id' => .., 'name' => ..]
     $add = function ($id, $name) use (&$found) {
@@ -53,7 +65,7 @@ function salesStaffList(PDO $db): array {
     // 1) users table that stores the role as a NUMBER (role_id), e.g. catering_crm.users: user_id, full_name, role_id, status
     foreach (array_unique([$DB_CATERING, $DB_CRM]) as $schema) {
         try { $uCols = array_column($db->query("SHOW COLUMNS FROM `$schema`.`users`")->fetchAll(), 'Field'); }
-        catch (PDOException $e) { continue; }
+        catch (Throwable $e) { continue; }
         if (!in_array('role_id', $uCols, true)) continue;
         $uId   = $pickCol($uCols, ['user_id', 'id']);
         $uName = $pickCol($uCols, ['full_name', 'name', 'username']);
@@ -65,7 +77,7 @@ function salesStaffList(PDO $db): array {
         foreach (array_unique([$schema, $DB_CATERING, $DB_CRM]) as $rs) {
             foreach (['roles', 'user_roles', 'role'] as $rt) {
                 try { $rCols = array_column($db->query("SHOW COLUMNS FROM `$rs`.`$rt`")->fetchAll(), 'Field'); }
-                catch (PDOException $e) { continue; }
+                catch (Throwable $e) { continue; }
                 $rId   = $pickCol($rCols, ['role_id', 'id']);
                 $rName = $pickCol($rCols, ['role_name', 'name', 'role', 'title']);
                 if (!$rId || !$rName) continue;
@@ -79,8 +91,8 @@ function salesStaffList(PDO $db): array {
         if (!$salesRoleIds) {
             try {
                 foreach ($db->query("SELECT DISTINCT u.role_id FROM `$schema`.`users` u
-                                     JOIN leads l ON l.assigned_staff_id = u.`$uId`")->fetchAll(PDO::FETCH_COLUMN) as $rid) $salesRoleIds[(int)$rid] = true;
-            } catch (PDOException $e) { /* ignore */ }
+                                     JOIN leads l ON l.assigned_staff_id = u.`$uId`")->fetchAll(AppDatabase::FETCH_COLUMN) as $rid) $salesRoleIds[(int)$rid] = true;
+            } catch (Throwable $e) { /* ignore */ }
         }
         if (!$salesRoleIds) continue;
 
@@ -95,8 +107,8 @@ function salesStaffList(PDO $db): array {
 
     // 2) other tables that store the role as text
     foreach (array_unique([$DB_CRM, $DB_CATERING]) as $schema) {
-        try { $tables = $db->query("SHOW TABLES FROM `$schema`")->fetchAll(PDO::FETCH_COLUMN); }
-        catch (PDOException $e) { continue; }
+        try { $tables = $db->query("SHOW TABLES FROM `$schema`")->fetchAll(AppDatabase::FETCH_COLUMN); }
+        catch (Throwable $e) { continue; }
         // usual account tables first, so their ids win when the same person appears twice
         usort($tables, function ($a, $b) {
             $pri = ['users' => 0, 'staff' => 1, 'employees' => 2, 'accounts' => 3];
@@ -105,7 +117,7 @@ function salesStaffList(PDO $db): array {
         foreach ($tables as $table) {
             if (preg_match('/^(leads|cib_|menu_)/', $table)) continue;
             try { $cols = array_column($db->query("SHOW COLUMNS FROM `$schema`.`$table`")->fetchAll(), 'Field'); }
-            catch (PDOException $e) { continue; }
+            catch (Throwable $e) { continue; }
             $idCol     = $pickCol($cols, ['id', 'user_id', 'staff_id', 'employee_id']);
             $nameCol   = $pickCol($cols, ['full_name', 'name', 'staff_name', 'user_name', 'username']);
             $roleCol   = $pickCol($cols, ['role', 'user_role', 'role_name', 'user_type', 'account_type', 'position']);
@@ -115,7 +127,7 @@ function salesStaffList(PDO $db): array {
                 $rows = $db->query("SELECT `$idCol` AS id, `$nameCol` AS name, `$roleCol` AS role"
                     . ($statusCol ? ", `$statusCol` AS status" : ", '' AS status")
                     . " FROM `$schema`.`$table` ORDER BY `$nameCol`")->fetchAll();
-            } catch (PDOException $e) { continue; }
+            } catch (Throwable $e) { continue; }
             foreach ($rows as $r) {
                 if (!str_contains(normRole($r['role']), 'sales')) continue;
                 if (in_array(strtolower(trim((string)$r['status'])), ['inactive', 'disabled', 'deleted', 'deactivated'], true)) continue;
@@ -128,7 +140,7 @@ function salesStaffList(PDO $db): array {
     try {
         foreach ($db->query("SELECT DISTINCT assigned_staff_id AS id, assigned_staff_name AS name FROM leads
                              WHERE assigned_staff_id IS NOT NULL AND assigned_staff_name <> ''")->fetchAll() as $r) $add($r['id'], $r['name']);
-    } catch (PDOException $e) { /* ignore */ }
+    } catch (Throwable $e) { /* ignore */ }
 
     $list = array_values($found);
     usort($list, fn($a, $b) => strcasecmp($a['name'], $b['name']));
@@ -148,12 +160,7 @@ if ($action === 'reassign') {
     $newName = trim((string)($_POST['new_staff_name'] ?? ''));
     if (!$id) fail('Inquiry not found.', 404);
     if (!$newId || $newName === '') fail('Please choose the new Sales Staff member.');
-
-    $db->exec("CREATE TABLE IF NOT EXISTS inquiry_assignment_history (
-        id INT AUTO_INCREMENT PRIMARY KEY, lead_id INT NOT NULL, previous_staff_id INT NULL, previous_staff_name VARCHAR(120) NULL,
-        new_staff_id INT NOT NULL, new_staff_name VARCHAR(120) NOT NULL, reason VARCHAR(120) NULL, reason_note TEXT NULL,
-        changed_by_id INT NULL, changed_by_name VARCHAR(120) NULL, created_at DATETIME NOT NULL, INDEX (lead_id)
-    ) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
     $db->beginTransaction();
     try {
@@ -172,6 +179,10 @@ if ($action === 'reassign') {
                       reason, reason_note, changed_by_id, changed_by_name, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
            ->execute([$id, $lead['assigned_staff_id'], $lead['assigned_staff_name'], $newId, $newName,
                       trim((string)($_POST['reason'] ?? '')), trim((string)($_POST['reason_note'] ?? '')), $user['id'], $user['name'], now()]);
+        $db->prepare('INSERT INTO inquiry_assignments (lead_id, previous_staff_id, new_staff_id, changed_by, reason, reason_note)
+                      VALUES (?,?,?,?,?,?)')
+           ->execute([$id, $lead['assigned_staff_id'] ?: null, $newId, $user['id'],
+               trim((string)($_POST['reason'] ?? '')) ?: null, trim((string)($_POST['reason_note'] ?? '')) ?: null]);
 
         // first time anyone owns it -> open the customer's chat (same as Accept)
         $has = $db->prepare("SELECT id FROM `$DB_CRM`.cib_conversations WHERE inquiry_id = ?");

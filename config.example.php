@@ -7,7 +7,10 @@
 
 return [
     "host" => "localhost",
-    "username" => "catering_crm_user",
+    // Create this dedicated, least-privileged MariaDB account for the CRM.
+    "username" => "crm_app",
     "password" => "",
-    "database" => "catering_crm"
+    "database" => "catering_crm",
+    // Optional business pickup address shown read-only in Customer Pickup inquiries.
+    "pickup_location" => ""
 ];

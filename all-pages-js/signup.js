@@ -31,10 +31,13 @@
   /* ---------------- small helpers ---------------- */
 
   function showAlert(message, type) {
-    alertBox.className = "alert alert-" + (type || "danger");
-    alertBox.textContent = message;
-    alertBox.classList.remove("d-none");
-    alertBox.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (window.crmToast) {
+      var toastType = type === "success" ? "success" : (type === "warning" ? "warning" : (type === "info" ? "info" : "error"));
+      window.crmToast(message, toastType);
+      alertBox.classList.add("d-none");
+      return;
+    }
+    console.error("CRM toast component was not loaded before sign-up messages.");
   }
 
   function clearAlert() {
@@ -184,7 +187,6 @@
       $("suMasked").textContent = maskPhone(digits);
       clearOtp();
       startTimers(res.resend_in || 30, res.expires_in || 300);
-      showDevCode(res.dev_code);
       showStep(2);
       if (isResend) showAlert("A new code is on its way.", "success");
     });
@@ -279,17 +281,6 @@
       renderTimers();
       if (state.resendLeft === 0 && state.expiryLeft === 0) clearInterval(state.ticker);
     }, 1000);
-  }
-
-  function showDevCode(code) {
-    var notice = $("suDevNotice");
-    if (code) {
-      notice.textContent = "Test mode: your code is " + code + ". No SMS was sent.";
-      notice.classList.remove("d-none");
-    } else {
-      notice.classList.add("d-none");
-      notice.textContent = "";
-    }
   }
 
   function verifyCode() {

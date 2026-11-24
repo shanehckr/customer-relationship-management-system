@@ -123,7 +123,7 @@ try {
 
     $me = custRows(
         $conn,
-        "SELECT u.status, r.role_name
+        "SELECT u.account_status AS status, r.role_name
          FROM users AS u INNER JOIN roles AS r ON r.role_id = u.role_id
          WHERE u.user_id = ? LIMIT 1",
         "i",
@@ -197,7 +197,7 @@ try {
 
         $rows = custRows(
             $conn,
-            "SELECT u.user_id, u.full_name, u.username, u.email, u.phone, u.status, u.created_at" . ($hasPhoto ? ", u.photo_path" : "") . "
+            "SELECT u.user_id, u.full_name, u.username, u.email, u.phone, u.account_status AS status, u.created_at" . ($hasPhoto ? ", u.photo_path" : "") . "
              FROM users AS u
              WHERE " . implode(" AND ", $where) . "
              ORDER BY u.created_at ASC, u.user_id ASC",
@@ -218,7 +218,7 @@ try {
     $user = $customerRoleId > 0
         ? (custRows(
             $conn,
-            "SELECT user_id, full_name, username, email, phone, status, created_at" . ($hasPhoto ? ", photo_path" : "") . "
+            "SELECT user_id, full_name, username, email, phone, account_status AS status, created_at" . ($hasPhoto ? ", photo_path" : "") . "
              FROM users WHERE user_id = ? AND role_id = ? LIMIT 1",
             "ii",
             [$customerId, $customerRoleId]

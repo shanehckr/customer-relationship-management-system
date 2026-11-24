@@ -74,7 +74,7 @@ if ($fullName === '') {
                 if ($n === '') $n = trim(firstOf($row, ['first_name', 'firstname']) . ' ' . firstOf($row, ['last_name', 'lastname']));
                 if ($n !== '') { $fullName = $n; break; }
             }
-        } catch (PDOException $e) { /* table/columns differ: try the next one */ }
+        } catch (Throwable $e) { /* table/columns differ: try the next one */ }
     }
 }
 

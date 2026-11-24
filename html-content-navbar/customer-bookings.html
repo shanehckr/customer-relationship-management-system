@@ -1,18 +1,36 @@
 <!-- Customer My Bookings view. Booking records are loaded from customer-bookings-api.php. -->
-<div class="cb-page" id="cbPage" data-cb-view="empty">
+<div class="cb-page" id="cbPage" data-cb-view="loading">
   <header class="cb-page-header">
-    <h2>MY BOOKINGS</h2>
+    <div class="cb-heading-copy">
+      <h2>My Bookings</h2>
+      <p class="cb-page-subtitle">Manage your confirmed catering events, monitor preparation progress, and review payment details.</p>
+    </div>
   </header>
 
-  <div class="cb-layout" id="cbLayout">
+  <p class="cb-list-state cb-page-state" id="cbListState" role="status" aria-live="polite">
+    Loading your bookings…
+  </p>
+
+  <section class="cb-empty-state" id="cbEmptyState" aria-live="polite" hidden>
+    <div class="cb-empty-icon" aria-hidden="true">
+      <svg viewBox="0 0 88 76" focusable="false">
+        <rect x="14" y="18" width="51" height="48" rx="5" />
+        <path d="M14 31h51M27 13v11m25-11v11M24 42h7m9 0h7m9 0h4M24 52h7m9 0h7m9 0h4" />
+        <circle cx="69" cy="52" r="11" />
+        <path d="m77 60 6 7M72 47v6l4 2M10 12l-4-4m67 0 4-5M77 32h7" />
+      </svg>
+    </div>
+    <h3>No bookings yet</h3>
+    <p>You don't have any confirmed bookings at the moment. Once your inquiry is approved and your booking is confirmed, your booking details will appear here.</p>
+    <button type="button" class="cb-primary-button" id="cbStartInquiry"><i class="bi bi-plus-lg" aria-hidden="true"></i> Start a Catering Inquiry</button>
+  </section>
+
+  <div class="cb-layout" id="cbLayout" hidden>
     <aside class="cb-sidebar" aria-label="My bookings">
       <header class="cb-list-header">
         <h3>Bookings</h3>
         <span class="cb-count" id="cbBookingCount">0 bookings</span>
       </header>
-      <p class="cb-list-state" id="cbListState" role="status" aria-live="polite">
-        0 bookings. Your bookings will appear here when available.
-      </p>
       <ul class="cb-booking-list" id="cbBookingList"></ul>
     </aside>
 
@@ -23,9 +41,10 @@
 
       <header class="cb-banner">
         <div>
-          <h3 class="cb-booking-title" id="cbBookingTitle">Booking overview</h3>
-          <span class="cb-status" id="cbBookingStatus">—</span>
+          <h3 class="cb-booking-title" id="cbBookingTitle">Booking Overview</h3>
+          <span class="cb-booking-reference" id="cbBookingReference" hidden></span>
         </div>
+        <span class="cb-status" id="cbBookingStatus">—</span>
       </header>
 
       <ol class="cb-stepper" id="cbStepper" aria-label="Booking progress">
@@ -61,7 +80,8 @@
             <dl class="cb-key-values">
               <div class="cb-key-value"><dt>Event Type</dt><dd id="cbEventType">—</dd></div>
               <div class="cb-key-value"><dt>Expected Guests</dt><dd id="cbGuests">0</dd></div>
-              <div class="cb-key-value"><dt>Venue</dt><dd id="cbVenue">—</dd></div>
+              <div class="cb-key-value"><dt>Service Arrangement</dt><dd id="cbArrangement">—</dd></div>
+              <div class="cb-key-value"><dt id="cbVenueLabel">Venue</dt><dd id="cbVenue">—</dd></div>
               <div class="cb-key-value"><dt>Event Schedule</dt><dd id="cbSchedule">—</dd></div>
               <div class="cb-key-value"><dt>Package</dt><dd id="cbPackage">—</dd></div>
               <div class="cb-key-value"><dt>Special Requests</dt><dd id="cbRequests">—</dd></div>
@@ -76,6 +96,10 @@
             </dl>
           </article>
         </div>
+        <section class="cb-card cb-menu-card" id="cbMenuCard" hidden>
+          <h4>Selected Menu <span id="cbMenuCount"></span></h4>
+          <ul class="cb-menu-items" id="cbMenuItems"></ul>
+        </section>
       </section>
 
       <section class="cb-tab-panel" id="tab-payment-details" role="tabpanel"
@@ -112,6 +136,10 @@
             </div>
           </article>
         </div>
+        <section class="cb-card cb-payment-history-card" id="cbPaymentHistoryCard" hidden>
+          <h4>Payment History</h4>
+          <ul class="cb-payment-history" id="cbPaymentHistory"></ul>
+        </section>
       </section>
 
       <section class="cb-tab-panel" id="tab-feedback" role="tabpanel" aria-labelledby="cbTabFeedback" hidden>

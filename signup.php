@@ -31,6 +31,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
      <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
      <link rel="stylesheet" href="all-pages-css/cookie-consent.css">
+     <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
   <script src="all-pages-js/theme.js"></script>
 </head>
 <body class="d-flex align-items-center justify-content-center min-vh-100 p-3 p-md-4">
@@ -117,8 +118,6 @@ if (empty($_SESSION["signup_csrf_token"])) {
             <p class="su-timer" role="timer">
               <span id="suExpiry">Code expires in 5:00</span>
             </p>
-
-            <div class="alert alert-warning d-none" id="suDevNotice" role="status"></div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suVerifyBtn">Verify Code</button>
 
@@ -207,8 +206,9 @@ if (empty($_SESSION["signup_csrf_token"])) {
 
   </main>
   
-  <script src="all-pages-js/signup.js"></script>
+  <script src="all-pages-js/toast.js?v=2"></script>
+  <script src="all-pages-js/signup.js?v=2"></script>
     <script src="all-pages-js/loading.js"></script>
   <script src="all-pages-js/cookie-consent.js" defer></script>
 </body>
-</html> 
+</html>

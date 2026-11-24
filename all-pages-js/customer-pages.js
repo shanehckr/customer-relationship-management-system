@@ -135,6 +135,9 @@
       next: $("iwNext"),
       close: $("iwClose"),
       count: $("iwCount"),
+      selectedItems: $("iwSelectedItems"),
+      subtotal: $("iwSubtotal"),
+      footerEstimate: $("iwFooterEstimate"),
       notes: $("iwNotes"),
       notesCount: $("iwNotesCount"),
       submitError: $("iwSubmitError"),
@@ -146,6 +149,11 @@
     };
 
     var state = { step: 1, dirty: false, busy: false, bs: null };
+    var pickupLocation = "";
+    var pickupLocationLoaded = false;
+    var pickupLocationLoading = false;
+    var pickupLocationError = "";
+    var currentArrangement = null;
 
     function bsModal() {
       if (!state.bs) {
@@ -156,6 +164,32 @@
         state.bs = new window.bootstrap.Modal(modal, { backdrop: "static", keyboard: false });
       }
       return state.bs;
+    }
+
+    function loadPickupLocation() {
+      if (pickupLocationLoaded || pickupLocationLoading) return;
+      pickupLocationLoading = true;
+      pickupLocationError = "";
+      fetch(IW_API + "?action=pickup_location", {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      })
+        .then(readJson)
+        .then(function (res) {
+          if (!res.ok || !res.json || !res.json.success) throw new Error((res.json && res.json.message) || "Unable to load the pickup location.");
+          pickupLocation = String(res.json.pickup_location || "").trim();
+          pickupLocationLoaded = true;
+        })
+        .catch(function (error) {
+          pickupLocationError = "Unable to load the pickup location. Please try again before submitting a pickup inquiry.";
+          console.error("Inquiry pickup location failed:", error);
+        })
+        .finally(function () {
+          pickupLocationLoading = false;
+          syncArrangementFields(false);
+        });
     }
 
     /* --- field + error helpers --- */
@@ -186,8 +220,15 @@
     function dishLabel(input) {
       var wrap = input.closest ? input.closest(".iw-dish-wrap") : null;
       var tier = wrap ? wrap.querySelector(".iw-tier-opt input:checked") : null;
-      if (!tier) return input.value;
       var q = dishQty(wrap);
+      if (!tier) {
+        var item = wrap && wrap.__menuItem;
+        if (item && item.category === "Bilao") {
+          // This format is parsed by the existing inquiry API as a fixed-price item with a quantity.
+          return input.value + " -  (" + peso(itemPrice(item)) + ") x" + q;
+        }
+        return input.value;
+      }
       return input.value + " - " + tier.value + " (" + peso(tier.getAttribute("data-tier-price")) + ")" + (q > 1 ? " x" + q : "");
     }
 
@@ -204,7 +245,7 @@
     function menuCapacity() {
       var cap = 0;
       Array.prototype.slice.call(form.querySelectorAll(".iw-dish-wrap")).forEach(function (w) {
-        if (!w.querySelector(".iw-dish input:checked")) return;
+        if (!w.querySelector(".iw-dish-checkbox:checked")) return;
         var t = w.querySelector(".iw-tier-opt input:checked");
         var nums = t ? String(t.getAttribute("data-tier-pax") || "").match(/\d+/g) : null;
         if (!nums) return;
@@ -223,20 +264,16 @@
     // ticked dishes that have PAX / portion tiers but no tier chosen yet
     function dishesMissingTier() {
       return Array.prototype.slice.call(form.querySelectorAll(".iw-dish-wrap")).filter(function (w) {
-        return w.querySelector(".iw-dish input:checked") && w.querySelector(".iw-tier-opt") && !w.querySelector(".iw-tier-opt input:checked");
+        return w.querySelector(".iw-dish-checkbox:checked") && w.querySelector(".iw-tier-opt") && !w.querySelector(".iw-tier-opt input:checked");
       });
     }
 
-    // A "package" is now just the Catering Packages item(s) the customer ticked in the menu.
-    function checkedPackage() {
-      return Array.prototype.slice.call(form.querySelectorAll('input[name="dishes"]:checked'))
-        .filter(function (i) { return i.getAttribute("data-category") === "Catering Packages"; })
-        .map(dishLabel).join(", ");
-    }
+    function checkedPackage() { return ""; }
 
     /* --- menu (loaded from menu-management.php, grouped by category) --- */
-    var MENU_ORDER = ["Best Sellers", "Bilao", "Catering Packages"];
+    var MENU_ORDER = ["Lechon", "Bilao", "Viands"];
     var menuLoaded = false, menuLoading = false;
+    var activeMenuCategory = "All Menu";
 
     function el(tag, cls, text) {
       var n = document.createElement(tag);
@@ -247,6 +284,15 @@
 
     function peso(n) {
       return "\u20B1" + Number(n || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function itemPrice(item) {
+      var match = String(item && item.price || "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+      return match ? Number(match[0]) : 0;
+    }
+
+    function pesoDisplay(n) {
+      return "\u20B1" + Number(n || 0).toLocaleString("en-PH", { maximumFractionDigits: 2 });
     }
 
     function menuMessage(text, retry) {
@@ -262,53 +308,59 @@
       }
     }
 
-    // PAX / portion tier picker (radio list, same attributes as Menu Management: name, price, pax)
-    function buildTierPicker(it) {
-      var box = el("div", "iw-tier-picker");
+    // Tier radios keep the existing API's tier names/prices while the quantity input stays in the form across steps.
+    function buildTierPicker(it, checkbox) {
+      var box = el("div", "iw-serving-config");
       box.setAttribute("role", "radiogroup");
-      box.setAttribute("aria-label", "PAX / portion tier for " + it.name);
-      box.appendChild(el("p", "iw-tier-title", "Select PAX / portion tier *"));
-      it.tiers.forEach(function (t) {
+      box.setAttribute("aria-label", (it.category === "Lechon" ? "Kilogram size" : "Serving tier") + " for " + it.name);
+      box.appendChild(el("p", "iw-serving-label", it.category === "Lechon" ? "Choose kilogram size" : "Choose serving capacity"));
+      var options = el("div", "iw-tier-options");
+      (it.tiers || []).forEach(function (t, index) {
         var opt = el("label", "iw-tier-opt");
         var radio = document.createElement("input");
         radio.type = "radio"; radio.name = "tier_" + it.id; radio.value = t.name;
         radio.setAttribute("data-tier-price", t.price);
         radio.setAttribute("data-tier-pax", t.pax || "");
-        var dot = el("span", "iw-tier-dot"); dot.setAttribute("aria-hidden", "true");
+        radio.addEventListener("change", function () { if (radio.checked) checkbox.checked = true; });
         var main = el("span", "iw-tier-main");
         main.appendChild(el("b", "", t.name));
-        if (t.pax) main.appendChild(el("span", "", t.pax));
-        opt.appendChild(radio); opt.appendChild(dot); opt.appendChild(main);
-        opt.appendChild(el("span", "iw-tier-price", peso(t.price)));
-        box.appendChild(opt);
+        if (t.pax && String(t.pax).toLowerCase() !== String(t.name).toLowerCase()) main.appendChild(el("span", "", t.pax));
+        opt.appendChild(radio); opt.appendChild(main);
+        opt.appendChild(el("span", "iw-tier-price", pesoDisplay(t.price)));
+        options.appendChild(opt);
       });
-      // quantity stepper: how many of this tier the customer wants
-      var qrow = el("div", "iw-qty-row");
-      qrow.appendChild(el("span", "iw-tier-title", "Quantity"));
-      var minus = el("button", "iw-btn-ghost iw-qty-btn", "\u2212"); minus.type = "button"; minus.setAttribute("aria-label", "Decrease quantity");
-      var qv = document.createElement("input");
-      qv.type = "number"; qv.className = "iw-input iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.value = "1";
-      qv.name = "qty_" + it.id; qv.setAttribute("aria-label", "Quantity for " + it.name);
-      var plus = el("button", "iw-btn-ghost iw-qty-btn", "+"); plus.type = "button"; plus.setAttribute("aria-label", "Increase quantity");
-      var qsum = el("span", "iw-callout-text", "");
-      function qtyRefresh() {
-        var n = parseInt(qv.value, 10); if (!(n >= 1)) n = 1; if (n > 20) n = 20; qv.value = n;
-        var t = box.querySelector(".iw-tier-opt input:checked");
-        if (!t) { qsum.textContent = ""; return; }
-        var unit = parseFloat(t.getAttribute("data-tier-price")) || 0;
-        var nums = String(t.getAttribute("data-tier-pax") || "").match(/\d+/g);
-        var top = nums ? Math.max.apply(null, nums.map(Number)) : 0;
-        qsum.textContent = n + " \u00D7 " + t.value + " = " + peso(unit * n) + (top ? " \u00B7 good for " + (top * n) + " PAX" : "");
-      }
-      minus.addEventListener("click", function () { qv.value = (parseInt(qv.value, 10) || 1) - 1; qtyRefresh(); });
-      plus.addEventListener("click", function () { qv.value = (parseInt(qv.value, 10) || 1) + 1; qtyRefresh(); });
-      qv.addEventListener("input", qtyRefresh);
-      box.addEventListener("change", qtyRefresh);
-      qrow.appendChild(minus); qrow.appendChild(qv); qrow.appendChild(plus); qrow.appendChild(qsum);
-      box.appendChild(qrow);
-      var err = el("p", "iw-tier-err", "Choose a portion tier for " + it.name + ".");
+      box.appendChild(options);
+      var err = el("p", "iw-tier-err", "Choose a serving size for " + it.name + ".");
       err.hidden = true; err.setAttribute("role", "alert");
       box.appendChild(err);
+      return box;
+    }
+
+    function buildQuantityControl(it) {
+      var box = el("div", "iw-quantity-control");
+      box.appendChild(el("span", "iw-quantity-label", "Quantity"));
+      var stepper = el("div", "iw-qty-stepper");
+      var minus = el("button", "iw-qty-btn", "−");
+      minus.type = "button"; minus.setAttribute("aria-label", "Decrease quantity for " + it.name);
+      var qv = document.createElement("input");
+      qv.type = "number"; qv.className = "iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.value = "1";
+      qv.name = "qty_" + it.id; qv.setAttribute("aria-label", "Quantity for " + it.name);
+      var plus = el("button", "iw-qty-btn", "+");
+      plus.type = "button"; plus.setAttribute("aria-label", "Increase quantity for " + it.name);
+      function refreshQuantity() {
+        var count = parseInt(qv.value, 10);
+        if (!(count >= 1)) count = 1;
+        if (count > 20) count = 20;
+        qv.value = String(count);
+        state.dirty = true;
+        if (typeof updateCount === "function") updateCount();
+      }
+      minus.addEventListener("click", function () { qv.value = String((parseInt(qv.value, 10) || 1) - 1); refreshQuantity(); });
+      plus.addEventListener("click", function () { qv.value = String((parseInt(qv.value, 10) || 1) + 1); refreshQuantity(); });
+      qv.addEventListener("input", refreshQuantity);
+      qv.addEventListener("change", refreshQuantity);
+      stepper.appendChild(minus); stepper.appendChild(qv); stepper.appendChild(plus);
+      box.appendChild(stepper);
       return box;
     }
 
@@ -316,53 +368,68 @@
       var box = $("iwMenu");
       box.textContent = "";
       if (!items.length) { menuMessage("The menu is empty right now. Please check back soon."); return; }
+      var categoryOrder = MENU_ORDER.slice();
+      items.slice().sort(function (a, b) {
+        var ai = categoryOrder.indexOf(a.category), bi = categoryOrder.indexOf(b.category);
+        return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+      }).forEach(function (it) {
+        var wrap = el("article", "iw-dish-wrap");
+        wrap.setAttribute("data-category", it.category || "");
+        wrap.__menuItem = it;
 
-      var groups = {};
-      items.forEach(function (it) { (groups[it.category] = groups[it.category] || []).push(it); });
-      var order = MENU_ORDER.filter(function (c) { return groups[c]; })
-        .concat(Object.keys(groups).filter(function (c) { return MENU_ORDER.indexOf(c) === -1; }));
+        var input = document.createElement("input");
+        input.type = "checkbox"; input.className = "iw-dish-checkbox"; input.name = "dishes"; input.value = it.name;
+        input.id = "iwDish" + it.id;
+        input.setAttribute("data-id", it.id); input.setAttribute("data-category", it.category);
 
-      order.forEach(function (cat) {
-        var set = el("fieldset", "iw-group");
-        set.appendChild(el("legend", "iw-group-title", cat));
-        groups[cat].forEach(function (it) {
-          var label = el("label", "iw-dish");
-          var input = document.createElement("input");
-          input.type = "checkbox"; input.name = "dishes"; input.value = it.name;
-          input.setAttribute("data-id", it.id); input.setAttribute("data-category", it.category);
-          var media = el("span", "iw-dish-media");
-          var ph = el("i", "bi bi-image iw-dish-ph"); ph.setAttribute("aria-hidden", "true");
-          media.appendChild(ph);
-          if (it.photo) {
-            var img = el("img", "iw-dish-img");
-            img.src = it.photo; img.alt = ""; img.loading = "lazy"; img.decoding = "async";
-            media.appendChild(img);
-          } else media.classList.add("is-missing");
-          var text = el("span", "iw-dish-text");
-          text.appendChild(el("span", "iw-dish-name", it.name));
-          var meta = [it.price, it.specs].filter(Boolean).join(" \u2022 ");
-          if (meta) text.appendChild(el("span", "iw-dish-meta", meta));
-          // PAX / portion tiers set in Menu Management: shown as chips here, replaced by the radio picker once the dish is ticked
-          if (it.tiers && it.tiers.length) {
-            var tiers = el("span", "iw-dish-tiers");
-            it.tiers.forEach(function (t) {
-              var chip = el("span", "iw-tier-chip");
-              chip.appendChild(el("b", "", t.name));
-              chip.appendChild(el("span", "", [peso(t.price), t.pax].filter(Boolean).join(" \u2022 ")));
-              tiers.appendChild(chip);
-            });
-            text.appendChild(tiers);
-          }
-          var check = el("span", "iw-check"); check.setAttribute("aria-hidden", "true");
-          check.appendChild(el("i", "bi bi-check-lg"));
-          label.appendChild(input); label.appendChild(media); label.appendChild(text); label.appendChild(check);
-          var wrap = el("div", "iw-dish-wrap");
-          wrap.appendChild(label);
-          if (it.tiers && it.tiers.length) wrap.appendChild(buildTierPicker(it));
-          set.appendChild(wrap);
-        });
-        box.appendChild(set);
+        var media = el("label", "iw-dish-media");
+        media.htmlFor = input.id;
+        var ph = el("i", "bi bi-image iw-dish-ph"); ph.setAttribute("aria-hidden", "true");
+        media.appendChild(ph);
+        if (it.photo) {
+          var img = el("img", "iw-dish-img");
+          img.src = it.photo; img.alt = ""; img.loading = "lazy"; img.decoding = "async";
+          media.appendChild(img);
+        } else media.classList.add("is-missing");
+
+        var details = el("div", "iw-dish-details");
+        var titleLine = el("div", "iw-dish-title-line");
+        var name = el("label", "iw-dish-name", it.name);
+        name.htmlFor = input.id;
+        titleLine.appendChild(name);
+        if (it.category === "Bilao") titleLine.appendChild(el("span", "iw-category-pill", "Bilao"));
+        details.appendChild(titleLine);
+
+        if (it.category === "Bilao") {
+          details.appendChild(el("strong", "iw-dish-fixed-price", pesoDisplay(itemPrice(it))));
+          if (it.specs) details.appendChild(el("p", "iw-dish-specs", it.specs));
+        } else if (it.tiers && it.tiers.length) {
+          details.appendChild(buildTierPicker(it, input));
+        }
+
+        wrap.appendChild(input);
+        wrap.appendChild(media);
+        wrap.appendChild(details);
+        wrap.appendChild(buildQuantityControl(it));
+        box.appendChild(wrap);
       });
+      applyMenuCategory();
+    }
+
+    function applyMenuCategory() {
+      Array.prototype.slice.call(form.querySelectorAll(".iw-dish-wrap")).forEach(function (item) {
+        item.hidden = activeMenuCategory !== "All Menu" && item.getAttribute("data-category") !== activeMenuCategory;
+      });
+      modal.querySelectorAll("[data-iw-category]").forEach(function (button) {
+        var active = button.getAttribute("data-iw-category") === activeMenuCategory;
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    }
+
+    function clearItemTier(input) {
+      var wrap = input && input.closest(".iw-dish-wrap");
+      if (wrap) wrap.querySelectorAll(".iw-tier-opt input:checked").forEach(function (tier) { tier.checked = false; });
     }
 
     function loadMenu(force) {
@@ -384,10 +451,70 @@
         .then(function () { menuLoading = false; });
     }
 
+    function selectedMenuLines() {
+      return Array.prototype.slice.call(form.querySelectorAll(".iw-dish-checkbox:checked"))
+        .map(function (input) {
+          var wrap = input.closest(".iw-dish-wrap");
+          var item = wrap && wrap.__menuItem;
+          if (!item) return null;
+          var tier = wrap.querySelector(".iw-tier-opt input:checked");
+          var quantity = dishQty(wrap);
+          var unitPrice = tier ? Number(tier.getAttribute("data-tier-price") || 0) : itemPrice(item);
+          var serving = tier ? String(tier.value || "").trim() : String(item.specs || item.category || "").trim();
+          var pax = tier ? String(tier.getAttribute("data-tier-pax") || "").trim() : "";
+          if (pax && pax.toLowerCase() !== serving.toLowerCase()) serving += " (" + pax + ")";
+          return {
+            input: input,
+            item: item,
+            tier: tier,
+            quantity: quantity,
+            unitPrice: unitPrice,
+            subtotal: unitPrice * quantity,
+            serving: serving
+          };
+        })
+        .filter(function (line) { return Boolean(line); });
+    }
+
     function updateCount() {
-      var n = checkedDishes().length;
-      els.count.textContent = n + " selected";
-      if (n > 0) setError(null, "iwErrDishes", "");
+      var selected = Array.prototype.slice.call(form.querySelectorAll(".iw-dish-checkbox:checked"));
+      var lines = selectedMenuLines();
+      var subtotal = 0;
+      if (els.count) {
+        els.count.textContent = String(selected.length);
+        els.count.setAttribute("aria-label", selected.length + " selected items");
+      }
+      if (els.selectedItems) els.selectedItems.textContent = "";
+      lines.forEach(function (line) {
+        var input = line.input;
+        var wrap = input.closest(".iw-dish-wrap");
+        var item = line.item;
+        var tier = line.tier;
+        var quantity = line.quantity;
+        var unitPrice = line.unitPrice;
+        subtotal += line.subtotal;
+
+        var row = el("li", "iw-selected-row");
+        var media = el("span", "iw-selected-media");
+        if (item.photo) {
+          var image = el("img", "iw-selected-image");
+          image.src = item.photo; image.alt = ""; image.loading = "lazy"; image.decoding = "async";
+          media.appendChild(image);
+        } else media.appendChild(el("i", "bi bi-image", ""));
+        var copy = el("span", "iw-selected-copy");
+        copy.appendChild(el("strong", "iw-selected-name", item.name));
+        var choice = tier ? tier.value : item.category;
+        copy.appendChild(el("span", "iw-selected-detail", choice + " • " + pesoDisplay(unitPrice)));
+        var quantityBadge = el("span", "iw-selected-quantity", "× " + quantity);
+        var remove = el("button", "iw-remove-selected", "");
+        remove.type = "button"; remove.setAttribute("aria-label", "Remove " + item.name);
+        remove.setAttribute("data-iw-remove", input.id);
+        remove.appendChild(el("i", "bi bi-trash", ""));
+        row.appendChild(media); row.appendChild(copy); row.appendChild(quantityBadge); row.appendChild(remove);
+        if (els.selectedItems) els.selectedItems.appendChild(row);
+      });
+      if (els.subtotal) els.subtotal.textContent = pesoDisplay(subtotal);
+      if (selected.length > 0) setError(null, "iwErrDishes", "");
     }
 
     function updateNotesCount() {
@@ -398,6 +525,19 @@
     function validate(step) {
       var firstBad = null;
       function bad(el) { if (!firstBad) firstBad = el; }
+      function requiredText(id, errId, label, max) {
+        var control = $(id);
+        var value = control.value.trim();
+        if (!value) {
+          setError(id, errId, "Enter " + label + ".");
+          bad(control);
+        } else if (value.length > max) {
+          setError(id, errId, label + " must be " + max + " characters or fewer.");
+          bad(control);
+        } else {
+          setError(id, errId, "");
+        }
+      }
 
       if (step === 1) {
         if (checkedDishes().length === 0) {
@@ -419,8 +559,10 @@
       if (step === 2) {
         var name = $("iwEventName");
         var date = $("iwEventDate");
-        var venue = $("iwVenue");
         var arr = $("iwArrangement");
+        var pickup = isPickup();
+        var delivery = isDelivery();
+        var onsite = isBuffet();
 
         if (!name.value.trim()) { setError("iwEventName", "iwErrEventName", "Enter a name for your event."); bad(name); }
         else setError("iwEventName", "iwErrEventName", "");
@@ -429,20 +571,74 @@
         else if (date.value < minEventISO()) { setError("iwEventDate", "iwErrEventDate", earliestDateMessage()); bad(date); }
         else setError("iwEventDate", "iwErrEventDate", "");
 
-        var timeEl = $("iwEventTime");
-        var timeText = timeLabelFor(arr.value).toLowerCase();
-        if (!dateAllowed()) { setError("iwEventTime", "iwErrEventTime", ""); }   // the time field only exists once the date is valid
-        else if (!timeEl.value) { setError("iwEventTime", "iwErrEventTime", "Choose the " + timeText + "."); bad(timeEl); }
-        else if (timeEl.value < EVENT_TIME_MIN || timeEl.value > EVENT_TIME_MAX) { setError("iwEventTime", "iwErrEventTime", "The " + timeText + " must be between 8:00 AM and 8:00 PM."); bad(timeEl); }
-        else setError("iwEventTime", "iwErrEventTime", "");
-
-        if (!isPickup() && !venue.value.trim()) { setError("iwVenue", "iwErrVenue", "Enter the venue or delivery address."); bad(venue); }
-        else setError("iwVenue", "iwErrVenue", "");
-
         if (!arr.value) { setError("iwArrangement", "iwErrArrangement", "Choose a service arrangement."); bad($("iwArrangementToggle")); }
         else setError("iwArrangement", "iwErrArrangement", "");
 
-        if (isBuffet()) {
+        if (delivery) {
+          [
+            ["iwDeliveryAddress", "iwErrDeliveryAddress", "the delivery address", 255],
+            ["iwDeliveryBarangay", "iwErrDeliveryBarangay", "the barangay", 100],
+            ["iwDeliveryCity", "iwErrDeliveryCity", "the city / municipality", 100],
+            ["iwDeliveryProvince", "iwErrDeliveryProvince", "the province", 100]
+          ].forEach(function (field) {
+            requiredText(field[0], field[1], field[2], field[3]);
+          });
+          var deliveryTime = $("iwDeliveryTime");
+          if (!deliveryTime.value) { setError("iwDeliveryTime", "iwErrDeliveryTime", "Choose your preferred delivery time."); bad(deliveryTime); }
+          else if (deliveryTime.value < EVENT_TIME_MIN || deliveryTime.value > EVENT_TIME_MAX) {
+            setError("iwDeliveryTime", "iwErrDeliveryTime", "Delivery time must be between 8:00 AM and 8:00 PM."); bad(deliveryTime);
+          } else setError("iwDeliveryTime", "iwErrDeliveryTime", "");
+        } else if (arr.value) {
+          var timeEl = pickup ? $("iwPickupTime") : $("iwEventTime");
+          var timeId = pickup ? "iwPickupTime" : "iwEventTime";
+          var timeErrorId = pickup ? "iwErrPickupTime" : "iwErrEventTime";
+          var timeText = timeLabelFor(arr.value).toLowerCase();
+          if (!timeEl.value) { setError(timeId, timeErrorId, "Choose the " + timeText + "."); bad(timeEl); }
+          else if (timeEl.value < EVENT_TIME_MIN || timeEl.value > EVENT_TIME_MAX) { setError(timeId, timeErrorId, "The " + timeText + " must be between 8:00 AM and 8:00 PM."); bad(timeEl); }
+          else setError(timeId, timeErrorId, "");
+
+          if (pickup) {
+            if (pickupLocationError) {
+              setError("iwPickupLocation", "iwErrPickupLocation", pickupLocationError);
+              bad($("iwPickupLocation"));
+            } else if (!pickupLocationLoaded) {
+              setError("iwPickupLocation", "iwErrPickupLocation", "Pickup location is still loading. Please try again.");
+              bad($("iwPickupLocation"));
+            } else if (!pickupLocation) {
+              setError("iwPickupLocation", "iwErrPickupLocation", "Pickup location is not configured. Please contact the catering team before submitting.");
+              bad($("iwPickupLocation"));
+            } else setError("iwPickupLocation", "iwErrPickupLocation", "");
+          } else {
+            requiredText("iwVenue", "iwErrVenue", "the event venue / address", 255);
+            [
+              ["iwOnsiteBarangay", "iwErrOnsiteBarangay", "the barangay", 100],
+              ["iwOnsiteCity", "iwErrOnsiteCity", "the city / municipality", 100],
+              ["iwOnsiteProvince", "iwErrOnsiteProvince", "the province", 100]
+            ].forEach(function (field) {
+              requiredText(field[0], field[1], field[2], field[3]);
+            });
+          }
+        } else {
+          setError("iwEventTime", "iwErrEventTime", "");
+          setError("iwPickupTime", "iwErrPickupTime", "");
+          setError("iwDeliveryTime", "iwErrDeliveryTime", "");
+          setError("iwVenue", "iwErrVenue", "");
+          setError("iwPickupLocation", "iwErrPickupLocation", "");
+          setError("iwPax", "iwErrPax", "");
+          [
+            ["iwDeliveryAddress", "iwErrDeliveryAddress"],
+            ["iwDeliveryBarangay", "iwErrDeliveryBarangay"],
+            ["iwDeliveryCity", "iwErrDeliveryCity"],
+            ["iwDeliveryProvince", "iwErrDeliveryProvince"],
+            ["iwOnsiteBarangay", "iwErrOnsiteBarangay"],
+            ["iwOnsiteCity", "iwErrOnsiteCity"],
+            ["iwOnsiteProvince", "iwErrOnsiteProvince"]
+          ].forEach(function (field) {
+            setError(field[0], field[1], "");
+          });
+        }
+
+        if (onsite) {
           var paxEl = $("iwPax");
           var paxRaw = paxEl.value.trim();
           var paxNum = parseInt(paxRaw, 10);
@@ -469,28 +665,24 @@
       return true;
     }
 
-    /* --- Customer Pickup: the customer collects the food, so no venue / delivery address is asked --- */
+    /* --- Service-arrangement fields: all values stay inactive until an arrangement is selected. --- */
     function isPickup() {
       return /pick/i.test($("iwArrangement").value);
     }
-
-    function syncVenue() {
-      var field = $("iwVenue").closest(".iw-field") || $("iwVenue").parentElement;
-      if (field) field.hidden = isPickup();
+    function isDelivery() {
+      return /deliver/i.test($("iwArrangement").value);
     }
-
-    /* --- Buffet set-up: ask for the headcount (pax) and any setup preferences --- */
     function isBuffet() {
       return /buffet/i.test($("iwArrangement").value);
     }
 
-    var buffetFields = [];
+    var paxField = null;
     (function buildBuffetFields() {
       var venue = $("iwVenue");
       var venueErr = $("iwErrVenue");
       var venueField = venue.closest(".iw-field") || venue.parentElement;
       var venueLabel = venueField.querySelector("label");
-      var anchor = $("iwArrangement").closest(".iw-field") || $("iwArrangement").parentElement;
+      var onsiteGrid = $("iwOnsiteGrid");
 
       function makeField(id, errId, labelText, control) {
         var wrap = document.createElement("div");
@@ -521,53 +713,19 @@
       pax.inputMode = "numeric";
       pax.placeholder = "e.g. 50";
 
-      var paxField = makeField("iwPax", "iwErrPax", "Number of guests (pax)", pax);
-      anchor.parentNode.insertBefore(paxField, anchor.nextSibling);
-      // order: Service arrangement -> Pax -> Venue address
-      anchor.parentNode.insertBefore(venueField, paxField.nextSibling);
-      buffetFields = [paxField];
+      paxField = makeField("iwPax", "iwErrPax", "Number of guests (pax)", pax);
+      paxField.classList.remove("iw-service-full-field");
+      var paxLabel = paxField.querySelector("label");
+      paxLabel.textContent = "Number of guests (pax) ";
+      var required = document.createElement("span");
+      required.className = "iw-required";
+      required.setAttribute("aria-hidden", "true");
+      required.textContent = "*";
+      paxLabel.appendChild(required);
+      onsiteGrid.insertBefore(paxField, $("iwSetupNotesField"));
     })();
 
-    /* --- Pickup / Delivery / Event time (right under the event date; the label follows the service arrangement) --- */
-    var timeLabelEl = null, timeWrapEl = null;
-    (function buildTimeField() {
-      var dateInput = $("iwEventDate");
-      var dateField = dateInput.closest(".iw-field") || dateInput.parentElement;
-      var dateLabel = dateField.querySelector("label");
-      var dateErr = $("iwErrEventDate");
-      var wrap = document.createElement("div");
-      wrap.className = dateField.className;
-      var label = document.createElement("label");
-      if (dateLabel) label.className = dateLabel.className;
-      label.htmlFor = "iwEventTime";
-      label.textContent = "Event time";
-      var input = document.createElement("input");
-      input.type = "time";
-      input.id = "iwEventTime";
-      input.name = "event_time";
-      input.min = EVENT_TIME_MIN;
-      input.max = EVENT_TIME_MAX;
-      input.step = "900";
-      input.required = true;
-      input.className = dateInput.className;
-      input.title = "Available between 8:00 AM and 8:00 PM";
-      var err = document.createElement(dateErr ? dateErr.tagName.toLowerCase() : "div");
-      if (dateErr) err.className = dateErr.className;
-      err.id = "iwErrEventTime";
-      err.hidden = true;
-      wrap.appendChild(label);
-      wrap.appendChild(input);
-      wrap.appendChild(err);
-      dateField.parentNode.insertBefore(wrap, dateField.nextSibling);
-      timeLabelEl = label;
-      timeWrapEl = wrap;
-    })();
-
-    /* A date the customer may submit: a full yyyy-mm-dd that is not before the earliest allowed day (re-read live, so 9:00 PM is noticed). */
-    function dateAllowed() {
-      var v = $("iwEventDate").value;
-      return /^\d{4}-\d{2}-\d{2}$/.test(v) && v >= minEventISO();
-    }
+    /* A date the customer may submit is still checked against minEventISO in Step 2 validation. */
     /* The earliest selectable date (greys out earlier days in the calendar) and its hint. */
     function refreshEventDateLimits() {
       var d = $("iwEventDate");
@@ -588,41 +746,120 @@
         + " days to prepare your quotation, so earlier dates are greyed out in the calendar."
         + (afterSubmitCutoff() ? " It is after 9:00 PM, so the earliest date moved one day later." : " After 9:00 PM the earliest date moves one day later.");
     }
-    /* The pickup / delivery / event time only appears after a valid date is chosen. */
-    function syncTimeVisibility() {
-      var ok = dateAllowed();
-      var t = $("iwEventTime");
-      if (timeWrapEl) { timeWrapEl.hidden = !ok; timeWrapEl.style.display = ok ? "" : "none"; }
-      t.required = ok;
-      if (!ok) { t.value = ""; setError("iwEventTime", "iwErrEventTime", ""); }
-    }
-
     function syncTimeLabel() {
-      var text = timeLabelFor($("iwArrangement").value);
-      if (timeLabelEl) timeLabelEl.textContent = text;
-      $("iwEventTime").title = text + " (between 8:00 AM and 8:00 PM)";
-      $("iwEventTime").setAttribute("data-time-label", text);   // title of the time list in date-picker.js
+      $("iwEventTime").title = "Event time (between 8:00 AM and 8:00 PM)";
+      $("iwEventTime").setAttribute("data-time-label", "Event time");
+      $("iwPickupTime").title = "Pickup time (between 8:00 AM and 8:00 PM)";
+      $("iwPickupTime").setAttribute("data-time-label", "Pickup time");
+      $("iwDeliveryTime").title = "Preferred delivery time (between 8:00 AM and 8:00 PM)";
+      $("iwDeliveryTime").setAttribute("data-time-label", "Preferred delivery time");
     }
 
-    function syncBuffet() {
-      var on = isBuffet();
-      buffetFields.forEach(function (f) { f.hidden = !on; });
-      if (!on) {
+    function syncArrangementFields(clearPreviousValues) {
+      var arrangement = $("iwArrangement").value;
+      var selected = Boolean(arrangement);
+      var pickup = isPickup();
+      var delivery = isDelivery();
+      var onsite = isBuffet();
+      var venue = $("iwVenue");
+      var venueField = $("iwVenueField");
+      var eventTime = $("iwEventTime");
+      var pickupTime = $("iwPickupTime");
+      var notice = $("iwPickupLocationNotice");
+      var changed = currentArrangement !== null && arrangement !== currentArrangement;
+
+      if ((clearPreviousValues && changed) || (!selected && currentArrangement !== "")) {
+        venue.value = "";
+        eventTime.value = "";
+        pickupTime.value = "";
         $("iwPax").value = "";
+        setError("iwVenue", "iwErrVenue", "");
+        setError("iwEventTime", "iwErrEventTime", "");
+        setError("iwPickupTime", "iwErrPickupTime", "");
+        setError("iwPickupLocation", "iwErrPickupLocation", "");
+        [
+          "iwPickupNotes", "iwDeliveryAddress", "iwDeliveryBarangay", "iwDeliveryCity", "iwDeliveryProvince",
+          "iwDeliveryLandmark", "iwDeliveryInstructions", "iwDeliveryTime", "iwOnsiteBarangay",
+          "iwOnsiteCity", "iwOnsiteProvince", "iwOnsiteLandmark", "iwSetupNotes"
+        ].forEach(function (id) {
+          $(id).value = "";
+          setError(id, "iwErr" + id.slice(2), "");
+        });
         setError("iwPax", "iwErrPax", "");
       }
+      currentArrangement = arrangement;
+
+      $("iwArrangementFields").hidden = !selected;
+      $("iwPickupSection").hidden = !pickup;
+      $("iwDeliverySection").hidden = !delivery;
+      $("iwOnsiteSection").hidden = !onsite;
+      venueField.hidden = !onsite;
+      venue.disabled = !onsite;
+      venue.required = onsite;
+      pickupTime.disabled = !pickup;
+      pickupTime.required = pickup;
+      $("iwPickupNotes").disabled = !pickup;
+      ["iwDeliveryAddress", "iwDeliveryBarangay", "iwDeliveryCity", "iwDeliveryProvince", "iwDeliveryLandmark", "iwDeliveryInstructions"].forEach(function (id) {
+        var control = $(id);
+        control.disabled = !delivery;
+        control.required = delivery && ["iwDeliveryAddress", "iwDeliveryBarangay", "iwDeliveryCity", "iwDeliveryProvince"].indexOf(id) !== -1;
+      });
+      $("iwDeliveryTime").disabled = !delivery;
+      $("iwDeliveryTime").required = delivery;
+      ["iwOnsiteBarangay", "iwOnsiteCity", "iwOnsiteProvince", "iwOnsiteLandmark", "iwSetupNotes"].forEach(function (id) {
+        var control = $(id);
+        control.disabled = !onsite;
+        control.required = onsite && ["iwOnsiteBarangay", "iwOnsiteCity", "iwOnsiteProvince"].indexOf(id) !== -1;
+      });
+      eventTime.disabled = !onsite;
+      eventTime.required = onsite;
+      $("iwEventTimeField").hidden = !onsite;
+      $("iwPax").disabled = !onsite;
+      $("iwPax").required = onsite;
+      paxField.hidden = !onsite;
+
+      $("iwPickupLocation").value = pickupLocationLoaded && pickupLocation ? pickupLocation : "";
+      $("iwPickupLocation").placeholder = pickupLocationLoading ? "Loading the business pickup location..." : (pickupLocationError ? "Unable to load the pickup location" : "Pickup location is not configured");
+      notice.hidden = pickupLocationLoaded && Boolean(pickupLocation);
+      notice.textContent = pickupLocationError
+        ? "Unable to load the pickup location. Please try again before submitting a pickup inquiry."
+        : pickupLocationLoaded
+          ? "Pickup location is not configured. Please contact the catering team before submitting."
+          : "Loading the business pickup location...";
+      if (pickupLocationLoaded && pickupLocation) {
+        setError("iwPickupLocation", "iwErrPickupLocation", "");
+        $("iwPickupLocation").setAttribute("aria-describedby", "iwPickupLocationHelp");
+      }
+      syncTimeLabel();
     }
 
     /* --- review step --- */
     function collect() {
+      var arrangementDetails = isDelivery() ? {
+        barangay: $("iwDeliveryBarangay").value.trim(),
+        city: $("iwDeliveryCity").value.trim(),
+        province: $("iwDeliveryProvince").value.trim(),
+        landmark: $("iwDeliveryLandmark").value.trim(),
+        instructions: $("iwDeliveryInstructions").value.trim()
+      } : isPickup() ? {
+        pickup_notes: $("iwPickupNotes").value.trim()
+      } : isBuffet() ? {
+        barangay: $("iwOnsiteBarangay").value.trim(),
+        city: $("iwOnsiteCity").value.trim(),
+        province: $("iwOnsiteProvince").value.trim(),
+        landmark: $("iwOnsiteLandmark").value.trim(),
+        setup_notes: $("iwSetupNotes").value.trim()
+      } : null;
       return {
         package: checkedPackage(),
         dishes: checkedDishes(),
         event_name: $("iwEventName").value.trim(),
         event_date: $("iwEventDate").value,
-        event_time: $("iwEventTime").value,
-        venue: isPickup() ? "" : $("iwVenue").value.trim(),
+        event_time: isDelivery() ? $("iwDeliveryTime").value : isPickup() ? $("iwPickupTime").value : ($("iwEventTime").disabled ? "" : $("iwEventTime").value),
+        venue: isDelivery() ? $("iwDeliveryAddress").value.trim() : isPickup() ? pickupLocation : ($("iwVenue").disabled ? "" : $("iwVenue").value.trim()),
         arrangement: $("iwArrangement").value,
+        arrangement_details: arrangementDetails,
+        delivery_details: isDelivery() ? arrangementDetails : null,
         pax: isBuffet() ? $("iwPax").value.trim() : "",
         notes: els.notes.value.trim()
       };
@@ -631,17 +868,77 @@
     function fillReview() {
       var d = collect();
       $("iwRvEvent").textContent = d.event_name || "\u2014";
-      $("iwRvDate").textContent = (longDate(d.event_date) || "\u2014") + (d.event_time ? " \u00B7 " + time12(d.event_time) : "");
-      var rvLabel = $("iwRvDate").previousElementSibling;   // "Event Date" -> "Date & pickup time" (only when the label is the plain date label)
-      if (rvLabel && /^\s*(event\s*)?date\s*$/i.test(rvLabel.textContent)) rvLabel.textContent = "Date & " + timeLabelFor(d.arrangement).toLowerCase();
-      $("iwRvVenue").textContent = isPickup() ? "Customer pickup" : (d.venue || "\u2014");
-      var svc = d.arrangement || "\u2014";
-      if (d.pax) svc += " \u00B7 " + d.pax + " pax";
-      $("iwRvService").style.whiteSpace = "pre-line";
-      $("iwRvService").textContent = svc;
-      $("iwRvPackage").textContent = d.package || "\u2014";
-      $("iwRvDishes").textContent = d.dishes.length ? d.dishes.join(", ") : "\u2014";
-      $("iwRvNotes").textContent = d.notes || "No additional information provided.";
+      $("iwRvDate").textContent = longDate(d.event_date) || "\u2014";
+      $("iwRvService").textContent = isDelivery() ? "Food Delivery" : isPickup() ? "Customer Pickup" : "On-site Catering";
+
+      var arrangementTitle = $("iwRvArrangementTitle");
+      var arrangementList = $("iwRvArrangementDetails");
+      var details = d.arrangement_details || {};
+      var arrangementRows = [];
+      if (isPickup()) {
+        arrangementTitle.textContent = "Pickup Information";
+        arrangementRows = [
+          ["Pickup Location", d.venue || "\u2014"],
+          ["Pickup Time", d.event_time ? time12(d.event_time) : "\u2014"]
+        ];
+        if (details.pickup_notes) arrangementRows.push(["Pickup Notes", details.pickup_notes]);
+      } else if (isDelivery()) {
+        arrangementTitle.textContent = "Delivery Information";
+        arrangementRows = [
+          ["Delivery Address", d.venue || "\u2014"],
+          ["Barangay", details.barangay || "\u2014"],
+          ["City / Municipality", details.city || "\u2014"],
+          ["Province", details.province || "\u2014"]
+        ];
+        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
+        arrangementRows.push(["Delivery Time", d.event_time ? time12(d.event_time) : "\u2014"]);
+        if (details.instructions) arrangementRows.push(["Delivery Instructions", details.instructions]);
+      } else {
+        arrangementTitle.textContent = "Venue Information";
+        arrangementRows = [
+          ["Event Venue / Address", d.venue || "\u2014"],
+          ["Barangay", details.barangay || "\u2014"],
+          ["City / Municipality", details.city || "\u2014"],
+          ["Province", details.province || "\u2014"]
+        ];
+        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
+        arrangementRows.push(["Event Time", d.event_time ? time12(d.event_time) : "\u2014"]);
+        arrangementRows.push(["Number of Guests (pax)", d.pax || "\u2014"]);
+        if (details.setup_notes) arrangementRows.push(["Setup Notes", details.setup_notes]);
+      }
+      arrangementList.textContent = "";
+      arrangementRows.forEach(function (row) {
+        var field = el("div", "iw-review-detail");
+        if (/address|location|instructions|notes/i.test(row[0])) field.classList.add("iw-review-detail-wide");
+        field.appendChild(el("dt", "", row[0]));
+        field.appendChild(el("dd", "", row[1]));
+        arrangementList.appendChild(field);
+      });
+
+      var lines = selectedMenuLines();
+      var menuRows = $("iwRvMenuRows");
+      var menuSubtotal = lines.reduce(function (sum, line) { return sum + line.subtotal; }, 0);
+      menuRows.textContent = "";
+      if (!lines.length) {
+        var emptyRow = el("tr");
+        var emptyCell = el("td", "iw-review-empty", "No menu items selected.");
+        emptyCell.colSpan = 4;
+        emptyRow.appendChild(emptyCell);
+        menuRows.appendChild(emptyRow);
+      } else {
+        lines.forEach(function (line) {
+          var row = el("tr");
+          row.appendChild(el("th", "iw-review-item", line.item.name || line.input.value));
+          row.lastChild.scope = "row";
+          row.appendChild(el("td", "", line.quantity + " \u00D7 " + (line.serving || line.item.category || "Serving")));
+          row.appendChild(el("td", "iw-review-money", pesoDisplay(line.unitPrice)));
+          row.appendChild(el("td", "iw-review-money", pesoDisplay(line.subtotal)));
+          menuRows.appendChild(row);
+        });
+      }
+      $("iwRvMenuSubtotal").textContent = pesoDisplay(menuSubtotal);
+      $("iwRvEstimatedTotal").textContent = pesoDisplay(menuSubtotal);
+      $("iwRvNotes").textContent = d.notes || "No dietary requests provided.";
     }
 
     /* --- custom dropdowns (markup is in the HTML; the hidden input holds the value) --- */
@@ -711,10 +1008,12 @@
       els.next.innerHTML = state.step === TOTAL
         ? 'Submit Inquiry'
         : 'Continue <i class="bi bi-arrow-right" aria-hidden="true"></i>';
+      if (els.footerEstimate) els.footerEstimate.hidden = state.step !== 1;
     }
 
     function goTo(n, moveFocus) {
       state.step = Math.max(1, Math.min(TOTAL, n));
+      modal.classList.toggle("iw-show-menu-step", state.step === 1);
       els.panels.forEach(function (p) {
         p.hidden = Number(p.getAttribute("data-iw-step")) !== state.step;
       });
@@ -730,21 +1029,24 @@
     function resetForm() {
       form.reset();
       resetDropdowns(); // form.reset() does not touch a hidden input's current value
-      syncVenue();
-      syncBuffet();
-      syncTimeLabel();
+      syncArrangementFields(false);
       state.dirty = false;
       state.busy = false;
       els.next.disabled = false;
       els.back.disabled = false;
       refreshEventDateLimits();
-      syncTimeVisibility();
-      ["iwEventName", "iwEventDate", "iwEventTime", "iwVenue", "iwArrangement"].forEach(function (id) {
+      [
+        "iwEventName", "iwEventDate", "iwEventTime", "iwPickupTime", "iwPickupLocation", "iwPickupNotes", "iwVenue", "iwArrangement",
+        "iwDeliveryAddress", "iwDeliveryBarangay", "iwDeliveryCity", "iwDeliveryProvince", "iwDeliveryLandmark", "iwDeliveryInstructions",
+        "iwDeliveryTime", "iwOnsiteBarangay", "iwOnsiteCity", "iwOnsiteProvince", "iwOnsiteLandmark", "iwSetupNotes"
+      ].forEach(function (id) {
         setError(id, "iwErr" + id.slice(2), "");
       });
       setError(null, "iwErrDishes", "");
       els.submitError.hidden = true;
       els.submitError.textContent = "";
+      activeMenuCategory = "All Menu";
+      applyMenuCategory();
       updateCount();
       updateNotesCount();
       goTo(1, false);
@@ -754,6 +1056,7 @@
       var bs = bsModal();
       if (!bs) return;
       resetForm();
+      loadPickupLocation();
       loadMenu(false);
       bs.show();
     }
@@ -823,7 +1126,9 @@
           body.delete("dishes");
           dishes.forEach(function (name) { body.append("dishes[]", name); });
           body.set("csrf_token", csrf);
-          body.set("package", checkedPackage());   // Catering Packages item(s) picked from the menu
+          body.set("package", checkedPackage());
+          body.set("event_time", data.event_time);
+          body.set("event_location", data.venue);
           Array.prototype.slice.call(form.querySelectorAll('input[name="dishes"]:checked')).forEach(function (i) {
             body.append("menu_item_ids[]", i.getAttribute("data-id") || "");
           });
@@ -879,6 +1184,20 @@
     });
     // custom dropdown: choose an option
     modal.addEventListener("click", function (e) {
+      var category = e.target.closest ? e.target.closest("[data-iw-category]") : null;
+      if (category) {
+        activeMenuCategory = category.getAttribute("data-iw-category") || "All Menu";
+        applyMenuCategory();
+        return;
+      }
+      var remove = e.target.closest ? e.target.closest("[data-iw-remove]") : null;
+      if (remove) {
+        var input = $(remove.getAttribute("data-iw-remove"));
+        if (input) { input.checked = false; clearItemTier(input); }
+        state.dirty = true;
+        updateCount();
+        return;
+      }
       var item = e.target.closest ? e.target.closest(".iw-dropdown .custom-dropdown-item") : null;
       if (!item) return;
       var dd = dropdowns.filter(function (d) { return d.root.contains(item); })[0];
@@ -892,33 +1211,37 @@
     });
     form.addEventListener("submit", function (e) { e.preventDefault(); });
 
-    form.addEventListener("input", function () { state.dirty = true; });
+    form.addEventListener("input", function (e) {
+      state.dirty = true;
+      if (e.target.classList && e.target.classList.contains("iw-qty-val")) updateCount();
+    });
     form.addEventListener("change", function (e) {
       state.dirty = true;
-      if (e.target.name === "dishes") updateCount();
-      if (e.target.closest && e.target.closest(".iw-tier-picker")) {
-        var te = e.target.closest(".iw-tier-picker").querySelector(".iw-tier-err");
+      if (e.target.name === "dishes" && !e.target.checked) clearItemTier(e.target);
+      if (e.target.name === "dishes" || (e.target.name && e.target.name.indexOf("tier_") === 0)) updateCount();
+      if (e.target.closest && e.target.closest(".iw-serving-config")) {
+        var te = e.target.closest(".iw-serving-config").querySelector(".iw-tier-err");
         if (te) te.hidden = true;
       }
     });
 
     els.notes.addEventListener("input", updateNotesCount);
 
-    $("iwArrangement").addEventListener("change", function () { syncVenue(); syncBuffet(); syncTimeLabel(); });
-    syncVenue();
-    syncBuffet();
-    syncTimeLabel();
+    $("iwArrangement").addEventListener("change", function () { syncArrangementFields(true); });
+    syncArrangementFields(false);
     (function wireEventDate() {
       var evDate = $("iwEventDate");
-      ["input", "change"].forEach(function (ev) { evDate.addEventListener(ev, syncTimeVisibility); });
       ["focus", "mousedown"].forEach(function (ev) { evDate.addEventListener(ev, refreshEventDateLimits); });   // 9:00 PM may pass while the form is open
       refreshEventDateLimits();
-      syncTimeVisibility();
     })();
     $("iwPax").addEventListener("input", function () { setError("iwPax", "iwErrPax", ""); });
 
     // clear a field's message as soon as the person edits it
-    ["iwEventName", "iwEventDate", "iwEventTime", "iwVenue", "iwArrangement"].forEach(function (id) {
+    [
+      "iwEventName", "iwEventDate", "iwEventTime", "iwPickupTime", "iwPickupNotes", "iwVenue", "iwArrangement",
+      "iwDeliveryAddress", "iwDeliveryBarangay", "iwDeliveryCity", "iwDeliveryProvince", "iwDeliveryLandmark", "iwDeliveryInstructions",
+      "iwDeliveryTime", "iwOnsiteBarangay", "iwOnsiteCity", "iwOnsiteProvince", "iwOnsiteLandmark", "iwSetupNotes"
+    ].forEach(function (id) {
       var input = $(id);
       input.addEventListener("input", function () { setError(id, "iwErr" + id.slice(2), ""); });
       input.addEventListener("change", function () { setError(id, "iwErr" + id.slice(2), ""); });
@@ -1090,12 +1413,35 @@
     });
   }
 
+  function fetchBookings() {
+    var controller = typeof window.AbortController === "function" ? new AbortController() : null;
+    var options = {
+      method: "GET",
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+      cache: "no-store"
+    };
+    if (controller) options.signal = controller.signal;
+    var timer;
+    var request = fetch(API + "?action=list", options).then(parseResponse);
+    var timeout = new Promise(function (resolve, reject) {
+      timer = window.setTimeout(function () {
+        if (controller) controller.abort();
+        reject(new Error("The bookings service took too long to respond. Please try again."));
+      }, 15000);
+    });
+    return Promise.race([request, timeout]).finally(function () { window.clearTimeout(timer); });
+  }
+
   function init(page) {
     if (!page || page.getAttribute("data-cb-ready") === "1") return;
     var list = page.querySelector("#cbBookingList");
     var listState = page.querySelector("#cbListState");
     var count = page.querySelector("#cbBookingCount");
+    var emptyState = page.querySelector("#cbEmptyState");
+    var layout = page.querySelector("#cbLayout");
     var title = page.querySelector("#cbBookingTitle");
+    var reference = page.querySelector("#cbBookingReference");
     var status = page.querySelector("#cbBookingStatus");
     var stepper = page.querySelector("#cbStepper");
     var form = page.querySelector("#cbFeedbackForm");
@@ -1322,6 +1668,15 @@
       targets.forEach(function (t) { t.hidden = hide; t.style.display = hide ? "none" : ""; });
     }
 
+    function formatContactPhone(raw) {
+      var original = asText(raw);
+      var digits = original.replace(/\D/g, "");
+      if (digits.length === 12 && digits.slice(0, 2) === "63") digits = digits.slice(2);
+      if (digits.length === 11 && digits.charAt(0) === "0") digits = digits.slice(1);
+      if (digits.length === 10) return "+63 " + digits.slice(0, 3) + " " + digits.slice(3, 6) + " " + digits.slice(6);
+      return original;
+    }
+
     function renderDetails(record) {
       var contact = record.contact_person || record.contact || record.customer || {};
       var schedule = asText(first(record, ["event_schedule", "schedule"]));
@@ -1335,6 +1690,10 @@
       var guestsOn = showsGuests(record);
       setText("cbGuests", guestsOn ? first(record, ["expected_guests", "guest_count", "guests", "number_of_guests", "pax"]) + " guests" : "");
       setRowHidden("cbGuests", "cbVenue", !guestsOn);
+      var arrangement = asText(first(record, ["arrangement", "service_arrangement"]));
+      setText("cbArrangement", arrangement);
+      var venueLabel = page.querySelector("#cbVenueLabel");
+      if (venueLabel) venueLabel.textContent = /pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue/Address");
       setText("cbVenue", first(record, ["venue", "venue_name", "address"]));
       setText("cbSchedule", schedule);
       setText("cbPackage", first(record, ["package_name", "package"]));
@@ -1342,7 +1701,33 @@
       /* Contact Person = the customer's own details. */
       setText("cbContactName", first(contact, ["name", "full_name"]) || first(record, ["contact_name", "customer_name"]));
       setText("cbContactEmail", first(contact, ["email"]) || first(record, ["contact_email", "email"]));
-      setText("cbContactPhone", first(contact, ["phone", "phone_number"]) || first(record, ["contact_phone", "phone", "phone_number"]));
+      setText("cbContactPhone", formatContactPhone(first(contact, ["phone", "phone_number"]) || first(record, ["contact_phone", "phone", "phone_number"])));
+
+      var menuCard = page.querySelector("#cbMenuCard");
+      var menuList = page.querySelector("#cbMenuItems");
+      var menuCount = page.querySelector("#cbMenuCount");
+      var items = Array.isArray(record.items) ? record.items : (Array.isArray(record.menu_items) ? record.menu_items : []);
+      if (menuList) menuList.replaceChildren();
+      if (menuCount) menuCount.textContent = items.length ? "(" + items.length + (items.length === 1 ? " item)" : " items)") : "";
+      if (menuCard) menuCard.hidden = !items.length;
+      items.forEach(function (item) {
+        var row = document.createElement("li");
+        row.className = "cb-menu-item";
+        var copy = document.createElement("div");
+        copy.className = "cb-menu-item-copy";
+        var name = document.createElement("strong");
+        name.textContent = asText(first(item, ["name", "item_name", "item_name_snapshot"])) || "Menu item";
+        var serving = asText(first(item, ["serving_option", "serving_size", "serving_option_snapshot"]));
+        var quantity = amount(first(item, ["quantity", "qty"]));
+        var details = document.createElement("span");
+        details.textContent = [serving, quantity ? "Quantity " + quantity.toLocaleString("en-PH", { maximumFractionDigits: 3 }) : ""].filter(Boolean).join(" · ");
+        copy.append(name, details);
+        var lineTotal = document.createElement("strong");
+        lineTotal.className = "cb-menu-item-total";
+        lineTotal.textContent = money(first(item, ["subtotal", "line_total", "amount"]));
+        row.append(copy, lineTotal);
+        menuList.appendChild(row);
+      });
     }
 
     function amount(value) {
@@ -1401,6 +1786,34 @@
       if (bar) bar.style.width = percent + "%";
       if (progress) progress.setAttribute("aria-valuenow", String(percent));
       renderPayRequest(record);
+
+      var historyCard = page.querySelector("#cbPaymentHistoryCard");
+      var historyList = page.querySelector("#cbPaymentHistory");
+      var history = Array.isArray(record.payment_history) ? record.payment_history : [];
+      if (historyList) historyList.replaceChildren();
+      if (historyCard) historyCard.hidden = !history.length;
+      history.forEach(function (entry) {
+        var row = document.createElement("li");
+        row.className = "cb-payment-history-item";
+        var copy = document.createElement("div");
+        copy.className = "cb-payment-history-copy";
+        var title = document.createElement("strong");
+        title.textContent = (asText(entry.type) || "Payment") + " · " + (asText(entry.status) || "Status unavailable");
+        var meta = document.createElement("span");
+        var dateValue = asText(first(entry, ["paid_at", "created_at"]));
+        var dateText = dateValue;
+        if (dateValue) {
+          var parsedDate = new Date(dateValue.replace(" ", "T"));
+          if (!Number.isNaN(parsedDate.getTime())) dateText = parsedDate.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+        }
+        meta.textContent = [asText(entry.method), dateText, asText(entry.reference) ? "Ref. " + asText(entry.reference) : ""].filter(Boolean).join(" · ");
+        copy.append(title, meta);
+        var total = document.createElement("strong");
+        total.className = "cb-payment-history-total";
+        total.textContent = money(entry.amount);
+        row.append(copy, total);
+        historyList.appendChild(row);
+      });
     }
 
     /* "Request Full Payment" from the sales staff: a payment banner (same classes as the Payment tab banner) with a Pay Now button.
@@ -1472,7 +1885,11 @@
     function resetEmpty() {
       page.setAttribute("data-cb-view", "empty");
       if (count) count.textContent = "0 bookings";
-      if (title) title.textContent = "Booking overview";
+      if (layout) layout.hidden = true;
+      if (emptyState) emptyState.hidden = false;
+      if (listState) listState.hidden = true;
+      if (title) title.textContent = "Booking Overview";
+      if (reference) { reference.textContent = ""; reference.hidden = true; }
       if (status) status.textContent = "—";
       renderSteps({});
       renderDetails({});
@@ -1499,7 +1916,12 @@
         button.setAttribute("aria-pressed", String(active));
       });
       var eventName = first(record, ["event_name", "booking_name", "title", "event_type"]);
-      if (title) title.textContent = asText(eventName) || "Booking details";
+      if (title) title.textContent = asText(eventName) || "Booking Details";
+      var bookingRef = asText(first(record, ["booking_ref", "booking_reference", "reference"]));
+      if (reference) {
+        reference.textContent = bookingRef ? "Booking reference · " + bookingRef : "";
+        reference.hidden = !bookingRef;
+      }
       if (status) status.textContent = asText(first(record, ["status", "booking_status"])) || "—";
       var bannerEl = status && status.closest(".cb-banner");
       if (bannerEl) bannerEl.classList.toggle("is-negative", /cancel|declin/i.test(asText(first(record, ["status", "booking_status"]))));   // red banner for cancelled bookings
@@ -1536,9 +1958,10 @@
       if (count) count.textContent = rows.length + (rows.length === 1 ? " booking" : " bookings");
       if (!rows.length) {
         resetEmpty();
-        showListMessage("0 bookings. Your bookings will appear here when available.", false);
         return;
       }
+      if (emptyState) emptyState.hidden = true;
+      if (layout) layout.hidden = false;
       listState.hidden = true;
       rows.forEach(function (record, index) {
         var button = document.createElement("button");
@@ -1556,9 +1979,18 @@
         var meta = document.createElement("span");
         meta.className = "cb-booking-meta";
         var date = document.createElement("span");
-        date.textContent = asText(first(record, ["event_schedule", "event_date", "date"])) || "—";
+        date.textContent = asText(first(record, ["schedule", "event_schedule", "event_date", "date"])) || "—";
         meta.appendChild(date);
-        meta.appendChild(phaseTag(bookingPhase(record), ["Upcoming event", "Event finished", "Cancelled"]));
+        var bookingRef = asText(first(record, ["booking_ref", "booking_reference", "reference"]));
+        if (bookingRef) {
+          var reference = document.createElement("span");
+          reference.className = "cb-booking-ref-short";
+          reference.textContent = bookingRef;
+          meta.appendChild(reference);
+        }
+        var bookingStatus = asText(first(record, ["status", "booking_status"]));
+        var bookingStage = bookingPhase(record);
+        meta.appendChild(phaseTag(bookingStage, [bookingStatus || "Upcoming event", bookingStatus || "Event finished", bookingStatus || "Cancelled"]));
         if (showsGuests(record)) {
           var guests = document.createElement("span");
           guests.textContent = asText(first(record, ["expected_guests", "guest_count", "guests", "pax"])) + " guests";
@@ -1595,17 +2027,16 @@
     }
 
     function load(preferredId) {
+      if (!records.length) {
+        page.setAttribute("data-cb-view", "loading");
+        if (layout) layout.hidden = true;
+        if (emptyState) emptyState.hidden = true;
+      }
       showListMessage("Loading your bookings...", false);
-      fetch(API + "?action=list", {
-        method: "GET",
-        credentials: "same-origin",
-        headers: { Accept: "application/json" },
-        cache: "no-store"
-      })
-        .then(parseResponse)
+      fetchBookings()
         .then(function (json) {
-          var rows = json.bookings || json.data || json.items || json.records || [];
-          if (!Array.isArray(rows)) throw new Error("The bookings service returned an invalid list.");
+          if (!Array.isArray(json.bookings)) throw new Error("The bookings service returned an invalid booking list.");
+          var rows = json.bookings;
           rows = sortBookings(rows);   // cancelled last, earliest event date first
           records = rows;
           render(rows, preferredId);
@@ -1613,8 +2044,10 @@
         .catch(function (error) {
           console.warn("Bookings are not available yet:", error);
           if (!records.length) {
-            resetEmpty();
-            showListMessage("0 bookings available. Booking data will appear here when the backend is connected.", true);
+            page.setAttribute("data-cb-view", "error");
+            if (layout) layout.hidden = true;
+            if (emptyState) emptyState.hidden = true;
+            showListMessage(error && error.message ? error.message : "Bookings could not be loaded. Please try again.", true);
           } else {
             listState.hidden = true;
           }
@@ -1633,6 +2066,20 @@
       page.setAttribute("data-cb-view", "booking");
       var body = document.querySelector(".content-body");
       if (body) body.scrollTop = 0;
+    });
+    var cbStartInquiry = page.querySelector("#cbStartInquiry");
+    if (cbStartInquiry) cbStartInquiry.addEventListener("click", function () {
+      try {
+        sessionStorage.setItem("crmOpenInquiryWizardOnce", "1");
+        sessionStorage.removeItem("crmOpenBookingId");
+        sessionStorage.removeItem("crmOpenBookingTab");
+      } catch (error) {
+        console.warn("Could not save the inquiry navigation state.", error);
+      }
+      var inquiryLink = document.querySelector(".sidebar-nav a[onclick*=\"customer-inquiries.html\"]");
+      if (inquiryLink) inquiryLink.click();
+      else if (typeof window.loadPage === "function") window.loadPage("customer-inquiries.html");
+      else console.error("The CRM page loader is unavailable; the inquiry page could not be opened.");
     });
 
     page.querySelectorAll("[data-tab-target]").forEach(function (tab) {
@@ -1838,6 +2285,7 @@
     return day && day < today ? 1 : 0;
   }
   function inquiryPhaseLabels(r) {
+    if (r && r.booking) return ["Booking linked", "Booking linked", "Cancelled"];
     return ["Upcoming", "Date passed", /cancel/i.test(listText(r, ["status", "inquiry_status", "stage"])) && !/declin/i.test(listText(r, ["status", "inquiry_status", "stage"])) ? "Cancelled" : "Declined"];
   }
   /* Order of My Inquiries (strict, whatever the event date):
@@ -1870,7 +2318,7 @@
 
   var API = "customer-inquiries-api.php";
   var PAY_API = "xendit-api.php";   // xendit deposit payment (create_checkout)
-  var STEP_LABELS = ["Submitted", "Under review", "Quotation", "Confirmation", "Completed"];
+  var STEP_LABELS = ["Submitted", "Under Review", "Quotation Sent", "Quotation Accepted", "Deposit Verified", "Booking Confirmed"];
 
   function asText(value) {
     if (value === null || value === undefined) return "";
@@ -1926,13 +2374,16 @@
     var list = page.querySelector("#ciList");
     var inquiryCount = page.querySelector("#ciInquiryCount");
     var detail = page.querySelector("#ciDetail");
+    var emptyState = page.querySelector("#ciEmptyState");
     var back = page.querySelector("#ciBack");
     var heroTitle = page.querySelector("#ciHeroTitle");
+    var heroDescription = page.querySelector("#ciHeroDescription");
+    var heroReference = page.querySelector("#ciInquiryReference");
     var heroStatus = page.querySelector("#ciHeroStatus");
+    var eventStrip = page.querySelector("#ciEventStrip");
     var stepper = page.querySelector("#ciStepper");
     var detailsPanel = page.querySelector("#ciPanelDetails");
     var quotePanel = page.querySelector("#ciPanelQuote");
-    var toast = page.querySelector("#ciToast");
     var detailsTab = page.querySelector("#ciTabDetails");
     var quoteTab = page.querySelector("#ciTabQuote");
     if (!state || !layout || !list || !detail) return;
@@ -1940,7 +2391,6 @@
     page.setAttribute("data-ci-ready", "1");
     page.setAttribute("data-ci-view", "list");
     var inquiries = [];
-    var toastTimer = null;
     var csrfToken = "";   // sent with Accept / Decline of a quotation
     var keepIndex = -1;    // after answering a quotation, reload the list but stay on the same inquiry + Quotation tab
     var keepTab = "";
@@ -1957,26 +2407,27 @@
         state.appendChild(retry);
       }
       state.hidden = false;
-      layout.hidden = false;
+      layout.hidden = inquiries.length === 0;
       page.setAttribute("data-ci-view", inquiries.length ? "list" : "empty");
     }
 
     function showToast(message, ms) {
-      if (!toast || !message) return;
-      toast.textContent = message;
-      toast.hidden = false;
-      if (toastTimer) window.clearTimeout(toastTimer);
-      toastTimer = window.setTimeout(function () { toast.hidden = true; }, ms || 4000);
+      var type = arguments.length > 2 ? arguments[2] : "success";
+      if (window.crmToast) window.crmToast(message, type, { duration: ms || 4500 });
+      else console.error("CRM toast component was not loaded before customer actions.");
     }
 
     function renderSteps(record) {
       empty(stepper);
       if (!stepper) return;
       var progress = Number(firstValue(record, ["progress_step", "current_step"]));
-      if (!Number.isInteger(progress) || progress < 1 || progress > STEP_LABELS.length) {
-        stepper.hidden = true;
-        return;
-      }
+      if (/declin|cancel/i.test(asText(firstValue(record, ["status", "stage"])))) { stepper.hidden = true; return; }
+      if (!Number.isInteger(progress) || progress < 1) progress = 1;
+      if (record.booking) progress = 6;
+      else if (record.quotation && record.quotation.status === "Accepted") progress = 4;
+      else if (record.quotation && record.quotation.status === "Sent") progress = 3;
+      progress = Math.min(progress, 6);
+      empty(stepper);
       stepper.hidden = false;
       STEP_LABELS.forEach(function (label, index) {
         var number = index + 1;
@@ -2097,42 +2548,58 @@
 
     function renderDetails(record) {
       if (!detailsPanel) return;
-      empty(detailsPanel);
+      var detailsContent = page.querySelector("#ciDetailsContent") || detailsPanel;
+      empty(detailsContent);
       var arrangement = asText(firstValue(record, ["arrangement", "service_arrangement"]));
       var hasPax = /buffet|set-?up|on-?site/i.test(arrangement);
       if (/declin/i.test(asText(firstValue(record, ["status", "stage"])))) {
         var why = asText(record.decline_reason);
-        detailsPanel.appendChild(make("div", "ci-note ci-note-negative mb-3", "This inquiry was declined" + (why ? ": " + why : ".") + " You are welcome to send a new inquiry anytime."));
+        detailsContent.appendChild(make("div", "ci-note ci-note-negative mb-3", "This inquiry was declined" + (why ? ": " + why : ".") + " You are welcome to send a new inquiry anytime."));
       }
 
       // A. Event Information (same fields as the staff side)
-      var info = avCard("A", "Event Information");
-      var grid = make("div", "av-d-grid av-d-grid-3");
-      grid.appendChild(avField("Event Name", firstValue(record, ["event_name", "inquiry_name", "title", "subject"]), "is-lg is-wide"));
-      grid.appendChild(avField("Event Date", fmtDay(firstValue(record, ["event_date", "date"]))));
-      var evTime = asText(record.event_time_display) || asText(record.event_time);
-      if (evTime) grid.appendChild(avField(asText(record.event_time_label) || "Event time", evTime));
-      if (hasPax) {
-        var guests = asText(firstValue(record, ["pax", "expected_guests", "guests"])).replace(/\s*(pax|guests?)\s*$/i, "").trim();
-        grid.appendChild(avField("Number of Guests (PAX)", guests ? guests + " Guests" : "", "is-green"));
+      var info = make("section", "ci-approved-card");
+      info.appendChild(make("h3", "ci-approved-title", "A. Event Information"));
+      [["Event Name", firstValue(record,["event_name","title"])], ["Number of Guests", hasPax ? firstValue(record,["pax","expected_guests"]) + " pax" : ""], ["Additional Notes", firstValue(record,["special_requests","notes","customer_notes"]) || "—"]].forEach(function(row) {
+        if (row[1] !== "") { info.appendChild(make("span","ci-approved-label",row[0])); info.appendChild(make("div","ci-approved-value",row[1])); }
+      });
+      detailsContent.appendChild(info);
+      var service = make("section", "ci-approved-card ci-service-card");
+      service.appendChild(make("h3", "ci-approved-title", "B. Service Arrangement"));
+      service.appendChild(make("span", "ci-approved-label", "Catering Arrangement"));
+      service.appendChild(make("div", "ci-approved-value", arrangement || "—"));
+      var arrangementDetails = record.arrangement_details || record.delivery_details;
+      if (typeof arrangementDetails === "string") { try { arrangementDetails = JSON.parse(arrangementDetails); } catch (_) { arrangementDetails = null; } }
+      if (!arrangementDetails || typeof arrangementDetails !== "object" || Array.isArray(arrangementDetails)) arrangementDetails = null;
+      var locationLabel = asText(record.event_location_label) || (/pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue / Address"));
+      service.appendChild(make("span", "ci-approved-label", locationLabel));
+      service.appendChild(make("div", "ci-approved-value", firstValue(record,["event_location","venue","address","location"]) || "—"));
+      if (arrangementDetails) {
+        var detailRows = /deliver/i.test(arrangement)
+          ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
+          : /pick-?up/i.test(arrangement)
+            ? [["pickup_notes", "Pickup Notes"]]
+            : hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+        detailRows.forEach(function (entry) {
+          if (arrangementDetails[entry[0]]) {
+            service.appendChild(make("span", "ci-approved-label", entry[1]));
+            service.appendChild(make("div", "ci-approved-value", arrangementDetails[entry[0]]));
+          }
+        });
       }
-      grid.appendChild(avField("Catering Arrangement", arrangement));
-      var pkg = asText(firstValue(record, ["package", "package_name"]));
-      if (pkg) grid.appendChild(avField("Package", pkg));
-      info.appendChild(grid);
-
-      var split = make("div", "av-d-split");
-      var venue = asText(firstValue(record, ["event_location", "venue", "address", "location"]));
-      split.appendChild(avField("Event Location", venue || (/pick-?up/i.test(arrangement) ? "Customer pickup" : "")));
-      var notes = make("div");
-      notes.appendChild(make("span", "av-d-label", "Special Requests"));
-      notes.appendChild(make("div", "av-d-note", asText(firstValue(record, ["special_requests", "notes", "dietary_requirements", "customer_notes"])) || "\u2014"));
-      split.appendChild(notes);
-      info.appendChild(split);
-      detailsPanel.appendChild(info);
-
-      // B. Food Orders
-      renderDishes(detailsPanel, record, hasPax);
+      if (record.event_time_display || record.event_time) { service.appendChild(make("span", "ci-approved-label", asText(record.event_time_label) || "Event time")); service.appendChild(make("div", "ci-approved-value", asText(record.event_time_display) || asText(record.event_time))); }
+      detailsContent.appendChild(service);
+      var menu = make("section", "ci-approved-card ci-menu-card");
+      menu.appendChild(make("h3", "ci-approved-title", "C. Menu Selected"));
+      var dishes = dishItems(record, hasPax);
+      var table = make("div", "ci-approved-menu");
+      var heading = make("div", "ci-approved-menu-head");
+      ["Menu Item","Serving Size","Quantity"].forEach(function(x) { heading.appendChild(make("strong","",x)); });
+      table.appendChild(heading);
+      dishes.forEach(function(dish) { var row = make("div","ci-approved-menu-row"); row.appendChild(make("span","",dish.name)); row.appendChild(make("span","",dish.tier || dish.pax || "—")); row.appendChild(make("span","",dish.qty || "1")); table.appendChild(row); });
+      if (!dishes.length) table.appendChild(make("div","ci-approved-menu-row","No menu items selected."));
+      menu.appendChild(table);
+      detailsContent.appendChild(menu);
     }
 
     function peso(value) {
@@ -2274,7 +2741,8 @@
         error: "We could not find that payment. Please contact the catering team."
       };
       if (result.indexOf("balance_") === 0) return;   // a "Request Full Payment": handled on the My Bookings page (handleBalanceReturn)
-      showToast(messages[result] || "", 9000);
+      var resultType = result === "success" ? "success" : (result === "cancelled" ? "info" : (result === "pending" ? "warning" : (result === "review" ? "warning" : "error")));
+      showToast(messages[result] || "", 4500, resultType);
       keepTab = "quote";
       params.delete("pay");
       params.delete("booking");
@@ -2358,7 +2826,7 @@
           totalLine.appendChild(make("strong", "", peso(total)));
           lines.appendChild(totalLine);
         }
-        if (quotation.deposit_amount) {
+        if (quotation.deposit_amount && !record.booking) {
           var dep = make("li", "");
           dep.appendChild(make("span", "", "Deposit to reserve your date (" + (quotation.deposit_rate || 20) + "%)"));
           dep.appendChild(make("strong", "", peso(quotation.deposit_amount)));
@@ -2373,7 +2841,7 @@
       }
 
       var actions = make("div", "ci-actions align-items-center mt-3");
-      var paid = Number(record.progress_step) === 5 || asText(record.stage) === "Completed";
+      var paid = !!record.booking;
       var finishResponse = function (json) {
         keepIndex = inquiries.indexOf(record);
         keepTab = "quote";
@@ -2396,7 +2864,7 @@
             change.disabled = true;
             respondToQuotation(quotation, "change", text).then(finishResponse).catch(function (error) {
               change.disabled = false;
-              showToast(error.message || "Could not send your change request.");
+              showToast(error.message || "Could not send your change request.", 4500, "error");
             });
           });
         });
@@ -2420,7 +2888,7 @@
             // only sends the acceptance (and the "I accept quotation..." chat message); payment is a separate step
             respondToQuotation(quotation, "accept", "").then(function (json) {
               finish({ message: (json && json.message) || "Quotation accepted. You can now pay the deposit to confirm your booking." });
-            }).catch(function (error) { busy(false); showToast(error.message || "Could not accept the quotation."); });
+            }).catch(function (error) { busy(false); showToast(error.message || "Could not accept the quotation.", 4500, "error"); });
           });
         });
         decline.addEventListener("click", function () {
@@ -2431,7 +2899,7 @@
           }).then(function (reason) {
             if (reason === null) return;
             busy(true);
-            respondToQuotation(quotation, "decline", reason).then(finish).catch(function (error) { busy(false); showToast(error.message || "Could not decline the quotation."); });
+            respondToQuotation(quotation, "decline", reason).then(finish).catch(function (error) { busy(false); showToast(error.message || "Could not decline the quotation.", 4500, "error"); });
           });
         });
         actions.appendChild(accept);
@@ -2447,7 +2915,7 @@
           pay.disabled = true;
           startPayment(quotation).catch(function (error) {
             pay.disabled = false;
-            showToast(error.message || "Could not open the payment page.");
+            showToast(error.message || "Could not open the payment page.", 4500, "error");
           });
         });
         actions.appendChild(pay);
@@ -2455,8 +2923,34 @@
       }
       quotePanel.appendChild(actions);
 
+      if (Array.isArray(quotation.history) && quotation.history.length > 1) {
+        var history = make("details", "ci-quote-history");
+        history.appendChild(make("summary", "", "Quotation history (" + quotation.history.length + " versions)"));
+        quotation.history.forEach(function (version) {
+          history.appendChild(make("div", "ci-quote-history-row", "Quotation v" + version.version + " · " + version.status + " · " + peso(version.amount)));
+        });
+        quotePanel.appendChild(history);
+      }
+
       if (status === "Accepted" && paid) {
-        quotePanel.appendChild(make("div", "ci-note", "Deposit received. Your booking is confirmed. Thank you!"));
+        var booking = record.booking;
+        var payment = make("section", "ci-payment-confirmed ci-box");
+        payment.appendChild(make("h4", "", "Payment Summary"));
+        [["Total Amount", booking.total], ["Deposit Paid (20%)", booking.deposit_paid], ["Remaining Balance", booking.remaining_balance]].forEach(function (row) {
+          var line = make("div", "ci-payment-line" + (row[0] === "Remaining Balance" ? " is-balance" : ""));
+          line.appendChild(make("span", "", row[0])); line.appendChild(make("strong", "", peso(row[1]))); payment.appendChild(line);
+        });
+        quotePanel.appendChild(payment);
+        quotePanel.appendChild(make("div", "ci-payment-verified", "✓  Deposit has been verified. Your booking is now confirmed."));
+        var viewBooking = make("button", "ci-btn-primary ci-view-booking", "View Booking Details →");
+        viewBooking.type = "button";
+        viewBooking.addEventListener("click", function () {
+          try { sessionStorage.setItem("crmOpenBookingId", String(booking.booking_id)); } catch (e) { /* continue to the bookings list */ }
+          var nav = document.querySelector('a[href*="customer-bookings"], [data-page="customer-bookings.html"]');
+          if (typeof window.loadPage === "function") window.loadPage("customer-bookings.html", nav || null);
+          else window.location.href = "index.php#bookings";
+        });
+        quotePanel.appendChild(viewBooking);
       } else if (status === "Accepted") {
         quotePanel.appendChild(make("div", "ci-note", "You accepted this quotation. Pay the " + peso(quotation.deposit_amount) + " deposit online (GCash or Maya) to confirm your booking."));
       } else if (status === "Declined") {
@@ -2489,39 +2983,37 @@
         card.setAttribute("aria-pressed", String(selected));
       });
       if (heroTitle) heroTitle.textContent = asText(firstValue(record, ["event_name", "inquiry_name", "title", "subject"])) || "Catering inquiry";
-      if (heroStatus) heroStatus.textContent = asText(firstValue(record, ["status", "inquiry_status"])) || "Submitted";
+      var inquiryRef = asText(firstValue(record, ["inquiry_ref", "reference", "inquiry_reference"]));
+      if (heroReference) {
+        heroReference.textContent = inquiryRef ? "Inquiry reference · " + inquiryRef : "";
+        heroReference.hidden = !inquiryRef;
+      }
+      var displayStatus = record.booking ? "Converted to Booking" : (asText(firstValue(record, ["status", "inquiry_status", "stage"])) || "Submitted");
+      if (heroStatus) heroStatus.textContent = displayStatus;
+      if (heroStatus) heroStatus.dataset.status = displayStatus;
+      if (heroDescription) heroDescription.textContent = record.booking ? "This inquiry is linked to confirmed booking " + (record.booking.booking_ref || "") + ". Its details and quotation history remain available here." : (record.quotation && record.quotation.status === "Sent" ? "Your quotation is ready for review." : (record.quotation && record.quotation.status === "Accepted" ? "Your quotation has been accepted. Pay the deposit to confirm your booking." : "Your inquiry is currently " + displayStatus.toLowerCase() + ". We’ll prepare a quotation for you soon."));
       if (heroStatus && heroStatus.closest(".ci-hero")) heroStatus.closest(".ci-hero").classList.toggle("is-negative", /declin|cancel/i.test(heroStatus.textContent));   // red banner
+      if (eventStrip) {
+        empty(eventStrip);
+        [["bi-calendar-event","Event Date",fmtDay(firstValue(record,["event_date","date"]))], ["bi-clock","Pickup Time",asText(record.event_time_display)||asText(record.event_time)], ["bi-layers","Arrangement",asText(firstValue(record,["arrangement","service_arrangement"]))], ["bi-cake2","Event Type",asText(firstValue(record,["event_type","type"])) || "—"]].forEach(function (v) {
+          var cell=make("div","ci-event-summary-item"); cell.appendChild(make("i","bi "+v[0])); var copy=make("div",""); copy.appendChild(make("strong","",v[1])); copy.appendChild(make("span","",v[2]||"—")); cell.appendChild(copy); eventStrip.appendChild(cell);
+        });
+      }
       renderSteps(record);
       renderDetails(record);
       renderQuote(record);
-      activateTab("details");
+      activateTab(record.booking ? "quote" : "details");
       if (mobileDetail) page.setAttribute("data-ci-view", "detail");
     }
 
     function renderEmptyStructure() {
       page.setAttribute("data-ci-view", "empty");
       if (inquiryCount) inquiryCount.textContent = "0 inquiries";
-      if (heroTitle) heroTitle.textContent = "Inquiry overview";
+      if (heroTitle) heroTitle.textContent = "Inquiry Overview";
       if (heroStatus) heroStatus.textContent = "0 inquiries";
-
-      if (stepper) {
-        empty(stepper);
-        stepper.hidden = false;
-        STEP_LABELS.forEach(function (label, index) {
-          var item = make("li", "ci-step is-todo");
-          item.appendChild(make("span", "ci-node", String(index + 1)));
-          item.appendChild(make("span", "ci-step-label", label));
-          stepper.appendChild(item);
-        });
-      }
-
-      renderDetails({ event_name: "No inquiry selected" });
-
-      if (quotePanel) {
-        empty(quotePanel);
-        quotePanel.appendChild(make("div", "ci-note", "0 quotations. No quotation is available yet."));
-      }
-      activateTab("details");
+      if (emptyState) emptyState.hidden = false;
+      if (layout) layout.hidden = true;
+      if (stepper) stepper.hidden = true;
     }
     function renderList(rows) {
       empty(list);
@@ -2537,7 +3029,7 @@
         body.appendChild(make("span", "ci-card-title", asText(firstValue(record, ["event_name", "inquiry_name", "title", "subject"])) || "Catering inquiry"));
         var meta = make("span", "ci-card-meta");
         var date = asText(firstValue(record, ["event_date", "date", "created_at"]));
-        if (date) meta.appendChild(make("span", "", date));
+        if (date) meta.appendChild(make("span", "", fmtDay(date) || date));
         var phase = inquiryPhase(record);
         meta.appendChild(make("span", "list-phase " + ["is-upcoming", "is-finished", "is-cancelled"][phase], inquiryPhaseLabels(record)[phase]));
         body.appendChild(meta);
@@ -2560,6 +3052,7 @@
         showState("0 inquiries yet. Your requests will appear here.", false, false);
         return;
       }
+      if (emptyState) emptyState.hidden = true;
       state.hidden = true;
       layout.hidden = false;
       page.setAttribute("data-ci-view", "list");
@@ -2643,7 +3136,7 @@
     page.dataset.cibReady = "true";
 
     var endpoint = page.dataset.apiUrl || "customer-inbox-api.php";
-    var state = { conversations: [], tickets: [], conversationId: "", ticketId: "" };
+    var state = { conversations: [], tickets: [], conversationId: "", ticketId: "", conversationsLoaded: false, conversationsLoadFailed: false };
     var $ = function (selector) { return page.querySelector(selector); };
     var byId = function (id) { return document.getElementById(id); };
 
@@ -2657,15 +3150,29 @@
     }
 
     async function request(action, options, params) {
-      var response = await fetch(endpointUrl(action, params), Object.assign({ credentials: "same-origin" }, options || {}));
-      var payload;
-      var responseText = await response.text();
-      try { payload = responseText ? JSON.parse(responseText) : {}; }
-      catch (error) { throw new Error("Inbox API returned non-JSON (HTTP " + response.status + "). Check customer-inbox-api.php and its response format."); }
-      if (!response.ok || payload.success === false || payload.error) {
-        throw new Error(payload.message || payload.error || "Request failed (HTTP " + response.status + ").");
-      }
-      return payload;
+      var controller = typeof window.AbortController === "function" ? new AbortController() : null;
+      var timer;
+      var fetchOptions = Object.assign({ credentials: "same-origin" }, options || {});
+      if (controller) fetchOptions.signal = controller.signal;
+      var operation = (async function () {
+        var response = await fetch(endpointUrl(action, params), fetchOptions);
+        var payload;
+        var responseText = await response.text();
+        try { payload = responseText ? JSON.parse(responseText) : {}; }
+        catch (error) { throw new Error("Inbox API returned non-JSON (HTTP " + response.status + "). Check customer-inbox-api.php and its response format."); }
+        if (!response.ok || !payload || typeof payload !== "object" || payload.success === false || payload.error) {
+          throw new Error((payload && (payload.message || payload.error)) || "Request failed (HTTP " + response.status + ").");
+        }
+        return payload;
+      })();
+      var timeout = new Promise(function (resolve, reject) {
+        timer = window.setTimeout(function () {
+          if (controller) controller.abort();
+          reject(new Error("The inbox service took too long to respond. Please try again."));
+        }, 15000);
+      });
+      try { return await Promise.race([operation, timeout]); }
+      finally { window.clearTimeout(timer); }
     }
 
     function records(payload, keys) {
@@ -2745,8 +3252,16 @@
       return /resolved|closed/i.test(status) ? "stage-new" : /progress/i.test(status) ? "stage-qualified" : /pending/i.test(status) ? "stage-proposal" : "stage-won";
     }
     function isPhone() { return window.matchMedia("(max-width: 991.98px)").matches; }
-    function showError(node, error) {
+    function showError(node, error, retry) {
       setState(node, error && error.message ? error.message : "Something went wrong. Please try again.", true);
+      if (node && typeof retry === "function") {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "cib-retry";
+        button.textContent = "Try again";
+        button.addEventListener("click", retry);
+        node.appendChild(button);
+      }
     }
 
     function setActiveTab(tab) {
@@ -2757,6 +3272,19 @@
       $("#cibConcernsPanel").hidden = messagesActive;
       $("#cibMessagesPanel").classList.toggle("is-active", messagesActive);
       $("#cibConcernsPanel").classList.toggle("is-active", !messagesActive);
+      var inboxEmpty = $("#cibInboxEmpty");
+      if (inboxEmpty) {
+        var showEmpty = messagesActive && state.conversationsLoaded && !state.conversationsLoadFailed && state.conversations.length === 0 && !$("#cibConversationSearch").value.trim();
+        var conversationEmpty = $("#cibConversationEmpty");
+        inboxEmpty.hidden = !showEmpty;
+        if (conversationEmpty) conversationEmpty.hidden = !showEmpty;
+        $("#cibMessagesPanel").hidden = !messagesActive;
+        $("#cibMessagesPanel").classList.toggle("is-active", messagesActive);
+        $("#cibMessagesPanel").classList.toggle("is-empty", showEmpty);
+        $("#cibThreadHeader").hidden = showEmpty;
+        $("#cibMessageFeed").hidden = showEmpty;
+        $("#cibMessageForm").hidden = showEmpty || !state.conversationId;
+      }
     }
 
     /* Phone layout: the list shows first; opening a conversation / ticket shows the chat
@@ -2796,7 +3324,22 @@
     function renderConversations() {
       var list = $("#cibConversationList");
       var query = $("#cibConversationSearch").value.trim().toLowerCase();
-      list.replaceChildren();
+      var conversationEmpty = $("#cibConversationEmpty");
+      Array.prototype.forEach.call(list.querySelectorAll(".csi-item"), function (item) { item.remove(); });
+      var inboxEmpty = $("#cibInboxEmpty");
+      var showEmpty = state.conversationsLoaded && !state.conversationsLoadFailed && state.conversations.length === 0 && !query;
+      if (inboxEmpty) inboxEmpty.hidden = !showEmpty;
+      if (conversationEmpty) conversationEmpty.hidden = !showEmpty;
+      var messagesPanel = $("#cibMessagesPanel");
+      if (messagesPanel) {
+        var messagesActive = $("#cibMessagesTab").getAttribute("aria-selected") === "true";
+        messagesPanel.hidden = !messagesActive;
+        messagesPanel.classList.toggle("is-active", messagesActive);
+        messagesPanel.classList.toggle("is-empty", showEmpty);
+        $("#cibThreadHeader").hidden = showEmpty;
+        $("#cibMessageFeed").hidden = showEmpty;
+        $("#cibMessageForm").hidden = showEmpty || !state.conversationId;
+      }
       var filtered = state.conversations.filter(function (item) {
         var haystack = [value(item, ["title", "subject", "event_name", "inquiry_name"]), value(item, ["last_message", "preview"])].join(" ").toLowerCase();
         var matchesQuery = !query || haystack.includes(query);
@@ -2808,7 +3351,7 @@
       countNode.textContent = unreadTotal + " Unread";
       countNode.hidden = unreadTotal === 0;
       if (!filtered.length && query) setNoResults($("#cibConversationState"), "Try a different search term.");
-      else setState($("#cibConversationState"), filtered.length ? "" : "No conversations yet.", !filtered.length);
+      else setState($("#cibConversationState"), state.conversations.length ? "No conversations match your search." : "No conversations yet.", !filtered.length && !showEmpty);
       filtered.forEach(function (item) {
         var id = value(item, ["conversation_id", "id"]);
         if (!id) return;
@@ -2822,6 +3365,8 @@
         if (unreadCount > 0) { var dot = make("span", "csi-dot"); dot.setAttribute("aria-label", "Unread"); top.append(dot); }
         top.append(make("span", "csi-item-time", listTime(value(item, ["updated_at", "last_message_at"]))));
         button.append(top);
+        var sender = value(item, ["team_name", "staff_name", "sender_name"]);
+        if (sender) button.append(make("span", "csi-item-sender", sender));
         button.append(make("span", "csi-item-preview", value(item, ["last_message", "preview"], "")));
         button.addEventListener("click", function () { openThreadView("cibMessagesPanel"); selectConversation(String(id)); });
         list.append(button);
@@ -3064,7 +3609,8 @@
       }
       messages.forEach(function (message) {
         var mine = message.is_mine === true || String(value(message, ["direction", "sender_type"], "")).toLowerCase() === "outgoing" || message.from_customer === true;
-        var bubble = make("article", "cib-message" + (mine ? " is-mine" : ""));
+        var systemUpdate = message.is_system === true;
+        var bubble = make("article", "cib-message" + (mine ? " is-mine" : "") + (systemUpdate ? " is-system" : ""));
         var content = value(message, ["message", "body", "content", "text"]);
         if (content) {
           var textBox = make("div", "cib-bubble", "");
@@ -3082,7 +3628,7 @@
         if (payCard) bubble.append(payCard);
         var rateCard = cibFeedbackCard(value(message, ["feedback_request"]));
         if (rateCard) bubble.append(rateCard);
-        var who = value(message, ["sender_name", "sender", "author_name"], mine ? "You" : "Catering team");
+        var who = systemUpdate ? (message.system_kind === "system" ? "System update" : "Payment update") : value(message, ["sender_name", "sender", "author_name"], mine ? "You" : "");
         var sent = messageTime(value(message, ["created_at", "sent_at", "timestamp"]));
         bubble.append(make("div", "cib-message-meta", [sent, who].filter(Boolean).join(" · ")));
         feed.append(bubble);
@@ -3102,13 +3648,23 @@
       setState(stateNode, "Loading conversations…", true);
       try {
         var payload = await request("list_conversations");
-        state.conversations = records(payload, ["conversations", "records"]);
+        if (!Array.isArray(payload.conversations)) throw new Error("The inbox service returned an invalid conversation list.");
+        state.conversations = payload.conversations;
+        state.conversationsLoaded = true;
+        state.conversationsLoadFailed = false;
         renderConversations();
         if (!state.conversationId && state.conversations.length && !isPhone()) {
           var firstId = value(state.conversations[0], ["conversation_id", "id"]);
           if (firstId) await selectConversation(String(firstId));
         }
-      } catch (error) { state.conversations = []; renderConversations(); showError(stateNode, error); return []; }
+      } catch (error) {
+        state.conversations = [];
+        state.conversationsLoaded = true;
+        state.conversationsLoadFailed = true;
+        renderConversations();
+        showError(stateNode, error, loadConversations);
+        return [];
+      }
       return state.conversations;
     }
 
@@ -3122,14 +3678,22 @@
       $("#cibThreadTitle").textContent = value(item, ["title", "subject", "event_name", "inquiry_name"], "Conversation");
       $("#cibThreadMeta").textContent = [value(item, ["contact_name", "staff_name", "customer_name"]), value(item, ["event_date", "date"])].filter(Boolean).join(" · ");
       var status = $("#cibThreadStatus");
-      status.textContent = value(item, ["status"], "Active");
+      status.textContent = value(item, ["status"], "");
       status.hidden = !status.textContent;
       status.className = "stage-pill " + (/closed|resolved|cancel/i.test(status.textContent) ? "stage-new" : "stage-won");
       var feed = $("#cibMessageFeed");
       setState(feed, "Loading messages…", true);
       try {
         var payload = await request("messages", null, { conversation_id: id });
-        renderMessages(feed, records(payload, ["messages", "records"]));
+        var messages = records(payload, ["messages", "records"]);
+        renderMessages(feed, messages);
+        var latestTeamMessage = messages.slice().reverse().find(function (message) {
+          var direction = String(value(message, ["direction", "sender_type"], "")).toLowerCase();
+          return message.is_mine !== true && direction !== "outgoing" && message.from_customer !== true;
+        });
+        var teamName = value(item, ["staff_name", "team_name", "department_name"], "") ||
+          (latestTeamMessage ? value(latestTeamMessage, ["sender_name", "sender", "author_name"], "") : "");
+        $("#cibThreadMeta").textContent = [teamName, value(item, ["event_date", "date"])].filter(Boolean).join(" · ");
         if (item && (Number(item.unread) > 0 || Number(item.unread_count) > 0)) { item.unread = 0; item.unread_count = 0; renderConversations(); }
       } catch (error) { feed.replaceChildren(); feed.append(make("p", "cib-state", error.message)); }
     }
@@ -3145,7 +3709,7 @@
           var firstId = value(state.tickets[0], ["ticket_id", "id"]);
           if (firstId) await selectTicket(String(firstId));
         }
-      } catch (error) { showError(stateNode, error); }
+      } catch (error) { showError(stateNode, error, loadTickets); }
     }
 
     var replyPlaceholder = $("#cibTicketReplyText").getAttribute("placeholder") || "";
@@ -3789,9 +4353,10 @@
     var greeting = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
     var first = who ? String(who).trim().split(/\s+/)[0] : "";
     var node = page.querySelector("#homeGreeting");
-    if (node) node.textContent = first ? greeting + ", " + first + "." : "Welcome back.";
+    if (node) node.textContent = first ? greeting + ", " + first + "!" : "Welcome back!";
     var dateNode = page.querySelector("#homeTodayDate");
-    if (dateNode) dateNode.textContent = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date());
+    var dateLabel = page.querySelector("#homeTodayDateLabel") || dateNode;
+    if (dateLabel) dateLabel.textContent = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date());
   }
 
   function renderRecord(page, record, kind) {
@@ -3855,6 +4420,24 @@
 
     var booking = pickRecord(data, ["confirmed_booking", "confirmedBooking", "active_booking", "activeBooking", "booking"], ["bookings", "confirmed_bookings", "confirmedBookings"], isConfirmed);
     var inquiry = pickRecord(data, ["active_inquiry", "activeInquiry", "inquiry"], ["active_inquiries", "activeInquiries", "inquiries"], isActiveInquiry);
+    var declined = data && data.declined_inquiry;
+    var inquiryRecord = inquiry || declined;
+    var inquiryState = page.querySelector("#homeInquirySummaryState");
+    var inquiryDescription = page.querySelector("#homeInquirySummaryDescription");
+    var bookingState = page.querySelector("#homeBookingSummaryState");
+    var bookingDescription = page.querySelector("#homeBookingSummaryDescription");
+    if (inquiryState) inquiryState.textContent = inquiryRecord
+      ? (firstValue(inquiryRecord, ["event_name", "eventName", "title", "name"]) || "Your latest catering inquiry")
+      : "No inquiries yet.";
+    if (inquiryDescription) inquiryDescription.textContent = inquiryRecord
+      ? [firstValue(inquiryRecord, ["status", "stage", "inquiry_status"]), (function () { var date = firstValue(inquiryRecord, ["event_datetime", "event_date", "eventDate"]); return date ? formatDate(date) : ""; })()].filter(Boolean).join(" · ") || "Your submitted catering request is shown here."
+      : "Your submitted catering requests will appear here.";
+    if (bookingState) bookingState.textContent = booking
+      ? (firstValue(booking, ["event_name", "eventName", "title", "name"]) || "Your confirmed catering event")
+      : "No bookings yet.";
+    if (bookingDescription) bookingDescription.textContent = booking
+      ? [firstValue(booking, ["status", "booking_status", "bookingStatus"]), (function () { var date = firstValue(booking, ["event_datetime", "event_date", "eventDate"]); return date ? formatDate(date) : ""; })()].filter(Boolean).join(" · ") || "Your confirmed catering event is shown here."
+      : "Your confirmed catering events will appear here.";
     /* remember WHICH booking the card shows, so "View Booking Details" / "Payment Details" open that one (not the first in the list) */
     page.dataset.homeBookingKey = booking ? String(firstValue(booking, ["booking_id", "bookingId", "id"]) || firstValue(booking, ["event_name", "eventName", "event_title", "title", "name"]) || "") : "";
     var empty = page.querySelector("#homeEmptyState");
@@ -3870,20 +4453,14 @@
         : "Once your booking is confirmed, you can track its progress here.";
       empty.hidden = false;
     }
-    adaptHomeExtras(page, !!(booking || inquiry));
+    adaptHomeExtras(page);
   }
 
   /* New customers see the first-event prompt + "How it works".
      Customers who already have a booking/inquiry see "Planning another event?" and no tutorial. */
-  function adaptHomeExtras(page, hasActivity) {
-    var title = page.querySelector("#homeCtaTitle");
-    var desc = page.querySelector("#homeCtaDescription");
+  function adaptHomeExtras(page) {
     var how = page.querySelector(".ch-how-it-works");
-    if (title) title.textContent = hasActivity ? "Planning another event?" : "Planning your first event?";
-    if (desc) desc.textContent = hasActivity
-      ? "Have another occasion coming up? Send us a new inquiry and we will prepare a personalized quotation for you."
-      : "Tell us the occasion, your preferred menu, and the number of guests. We will prepare a personalized quotation for you.";
-    if (how) { how.hidden = hasActivity; how.style.display = hasActivity ? "none" : ""; } // inline style too, in case the CSS overrides [hidden]
+    if (how) { how.hidden = false; how.style.display = ""; }
   }
 
   function routeFor(root, route) {
@@ -3944,6 +4521,7 @@
         .then(function (payload) {
           if (payload && payload.success === false) throw new Error(payload.message || "Dashboard data could not be loaded.");
           renderHome(page, payload || {});
+          page.classList.remove("is-load-error");
           if (statusNode) statusNode.hidden = true;
           page.setAttribute("aria-busy", "false");
         })
@@ -3951,6 +4529,7 @@
           if (statusNode) statusNode.hidden = true;
           if (errorMessage) errorMessage.textContent = "Dashboard data could not be loaded. Check the Home API and try again.";
           if (errorCard) errorCard.hidden = false;
+          page.classList.add("is-load-error");
           page.setAttribute("aria-busy", "false");
         });
     }

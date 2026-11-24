@@ -92,14 +92,15 @@ function crmCloseAllGroups() {
   document.querySelectorAll(".sidebar-nav .nav-group.open").forEach((group) => crmSetGroupOpen(group, false));
 }
 
-// Mark the group that holds the active page. Full-width sidebar: only that group stays open,
-// so opening any main tab (Dashboard, Inbox, Reports...) closes every dropdown.
+// Mark and open the group that holds the active page. Sales Staff keeps Catering Operations
+// expanded as a compact-sidebar flyout too; other compact-sidebar groups retain their behavior.
 function crmSyncNavGroups() {
   const compact = crmSidebarIsCompact();
   document.querySelectorAll(".sidebar-nav .nav-group").forEach((group) => {
     const hasActive = !!group.querySelector(".nav-sublink.active");
+    const isSalesCatering = group.dataset.role === "sales staff";
     group.classList.toggle("has-active", hasActive);
-    crmSetGroupOpen(group, compact ? false : hasActive);
+    crmSetGroupOpen(group, hasActive && (!compact || isSalesCatering));
   });
 }
 

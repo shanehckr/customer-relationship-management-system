@@ -8,11 +8,8 @@
  *        sales "Accept"    -> assigned_staff_id = that staff, stage "In Progress", chat conversation created
  *        sales "Inquiries" -> shows leads where assigned_staff_id = logged-in staff
  */
-$DB_HOST = '127.0.0.1';
-$DB_USER = 'root';
-$DB_PASS = '';
 $DB_CATERING = 'catering_crm';   // leads table
-$DB_CRM      = 'catering_crm';            // customers + cib_conversations / cib_messages
+$DB_CRM      = 'catering_crm';   // customers + conversation compatibility tables
 
 const STAGE_NEW = 'New Inquiry';
 const STAGE_PROGRESS = 'In Progress';
@@ -36,61 +33,29 @@ set_exception_handler(function ($e) { fail('Server error: ' . $e->getMessage(), 
 
 if (session_status() === PHP_SESSION_NONE) session_start();
 
-try {
-    $db = new PDO("mysql:host=$DB_HOST;dbname=$DB_CATERING;charset=utf8mb4", $DB_USER, $DB_PASS, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-} catch (PDOException $e) {
-    fail('Database connection failed.', 500);
-}
+require_once __DIR__ . '/config/database.php';
 
-function ensureColumn(PDO $db, string $schema, string $table, string $col, string $def): void {
-    $st = $db->prepare("SHOW COLUMNS FROM `$schema`.`$table` LIKE ?");
-    $st->execute([$col]);
-    if (!$st->fetch()) $db->exec("ALTER TABLE `$schema`.`$table` ADD COLUMN `$col` $def");
-}
-
-/* leads: existing columns are kept; missing ones are added */
-$db->exec("CREATE TABLE IF NOT EXISTS leads (
-    lead_id INT AUTO_INCREMENT PRIMARY KEY, event_name VARCHAR(160) NOT NULL, event_date DATE NULL,
-    event_location VARCHAR(255) DEFAULT '', arrangement VARCHAR(60) DEFAULT '', stage VARCHAR(40) NOT NULL DEFAULT 'New Inquiry',
-    assigned_staff_id INT NULL, created_at DATETIME NOT NULL
-) ENGINE=InnoDB");
 /* Real primary key of leads (lead_id on your database; falls back to id) */
 $pkRow = $db->query("SHOW KEYS FROM leads WHERE Key_name = 'PRIMARY'")->fetch();
 $LEAD_PK = $pkRow['Column_name'] ?? 'lead_id';
-foreach ([
-    'inquiry_ref'         => "VARCHAR(30) NULL",
-    'customer_id'         => "INT NULL",
-    'customer_name'       => "VARCHAR(160) DEFAULT ''",
-    'customer_email'      => "VARCHAR(160) DEFAULT ''",
-    'package'             => "VARCHAR(160) DEFAULT ''",
-    'dishes'              => "TEXT NULL",
-    'menu_item_ids'       => "TEXT NULL",
-    'notes'               => "TEXT NULL",
-    'assigned_staff_name' => "VARCHAR(120) NULL",
-    'claimed_at'          => "DATETIME NULL",
-    'expected_guests'     => "INT NULL",      /* PAX: only used for Buffet with Setup */
-    'estimated_budget'    => "DECIMAL(12,2) NULL",   /* optional field from the inquiry form */
-    'event_time'          => "TIME NULL",            /* pickup / delivery / event time chosen by the customer */
-] as $c => $d) ensureColumn($db, $DB_CATERING, 'leads', $c, $d);
-
-/* chat link (same tables customer-inbox-api.php / sales-inbox-api.php use) */
-$db->exec("CREATE TABLE IF NOT EXISTS `$DB_CRM`.cib_conversations (
-    id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, title VARCHAR(160) NOT NULL, reference VARCHAR(60) DEFAULT '',
-    status VARCHAR(30) NOT NULL DEFAULT 'Active', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS `$DB_CRM`.cib_messages (
-    id INT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, sender_type VARCHAR(20) NOT NULL,
-    sender_name VARCHAR(120) DEFAULT '', message TEXT, attachments TEXT, created_at DATETIME NOT NULL, INDEX (conversation_id)
-) ENGINE=InnoDB");
-ensureColumn($db, $DB_CRM, 'cib_conversations', 'inquiry_id', 'INT NULL DEFAULT NULL');
-ensureColumn($db, $DB_CRM, 'cib_conversations', 'sales_read_at', 'DATETIME NULL DEFAULT NULL');
-
 /** PAX / guests only exist for Buffet with Setup (on-site). Pickup and Delivery have none. Keep in sync with crmArrangementHasPax() in pages.js. */
 function arrangementHasPax($arrangement): bool {
-    return (bool)preg_match('/buffet|set-?up|on-?site/i', (string)$arrangement);
+    return (bool)preg_match('/buffet|set[-_ ]?up|on[-_ ]?site/i', (string)$arrangement);
+}
+
+function arrangementCanonical(string $arrangement): string {
+    if (stripos($arrangement, 'pick') !== false) return 'pickup';
+    if (stripos($arrangement, 'deliver') !== false) return 'delivery';
+    return 'on_site_catering';
+}
+
+function arrangementDisplay(string $arrangement): string {
+    return match (strtolower(str_replace(['-', '_'], ' ', trim($arrangement)))) {
+        'pickup', 'customer pickup' => 'Customer Pickup',
+        'delivery', 'food delivery' => 'Delivery',
+        'on site catering', 'onsite catering', 'buffet with setup', 'buffet with set up' => 'Buffet with setup',
+        default => $arrangement,
+    };
 }
 
 const DELIVERY_FEE_DEFAULT = 450;   // PHP; sales staff can change it per address
@@ -148,9 +113,9 @@ function normRole($r): string {
 function requireSalesStaff(): array {
     $id = (int)sessionFirst(['user_id']);
     if (!$id) fail('Please log in again.', 401);
-    $role = normRole(sessionFirst(['role', 'user_role']));
+    $role = normRole(sessionFirst(['role_name', 'role', 'user_role']));
     $allowed = ['sales staff', 'sales', 'admin', 'manager'];
-    if ($role !== '' && !in_array($role, $allowed, true)) fail('You do not have access to sales inquiries.', 403);
+    if (!in_array($role, $allowed, true)) fail('You do not have access to sales inquiries.', 403);
     $name = sessionFirst(['user_name', 'name', 'full_name']) ?: 'Sales Staff';
     return ['id' => $id, 'name' => $name];
 }
@@ -159,6 +124,13 @@ function requireSalesStaff(): array {
 function shapeLead(array $r): array {
     $idVal = (int)($r['lead_id'] ?? $r['id'] ?? 0);
     $ref = !empty($r['inquiry_ref']) ? $r['inquiry_ref'] : 'INQ-' . str_pad((string)$idVal, 4, '0', STR_PAD_LEFT);
+    $arrangementDetails = $r['delivery_details'] ?? null;
+    if (is_string($arrangementDetails)) {
+        $decoded = json_decode($arrangementDetails, true);
+        $arrangementDetails = is_array($decoded) ? $decoded : null;
+    }
+    if (!is_array($arrangementDetails)) $arrangementDetails = null;
+    $arrangement = (string)($r['arrangement'] ?? '');
     return [
         'id'             => $idVal,
         'lead_id'        => $idVal,
@@ -175,7 +147,11 @@ function shapeLead(array $r): array {
         'event_time_label'   => eventTimeLabel($r['arrangement'] ?? ''),                // Pickup / Delivery / Event time
         'event_location' => $r['event_location'],
         'venue'          => $r['event_location'],
-        'arrangement'    => $r['arrangement'],
+        'event_location_label' => arrangementIsPickup($arrangement) ? 'Pickup Location' : (arrangementIsDelivery($arrangement) ? 'Delivery Address' : 'Event Venue / Address'),
+        // Expose the legacy JSON column generically while preserving its delivery-only API alias.
+        'arrangement_details' => $arrangementDetails,
+        'delivery_details' => arrangementIsDelivery($arrangement) ? $arrangementDetails : null,
+        'arrangement'    => arrangementDisplay($arrangement),
         'expected_guests'=> (arrangementHasPax($r['arrangement']) && !empty($r['expected_guests'])) ? (int)$r['expected_guests'] : '',
         'pax'            => (arrangementHasPax($r['arrangement']) && !empty($r['expected_guests'])) ? (int)$r['expected_guests'] : '',
         'package'        => $r['package'] ?? '',
@@ -211,7 +187,7 @@ function firstOf(array $row, array $keys): string {
 }
 
 /** menu_items + menu_item_tiers for the ids used in $rows. Tries the databases where the menu tables may live. */
-function loadMenu(PDO $db, array $rows): array {
+function loadMenu(AppDatabase $db, array $rows): array {
     global $DB_CATERING, $DB_CRM;
     $ids = [];
     foreach ($rows as $r) foreach ((json_decode($r['menu_item_ids'] ?? '[]', true) ?: []) as $id) if ((int)$id) $ids[(int)$id] = true;
@@ -228,24 +204,24 @@ function loadMenu(PDO $db, array $rows): array {
                     'specs' => $m['serving_specs'], 'photo' => $m['photo_path'], 'tiers' => []];
             }
             try {
-                $tt = $db->prepare("SELECT menu_item_id, tier_name, price, pax_description FROM `$schema`.menu_item_tiers WHERE menu_item_id IN ($in) ORDER BY sort_order");
+                $tt = $db->prepare("SELECT menu_item_id, tier_id, tier_name, price, pax_description FROM `$schema`.menu_item_tiers WHERE menu_item_id IN ($in) AND is_active = 1 ORDER BY sort_order");
                 $tt->execute($ids);
                 foreach ($tt->fetchAll() as $t) if (isset($menu[(int)$t['menu_item_id']])) $menu[(int)$t['menu_item_id']]['tiers'][] = $t;
-            } catch (PDOException $e) { /* no tiers table here */ }
+            } catch (Throwable $e) { /* no tiers table here */ }
             if ($menu) return $menu;
-        } catch (PDOException $e) { /* menu_items is not in this database: try the next */ }
+        } catch (Throwable $e) { /* menu_items is not in this database: try the next */ }
     }
     return [];
 }
 
 /** Primary-key column of the users table (id or user_id, whichever your database uses). */
-function usersPk(PDO $db, string $schema): string {
+function usersPk(AppDatabase $db, string $schema): string {
     static $pk = null;
     if ($pk !== null) return $pk;
     try {
         $r = $db->query("SHOW KEYS FROM `$schema`.users WHERE Key_name = 'PRIMARY'")->fetch();
         $pk = $r['Column_name'] ?? 'id';
-    } catch (PDOException $e) { $pk = 'id'; }
+    } catch (Throwable $e) { $pk = 'id'; }
     return $pk;
 }
 
@@ -258,7 +234,7 @@ function customerPhotoUrl(array $user): string {
     return $rel . '?v=' . (is_file($file) ? (string)filemtime($file) : '1');
 }
 
-function enrichLeads(PDO $db, string $crmDb, array $rows): array {
+function enrichLeads(AppDatabase $db, string $crmDb, array $rows): array {
     // 1) the customer's account (email / phone live in the users table; there is no customers table)
     // customers AND the assigned staff live in the users table (staff are loaded here for their profile photo)
     $ids = array_values(array_unique(array_filter(array_merge(
@@ -273,7 +249,7 @@ function enrichLeads(PDO $db, string $crmDb, array $rows): array {
             $st = $db->prepare("SELECT * FROM `$crmDb`.users WHERE `$upk` IN ($in)");
             $st->execute($ids);
             foreach ($st->fetchAll() as $c) $customers[(int)$c[$upk]] = $c;
-        } catch (PDOException $e) { error_log('enrichLeads: could not read the users table: ' . $e->getMessage()); }
+        } catch (Throwable $e) { error_log('enrichLeads: could not read the users table: ' . $e->getMessage()); }
     }
 
     // menu items (name / photo / tiers) for every id used by these inquiries

@@ -25,10 +25,10 @@ if (preg_match('/^[a-f0-9]{64}$/', $token) === 1) {
     try {
         $tokenHash = hash("sha256", $token);
         $statement = $conn->prepare(
-            "SELECT r.reset_id, r.user_id
-             FROM password_resets AS r
+            "SELECT r.reset_token_id, r.user_id
+             FROM password_reset_tokens AS r
              INNER JOIN users AS u ON u.user_id = r.user_id
-             WHERE r.token_hash = ? AND r.expires_at > NOW() AND u.status = 'Active'
+             WHERE r.token_hash = ? AND r.expires_at > NOW() AND r.used_at IS NULL AND u.account_status = 'Active'
              LIMIT 1"
         );
         $statement->bind_param("s", $tokenHash);
@@ -60,13 +60,13 @@ if ($validToken && $_SERVER["REQUEST_METHOD"] === "POST") {
 
             $conn->begin_transaction();
 
-            $statement = $conn->prepare("UPDATE users SET password_hash = ? WHERE user_id = ?");
+            $statement = $conn->prepare("UPDATE users SET password_hash = ?, password_changed_at = NOW() WHERE user_id = ?");
             $statement->bind_param("si", $newHash, $userId);
             $statement->execute();
             $statement->close();
 
-            // Single use: remove every reset token for this user.
-            $statement = $conn->prepare("DELETE FROM password_resets WHERE user_id = ?");
+            // Single use: mark every outstanding token as used.
+            $statement = $conn->prepare("UPDATE password_reset_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL");
             $statement->bind_param("i", $userId);
             $statement->execute();
             $statement->close();
@@ -96,6 +96,7 @@ if ($validToken && $_SERVER["REQUEST_METHOD"] === "POST") {
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
+  <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
   <link rel="stylesheet" href="all-pages-css/cookie-consent.css">
   <script src="all-pages-js/theme.js"></script>
   <script>
@@ -130,7 +131,7 @@ if ($validToken && $_SERVER["REQUEST_METHOD"] === "POST") {
         </h1>
 
         <?php if ($errorMessage !== "") : ?>
-          <div class="alert alert-danger" role="alert"><?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?></div>
+          <div data-crm-toast="error" hidden><?= htmlspecialchars($errorMessage, ENT_QUOTES, "UTF-8") ?></div>
         <?php endif; ?>
 
         <?php if (!$validToken) : ?>
@@ -198,5 +199,6 @@ if ($validToken && $_SERVER["REQUEST_METHOD"] === "POST") {
     });
   </script>
   <script src="all-pages-js/cookie-consent.js" defer></script>
+<script src="all-pages-js/toast.js?v=2"></script>
 </body>
 </html>

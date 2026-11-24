@@ -82,9 +82,10 @@
 
     
     <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
-    <link rel="stylesheet" href="all-pages-css/navbar.css?v=4">
-    <link rel="stylesheet" href="all-pages-css/all-pages.css?v=45">
+    <link rel="stylesheet" href="all-pages-css/navbar.css?v=7">
+    <link rel="stylesheet" href="all-pages-css/all-pages.css?v=54">
     <link rel="stylesheet" href="all-pages-css/Notification.css">
+    <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
     
     
    
@@ -160,7 +161,7 @@
                     </a>
                 </li>
 
-                    <!-- Sales Staff menu: two dropdown groups (Catering Operations, Inquiries).
+                    <!-- Sales Staff menu: Catering Operations, followed by Inbox and Reports.
                          Page files go in html-content-navbar/ with these exact names. -->
                     <li class="nav-item nav-group" data-role="sales staff">
                         <button type="button" class="nav-link nav-group-toggle" title="Catering Operations"
@@ -175,18 +176,6 @@
                                     <a href="#" onclick="loadPage('sales-available.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">Available</span></a>
                                 </li>
-                            </ul>
-                        </div>
-                    </li>
-                    <li class="nav-item nav-group" data-role="sales staff">
-                        <button type="button" class="nav-link nav-group-toggle" title="Inquiries"
-                            aria-expanded="false" aria-controls="navGroupInquiries">
-                            <img src="icons/inquiries-icon.svg" class="sidebar-icon" alt="Inquiries Icon">
-                            <span class="nav-text ms-3">Inquiries</span>
-                            <i class="bi bi-chevron-down nav-chevron" aria-hidden="true"></i>
-                        </button>
-                        <div class="nav-submenu" id="navGroupInquiries">
-                            <ul class="nav-submenu-list">
                                 <li class="nav-item" data-role="sales staff">
                                     <a href="#" onclick="loadPage('sales-inquiries.html', this); return false;"
                                         class="nav-link nav-sublink"><span class="nav-sub-text">My Inquiries</span></a>
@@ -384,13 +373,14 @@
     <script src="all-pages-js/exceljs.min.js?v=4.4.0"></script>
     <script src="all-pages-js/loading.js"></script>
     <script src="all-pages-js/navbar.js?v=11"></script>
-    <script src="all-pages-js/pages.js?v=32"></script>
-   <script src="all-pages-js/customer-pages.js?v=17"></script>
-    <script src="all-pages-js/customer-settings.js?v=1"></script>
-    <script src="all-pages-js/settings.js?v=5"></script>
+    <script src="all-pages-js/toast.js?v=2"></script>
+    <script src="all-pages-js/pages.js?v=33"></script>
+   <script src="all-pages-js/customer-pages.js?v=18"></script>
+    <script src="all-pages-js/customer-settings.js?v=2"></script>
+    <script src="all-pages-js/settings.js?v=6"></script>
     <script src="all-pages-js/legal-pages.js?v=4"></script>
     <script src="all-pages-js/notification.js"></script>
-    <script src="all-pages-js/download-export.js?v=2"></script>
+    <script src="all-pages-js/download-export.js?v=3"></script>
     <script src="all-pages-js/date-picker.js?v=1" defer></script>
 
     <!-- Handle sidebar collapse state. -->

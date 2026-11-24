@@ -42,7 +42,7 @@ $isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 try { ensureBookingsSchema($db); } catch (Throwable $e) { error_log('sales-bookings-api: bookings schema: ' . $e->getMessage()); }   // adds fulfillment_status when missing
 
 /** A booking the logged-in person may act on (sales staff: only their own). */
-function staffBooking(PDO $db, int $bookingId, int $uid, bool $seeAll, bool $lock = false): array {
+function staffBooking(AppDatabase $db, int $bookingId, int $uid, bool $seeAll, bool $lock = false): array {
     $sql = 'SELECT * FROM bookings WHERE booking_id = ?' . ($seeAll ? '' : ' AND assigned_staff_id = ?') . ($lock ? ' FOR UPDATE' : '');
     $st = $db->prepare($sql);
     $st->execute($seeAll ? [$bookingId] : [$bookingId, $uid]);
@@ -75,7 +75,7 @@ if ($action === 'list') {
             $su = $db->prepare("SELECT * FROM `$DB_CRM`.users WHERE `$upk` IN (" . implode(',', array_fill(0, count($sids), '?')) . ')');
             $su->execute($sids);
             foreach ($su->fetchAll() as $u) $staffPhotos[(int)$u[$upk]] = customerPhotoUrl($u);
-        } catch (PDOException $e) { error_log('sales-bookings-api: staff photo lookup failed: ' . $e->getMessage()); }
+        } catch (Throwable $e) { error_log('sales-bookings-api: staff photo lookup failed: ' . $e->getMessage()); }
     }
     $requests = $canRequestPayments ? paymentRequestsByBooking($db, array_map(fn($b) => (int)$b['booking_id'], $bookings)) : [];
 
@@ -128,7 +128,7 @@ if ($action === 'request_payment') {
     if (mb_strlen($note) > 300) fail('The note is too long (max 300 characters).');
     $dueIn = trim((string)($_POST['due_date'] ?? ''));
     $dueTimeIn = trim((string)($_POST['due_time'] ?? ''));
-    // makes sure payment_requests (and its due_time column) exist; done before the transaction because ALTER TABLE commits implicitly
+    // Schema is installed centrally; this helper is a compatibility no-op.
     try { ensurePaymentRequestsSchema($db); } catch (Throwable $e) { error_log('sales-bookings-api: payment_requests schema: ' . $e->getMessage()); }
 
     $bail = function (string $m, int $code = 400) use ($db) { if ($db->inTransaction()) $db->rollBack(); fail($m, $code); };
@@ -158,6 +158,8 @@ if ($action === 'request_payment') {
                       VALUES (?,?,?,?,?,?,?,?,?,?,?)")
            ->execute([$bookingId, $b['inquiry_id'], $b['customer_id'], $balance, $due, $dueTime, $note !== '' ? $note : null, 'Pending', $staffName, $uid, now()]);
         $reqId = (int)$db->lastInsertId();
+        $db->prepare("UPDATE payments SET amount = ?, payment_status = 'PENDING' WHERE booking_id = ? AND payment_type = 'BALANCE'")
+           ->execute([$balance, $bookingId]);
 
         // chat message with the Pay Now card (same idea as the quotation card)
         $chatPosted = false;
@@ -229,8 +231,16 @@ if ($action === 'update_progress') {
         $def = null;
         foreach (bookingProgressSteps($info['kind']) as $d) if ($d['key'] === $key) $def = $d;
         $isLast = $key === end($info['keys']);
-        $db->prepare("UPDATE bookings SET fulfillment_status = ?, fulfillment_updated_at = ?" . ($isLast ? ", booking_status = IF(booking_status = 'Confirmed', 'Completed', booking_status)" : '') . " WHERE booking_id = ?")
-           ->execute([$key, now(), $bookingId]);
+        $db->prepare("UPDATE bookings SET fulfillment_status = ?, operational_status = ?, fulfillment_updated_at = ?" . ($isLast ? ", booking_status = IF(booking_status = 'Confirmed', 'Completed', booking_status)" : '') . " WHERE booking_id = ?")
+           ->execute([$key, $key, now(), $bookingId]);
+        $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, changed_by, remarks)
+                      VALUES (?, 'operational', ?, ?, ?, ?)")
+           ->execute([$bookingId, $b['operational_status'] ?? $b['fulfillment_status'] ?? null, $key, $uid, $def['label'] ?? 'Progress updated']);
+        if ($isLast && ($b['booking_status'] ?? '') === 'Confirmed') {
+            $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, changed_by, remarks)
+                          VALUES (?, 'booking', 'Confirmed', 'Completed', ?, 'The final operational step completed the booking.')")
+               ->execute([$bookingId, $uid]);
+        }
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();

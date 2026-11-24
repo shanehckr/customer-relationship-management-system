@@ -6,6 +6,8 @@
 
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
+require_once __DIR__ . "/AppDatabase.php";
+
 $configFile = dirname(__DIR__) . "/config.local.php";
 
 if (!is_file($configFile)) {
@@ -16,6 +18,12 @@ if (!is_file($configFile)) {
 
 $config = require $configFile;
 
+if (strtolower((string) ($config["username"] ?? "")) === "root") {
+    error_log("The CRM database account must be a dedicated non-root user.");
+    http_response_code(500);
+    exit("Database configuration must use the dedicated CRM database account.");
+}
+
 try {
     $conn = new mysqli(
         $config["host"],
@@ -25,6 +33,7 @@ try {
     );
 
     $conn->set_charset("utf8mb4");
+    $db = new AppDatabase($conn);
 
 } catch (mysqli_sql_exception $e) {
     error_log("Database connection failed: " . $e->getMessage());

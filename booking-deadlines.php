@@ -148,28 +148,22 @@ function deadlineWhen(int $daysLeft): string {
     return $daysLeft <= 0 ? 'today' : ($daysLeft === 1 ? 'tomorrow' : 'in ' . $daysLeft . ' days');
 }
 
-function ensureDeadlineSchema(PDO $db): void {
-    static $done = false;
-    if ($done) return;
-    $db->exec("CREATE TABLE IF NOT EXISTS deadline_reminders (
-        id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(20) NOT NULL, ref_id INT NOT NULL, stage INT NOT NULL, sent_at DATETIME NOT NULL,
-        UNIQUE KEY uq_deadline_reminder (kind, ref_id, stage)
-    ) ENGINE=InnoDB");
-    $done = true;
+function ensureDeadlineSchema(AppDatabase $db): void {
+    // Reminder table is provisioned centrally from database/catering_crm.sql.
 }
 
 /** true only for the first caller: two requests at the same moment cannot send the same reminder twice. */
-function deadlineClaim(PDO $db, string $kind, int $refId, int $stage): bool {
+function deadlineClaim(AppDatabase $db, string $kind, int $refId, int $stage): bool {
     $st = $db->prepare('INSERT IGNORE INTO deadline_reminders (kind, ref_id, stage, sent_at) VALUES (?,?,?,?)');
     $st->execute([$kind, $refId, $stage, date('Y-m-d H:i:s')]);
     return $st->rowCount() === 1;
 }
-function deadlineRelease(PDO $db, string $kind, int $refId, int $stage): void {
+function deadlineRelease(AppDatabase $db, string $kind, int $refId, int $stage): void {
     $db->prepare('DELETE FROM deadline_reminders WHERE kind = ? AND ref_id = ? AND stage = ?')->execute([$kind, $refId, $stage]);
 }
 
 /** Posts a message in the customer's chat under the staff member's name. Returns false when the inquiry has no chat yet. */
-function deadlineSay(PDO $db, string $crm, int $inquiryId, string $from, string $text, ?int $paymentRequestId = null): bool {
+function deadlineSay(AppDatabase $db, string $crm, int $inquiryId, string $from, string $text, ?int $paymentRequestId = null): bool {
     if ($inquiryId <= 0) return false;
     $cv = $crm !== '' ? "`$crm`." : '';
     $cs = $db->prepare("SELECT id FROM {$cv}cib_conversations WHERE inquiry_id = ? LIMIT 1");
@@ -188,14 +182,16 @@ function deadlineSay(PDO $db, string $crm, int $inquiryId, string $from, string 
 }
 
 /* ============================== 1) DEPOSIT deadline ============================== */
-function processDepositDeadlines(PDO $db, string $crm): array {
+function processDepositDeadlines(AppDatabase $db, string $crm): array {
     global $DB_CATERING;
     $res = ['reminded' => 0, 'closed' => 0];
     $pk = quoteLeadPk($db);
     try { ensureColumn($db, $DB_CATERING ?? '', 'leads', 'decline_reason', 'TEXT NULL'); } catch (Throwable $e) { /* column already there */ }
-    $rows = $db->prepare("SELECT q.*, l.`$pk` AS lead_pk, l.event_date AS l_event_date, l.event_name AS l_event_name, l.customer_id AS l_customer_id,
+        $rows = $db->prepare("SELECT q.*, qv.valid_until, qv.valid_until_time, qv.deposit_rate, qv.deposit_amount,
+                                     l.`$pk` AS lead_pk, l.event_date AS l_event_date, l.event_name AS l_event_name, l.customer_id AS l_customer_id,
                                  l.assigned_staff_id AS l_staff_id, l.assigned_staff_name AS l_staff_name
-                          FROM quotations q JOIN leads l ON l.`$pk` = q.inquiry_id
+                          FROM quotations q JOIN quotation_versions qv ON qv.quotation_id=q.quotation_id AND qv.version_number=q.version
+                          JOIN leads l ON l.`$pk` = q.inquiry_id
                           WHERE q.status IN ('Sent','Accepted') AND l.event_date IS NOT NULL
                             AND l.stage NOT IN ('Declined','Completed','Confirmed')
                             AND COALESCE(q.sent_at, q.prepared_at) >= ?
@@ -229,6 +225,7 @@ function processDepositDeadlines(PDO $db, string $crm): array {
                 if ($chk->fetch()) { $db->rollBack(); continue; }   // the deposit was paid a moment ago
                 $why = 'The deposit was not paid by ' . $dueText . ', so the inquiry was closed automatically.';
                 $db->prepare("UPDATE quotations SET status = 'Withdrawn', responded_at = COALESCE(responded_at, ?) WHERE quotation_id = ?")->execute([date('Y-m-d H:i:s'), $q['quotation_id']]);
+                syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
                 $db->prepare("UPDATE leads SET stage = 'Declined', decline_reason = ? WHERE `$pk` = ?")->execute([$why, $iid]);
                 deadlineSay($db, $crm, $iid, $from, 'Hello! We did not receive the ' . $money . ' deposit for **' . $event . '** by ' . $dueText
                     . ', so we had to release the date and close this inquiry. If you still need catering, you are welcome to send a new inquiry and we will gladly help.');
@@ -266,7 +263,7 @@ function processDepositDeadlines(PDO $db, string $crm): array {
 }
 
 /* ============================== 2) FULL PAYMENT deadline ============================== */
-function processBalanceDeadlines(PDO $db, string $crm): array {
+function processBalanceDeadlines(AppDatabase $db, string $crm): array {
     $res = ['reminded' => 0, 'cancelled' => 0];
     $st = $db->prepare("SELECT * FROM bookings
                         WHERE booking_status = 'Confirmed' AND event_date IS NOT NULL AND customer_id IS NOT NULL
@@ -312,6 +309,11 @@ function processBalanceDeadlines(PDO $db, string $crm): array {
                 $cur = $lock->fetch();
                 if (!$cur || $cur['booking_status'] !== 'Confirmed' || bookingBalanceDue($cur) <= 0) { $db->rollBack(); continue; }   // paid a moment ago
                 $db->prepare("UPDATE bookings SET booking_status = 'Cancelled' WHERE booking_id = ?")->execute([$bid]);
+                $db->prepare("INSERT INTO booking_status_history (booking_id, status_type, old_status, new_status, remarks)
+                              VALUES (?, 'booking', 'Confirmed', 'Cancelled', 'Automatically cancelled after the payment deadline.')")
+                   ->execute([$bid]);
+                $db->prepare("UPDATE payments SET payment_status = 'EXPIRED' WHERE booking_id = ? AND payment_type = 'BALANCE' AND payment_status = 'PENDING'")
+                   ->execute([$bid]);
                 $db->prepare("UPDATE payment_requests SET status = 'Cancelled' WHERE booking_id = ? AND status = 'Pending'")->execute([$bid]);
                 deadlineSay($db, $crm, $iid, $from, 'Hello! We did not receive the remaining balance of **' . $money . '** for **' . $event . '** by ' . $deadlineText
                     . ', so the booking has been cancelled and the food and service will not proceed. As stated in our policy, the deposit is non-refundable. '
@@ -368,7 +370,7 @@ function processBalanceDeadlines(PDO $db, string $crm): array {
  *   - staff: bell notification to the assigned Sales Staff + Admin / Manager
  * Each reminder is sent once: it is claimed in deadline_reminders (kind event_eve / event_day), like the payment reminders.
  */
-function processEventReminders(PDO $db, string $crm): array {
+function processEventReminders(AppDatabase $db, string $crm): array {
     $res = ['eve' => 0, 'day' => 0];
     if ((int)date('G') < DEADLINE_REMIND_FROM_HOUR) return $res;   // wait until the morning, never at midnight
     $today = date('Y-m-d');
@@ -426,7 +428,7 @@ function processEventReminders(PDO $db, string $crm): array {
 }
 
 /** Runs all steps. Never throws. */
-function runBookingDeadlines(PDO $db, string $crm = ''): array {
+function runBookingDeadlines(AppDatabase $db, string $crm = ''): array {
     $out = ['deposit' => null, 'balance' => null, 'event_reminders' => null];
     try {
         ensureBookingsSchema($db);
@@ -441,7 +443,7 @@ function runBookingDeadlines(PDO $db, string $crm = ''): array {
 }
 
 /** Backup trigger for the pages: runs at most once every 10 minutes. */
-function runBookingDeadlinesThrottled(PDO $db, string $crm = ''): void {
+function runBookingDeadlinesThrottled(AppDatabase $db, string $crm = ''): void {
     $file = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'crm_booking_deadlines_last_run';
     if (is_file($file) && (time() - (int)@filemtime($file)) < 600) return;
     @touch($file);

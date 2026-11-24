@@ -178,20 +178,11 @@
     element.classList.remove("d-none");
   }
 
-  // Message at the top of the Settings page (used after Activate / Deactivate).
-  let pageNoticeTimer = null;
+  // Account status/delete feedback uses the shared transient notification component.
   function showPageNotice(settingsRoot, message, type) {
-    let notice = settingsRoot.querySelector("#settings-page-notice");
-    if (!notice) {
-      // The page has no notice box: create one at the top so messages are never lost.
-      notice = document.createElement("div");
-      notice.id = "settings-page-notice";
-      settingsRoot.prepend(notice);
-    }
-    notice.className = `alert alert-${type} mb-3`;
-    notice.textContent = message;
-    clearTimeout(pageNoticeTimer);
-    pageNoticeTimer = setTimeout(() => notice.classList.add("d-none"), 5000);
+    const toastType = type === "success" ? "success" : type === "warning" ? "warning" : type === "danger" ? "error" : "info";
+    if (window.crmToast) window.crmToast(message, toastType);
+    else console.error("CRM toast component was not loaded before Settings feedback.");
   }
 
   // Same icons as the login page: slashed eye = password hidden, open eye = password visible.

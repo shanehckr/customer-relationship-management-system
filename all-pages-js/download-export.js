@@ -925,7 +925,7 @@ async function crmDownloadReportPDF() {
     pdfCss = await crmLoadPdfStylesheet(generated);
   } catch (error) {
     console.error('Unable to load PDF stylesheet:', error);
-    window.alert('Could not load the PDF stylesheet. Check that DownloadExport.css is in all-pages-css and try again.');
+    if (window.crmToast) window.crmToast('Could not load the PDF stylesheet. Check that DownloadExport.css is in all-pages-css and try again.', 'error');
     return;
   }
   const title = crmFileName(crmPackName(list), 'pdf').replace(/\.pdf$/, '');

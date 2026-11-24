@@ -1,32 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * tickets-api.php  -  Tickets page backend (Admin, Manager, Customer Service Staff)
- *
- * Reads the SAME support-ticket tables the customer Inbox ("My Concerns") and the CS Inbox use:
- *   cib_tickets, cib_ticket_messages
- * so a ticket a customer creates in the Inbox shows up on the Tickets page right away.
- * It also keeps two small tables of its own (created automatically on first run):
- *   cib_ticket_activity  - audit trail (status / priority changes, resolve, notes added)
- *   cib_ticket_notes     - internal notes (staff only, never shown to the customer)
- *
- * The old `tickets` table (contacts / assigned_user_id) is no longer used by this file.
- * It is not touched or deleted, so anything else that references it keeps working.
- *
- * Who can do what
- *   Customer Service Staff : view, change status / priority, resolve, add internal notes
- *   Admin, Manager         : view only (every change is refused by the server)
- *
- * Actions
- *   GET  ?action=list            -> { success, role, can_manage, csrf_token, tickets: [...] }
- *   POST ?action=update_status   id, status
- *   POST ?action=update_priority id, priority
- *   POST ?action=resolve         id
- *   POST ?action=add_note        id, note
- *   (every POST sends the CSRF token in the X-CSRF-Token header and returns { success, ticket })
- */
-
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
@@ -128,7 +102,7 @@ try {
 
     $me = ticketsRows(
         $conn,
-        "SELECT u.status, u.full_name, r.role_name
+        "SELECT u.account_status AS status, u.full_name, r.role_name
          FROM users AS u INNER JOIN roles AS r ON r.role_id = u.role_id
          WHERE u.user_id = ? LIMIT 1",
         "i",
@@ -148,29 +122,13 @@ try {
 
     /* ------------------------- 2. TABLES ------------------------- */
     // The Inbox creates cib_tickets / cib_ticket_messages. Make sure they exist, then add what this page needs.
-    $conn->query("CREATE TABLE IF NOT EXISTS cib_tickets (
-        id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, ticket_number VARCHAR(30) DEFAULT '',
-        subject VARCHAR(160) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Open', conversation_id INT DEFAULT NULL,
-        created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
-    ) ENGINE=InnoDB");
-    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_messages (
-        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, sender_type VARCHAR(20) NOT NULL,
-        sender_name VARCHAR(120) DEFAULT '', message TEXT, attachments TEXT, created_at DATETIME NOT NULL, INDEX (ticket_id)
-    ) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
     $hasPriority = ticketsRows($conn, "SHOW COLUMNS FROM cib_tickets LIKE 'priority'");
     if (!$hasPriority) {
-        $conn->query("ALTER TABLE cib_tickets ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'Medium'");
     }
-    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_activity (
-        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, action VARCHAR(255) NOT NULL,
-        performed_by VARCHAR(120) NOT NULL DEFAULT '', performed_by_role VARCHAR(60) NOT NULL DEFAULT '',
-        created_at DATETIME NOT NULL, INDEX (ticket_id)
-    ) ENGINE=InnoDB");
-    $conn->query("CREATE TABLE IF NOT EXISTS cib_ticket_notes (
-        id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, note TEXT NOT NULL,
-        created_by VARCHAR(120) NOT NULL DEFAULT '', created_by_role VARCHAR(60) NOT NULL DEFAULT '',
-        created_at DATETIME NOT NULL, INDEX (ticket_id)
-    ) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
     /* ------------------------- 3. CUSTOMER COLUMNS (users table) ------------------------- */
     // The customer's account is in `users` (key user_id). Name / email / phone columns are found automatically.

@@ -15,15 +15,9 @@
     function $all(sel) { return Array.prototype.slice.call(page.querySelectorAll(sel)); }
 
     /* ---------- small helpers ---------- */
-    var toastTimer = null;
     function toast(message, isError) {
-      var el = $("#csToast");
-      if (!el) return;
-      el.textContent = message;
-      el.classList.toggle("is-error", !!isError);
-      el.classList.add("show");
-      clearTimeout(toastTimer);
-      toastTimer = setTimeout(function () { el.classList.remove("show"); }, 3500);
+      if (window.crmToast) window.crmToast(message, isError ? "error" : "success");
+      else console.error("CRM toast component was not loaded before customer settings.");
     }
 
     function request(action, formData) {
@@ -124,9 +118,9 @@
     }
 
     function showAlert(sel, message) {
-      var a = $(sel);
-      a.textContent = message;
-      a.classList.add("is-error");
+      if (window.crmToast) window.crmToast(message, "error");
+      else console.error("CRM toast component was not loaded before customer settings.");
+      hideAlert(sel);
     }
     function hideAlert(sel) {
       var a = $(sel);

@@ -87,7 +87,7 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
                 u.email,
                 u.role_id,
                 r.role_name,
-                u.status,
+                u.account_status AS status,
                 u.created_at,
                 $createdSelect
              FROM users AS u
@@ -279,7 +279,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
             $createdBy = (int) $_SESSION["user_id"];
             $insert = $conn->prepare(
                 "INSERT INTO users
-                    (full_name, username, email, role_id, password_hash, status, created_by)
+                    (full_name, username, email, role_id, password_hash, account_status, created_by)
                  VALUES (?, ?, ?, ?, ?, ?, ?)"
             );
             $insert->bind_param(
@@ -295,7 +295,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
         } else {
             $insert = $conn->prepare(
                 "INSERT INTO users
-                    (full_name, username, email, role_id, password_hash, status)
+                    (full_name, username, email, role_id, password_hash, account_status)
                  VALUES (?, ?, ?, ?, ?, ?)"
             );
             $insert->bind_param(
@@ -426,7 +426,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "edit") {
         $lockUsers->free();
 
         $accountQuery = $conn->prepare(
-            "SELECT u.user_id, u.role_id, u.status, r.role_name
+            "SELECT u.user_id, u.role_id, u.account_status AS status, r.role_name
              FROM users AS u
              INNER JOIN roles AS r ON r.role_id = u.role_id
              WHERE u.user_id = ?
@@ -501,7 +501,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "edit") {
                 "SELECT COUNT(*) AS active_admin_count
                  FROM users AS u
                  INNER JOIN roles AS r ON r.role_id = u.role_id
-                 WHERE r.role_name = 'Admin' AND u.status = 'Active'"
+                 WHERE r.role_name = 'Admin' AND u.account_status = 'Active'"
             );
             $activeAdminQuery->execute();
             $activeAdminCount = (int) $activeAdminQuery->get_result()->fetch_assoc()["active_admin_count"];
@@ -518,7 +518,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "edit") {
 
         $update = $conn->prepare(
             "UPDATE users
-             SET full_name = ?, email = ?, role_id = ?, status = ?
+             SET full_name = ?, email = ?, role_id = ?, account_status = ?
              WHERE user_id = ?"
         );
         $update->bind_param("ssisi", $fullName, $email, $roleId, $status, $userId);
@@ -613,7 +613,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "status") {
         $lockUsers->free();
 
         $accountQuery = $conn->prepare(
-            "SELECT u.user_id, u.status, r.role_name
+            "SELECT u.user_id, u.account_status AS status, r.role_name
              FROM users AS u
              INNER JOIN roles AS r ON r.role_id = u.role_id
              WHERE u.user_id = ?
@@ -657,7 +657,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "status") {
                 "SELECT COUNT(*) AS active_admin_count
                  FROM users AS u
                  INNER JOIN roles AS r ON r.role_id = u.role_id
-                 WHERE r.role_name = 'Admin' AND u.status = 'Active'"
+                 WHERE r.role_name = 'Admin' AND u.account_status = 'Active'"
             );
             $activeAdminQuery->execute();
             $activeAdminCount = (int) $activeAdminQuery->get_result()->fetch_assoc()["active_admin_count"];
@@ -672,7 +672,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "status") {
             }
         }
 
-        $update = $conn->prepare("UPDATE users SET status = ? WHERE user_id = ?");
+        $update = $conn->prepare("UPDATE users SET account_status = ? WHERE user_id = ?");
         $update->bind_param("si", $status, $userId);
         $update->execute();
         $update->close();
@@ -744,7 +744,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
         $lockUsers->free();
 
         $accountQuery = $conn->prepare(
-            "SELECT u.user_id, u.status, r.role_name
+            "SELECT u.user_id, u.account_status AS status, r.role_name
              FROM users AS u
              INNER JOIN roles AS r ON r.role_id = u.role_id
              WHERE u.user_id = ?
@@ -777,7 +777,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
                 "SELECT COUNT(*) AS active_admin_count
                  FROM users AS u
                  INNER JOIN roles AS r ON r.role_id = u.role_id
-                 WHERE r.role_name = 'Admin' AND u.status = 'Active'"
+                 WHERE r.role_name = 'Admin' AND u.account_status = 'Active'"
             );
             $activeAdminQuery->execute();
             $activeAdminCount = (int) $activeAdminQuery->get_result()->fetch_assoc()["active_admin_count"];

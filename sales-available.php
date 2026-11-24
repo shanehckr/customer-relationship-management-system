@@ -27,27 +27,35 @@ if ($action === 'claim') {
     $id = leadIdFromRef((string)($_POST['inquiry_ref'] ?? ''));
     if (!$id) fail('Inquiry not found.', 404);
 
-    $db->beginTransaction();
     try {
-        // "assigned_staff_id IS NULL" makes this safe when two staff accept at once: only one UPDATE wins.
+        $db->beginTransaction();
+        // The conditional update is atomic: only one staff member can claim an unassigned, open inquiry.
         $st = $db->prepare("UPDATE leads SET assigned_staff_id = ?, assigned_staff_name = ?, stage = ?, claimed_at = ?
-                            WHERE `$LEAD_PK` = ? AND assigned_staff_id IS NULL");
+                            WHERE `$LEAD_PK` = ? AND assigned_staff_id IS NULL AND stage <> 'Declined'");
         $st->execute([$staff['id'], $staff['name'], STAGE_PROGRESS, now(), $id]);
         if ($st->rowCount() === 0) {
             $db->rollBack();
-            $chk = $db->prepare("SELECT assigned_staff_id FROM leads WHERE `$LEAD_PK` = ?");
+            $chk = $db->prepare("SELECT assigned_staff_id, stage FROM leads WHERE `$LEAD_PK` = ?");
             $chk->execute([$id]);
-            if (!$chk->fetch()) fail('Inquiry not found.', 404);
-            fail('This inquiry was already accepted by another staff member.', 409);
+            $current = $chk->fetch();
+            if ($current === false) fail('Inquiry not found.', 404);
+            if ((int)$current['assigned_staff_id'] === (int)$staff['id']) fail('You have already claimed this inquiry. Refresh My Inquiries to see it.', 409);
+            if ($current['assigned_staff_id'] !== null) fail('This inquiry was already claimed by another staff member.', 409);
+            fail('This inquiry is no longer available to claim.', 409);
         }
+        $db->prepare('INSERT INTO inquiry_assignments (lead_id, previous_staff_id, new_staff_id, changed_by, reason)
+                      VALUES (?, NULL, ?, ?, ?)')
+           ->execute([$id, $staff['id'], $staff['id'], 'Accepted available inquiry']);
 
         // The customer's inbox conversation is created ONLY now, after a staff accepted.
         $ls = $db->prepare("SELECT event_name, inquiry_ref, customer_id, customer_name, notes FROM leads WHERE `$LEAD_PK` = ?");
         $ls->execute([$id]);
         $lead = $ls->fetch();
+        if ($lead === false) throw new RuntimeException('The claimed inquiry could not be loaded.');
         $has = $db->prepare("SELECT id FROM `$DB_CRM`.cib_conversations WHERE inquiry_id = ?");
         $has->execute([$id]);
-        if ($lead && !empty($lead['customer_id']) && !$has->fetch()) {
+        $conversation = $has->fetch();
+        if (!empty($lead['customer_id']) && $conversation === false) {
             $ref = $lead['inquiry_ref'] ?: 'INQ-' . str_pad((string)$id, 4, '0', STR_PAD_LEFT);
             $db->prepare("INSERT INTO `$DB_CRM`.cib_conversations (customer_id, title, reference, status, created_at, updated_at, inquiry_id)
                           VALUES (?,?,?,?,?,?,?)")
@@ -63,25 +71,37 @@ if ($action === 'claim') {
         }
         $db->commit();
     } catch (Throwable $e) {
-        if ($db->inTransaction()) $db->rollBack();
-        throw $e;
+        if ($db->inTransaction()) {
+            try {
+                $db->rollBack();
+            } catch (Throwable $rollbackError) {
+                error_log('sales-available claim rollback failed for inquiry ' . $id . ': ' . $rollbackError->getMessage());
+            }
+        }
+        error_log('sales-available claim failed for inquiry ' . $id . ': ' . $e->getMessage());
+        fail('Unable to claim this inquiry right now. Please try again.', 500);
     }
 // Bell: the customer hears who handles the inquiry; Admin and Manager see it too.
 $lead = is_array($lead) ? $lead : [];
 $nfRef = !empty($lead['inquiry_ref']) ? $lead['inquiry_ref'] : 'INQ-' . str_pad((string)$id, 4, '0', STR_PAD_LEFT);
 $nfEvent = trim((string)($lead['event_name'] ?? '')) !== '' ? $lead['event_name'] : 'an event';
-notifySend($db, [
-    'type' => 'lead', 'kind' => 'inquiry', 'ref' => $nfRef,
-    'title' => 'Inquiry accepted',
-    'message' => $staff['name'] . ' accepted ' . $nfRef . ' (' . $nfEvent . ').',
-    'user_ids' => !empty($lead['customer_id']) ? [(int)$lead['customer_id']] : [],
-    'exclude_user_id' => $staff['id'],
-    'customer' => [
-        'title' => 'Your inquiry is being handled',
-        'message' => $staff['name'] . ' from our sales team is now handling your inquiry for ' . $nfEvent . '. You can chat with them in your Inbox.',
-    ],
-]);
-out(['success' => true, 'message' => 'Inquiry accepted. It is now in your Inquiries and the chat with the customer is open.']);
+try {
+    notifySend($db, [
+        'type' => 'lead', 'kind' => 'inquiry', 'ref' => $nfRef,
+        'title' => 'Inquiry claimed',
+        'message' => $staff['name'] . ' claimed ' . $nfRef . ' (' . $nfEvent . ').',
+        'user_ids' => !empty($lead['customer_id']) ? [(int)$lead['customer_id']] : [],
+        'exclude_user_id' => $staff['id'],
+        'customer' => [
+            'title' => 'Your inquiry is being handled',
+            'message' => $staff['name'] . ' from our sales team is now handling your inquiry for ' . $nfEvent . '. You can chat with them in your Inbox.',
+        ],
+    ]);
+} catch (Throwable $e) {
+    // Assignment and conversation are committed; a bell notification failure must not report a false claim failure.
+    error_log('sales-available claim notification failed for inquiry ' . $id . ': ' . $e->getMessage());
+}
+out(['success' => true, 'message' => 'Inquiry claimed successfully. It is now in My Inquiries and the customer chat is ready.']);
 }
 
 fail('Unknown action.', 400);

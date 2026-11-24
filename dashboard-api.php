@@ -190,7 +190,7 @@ function build_admin(): array
     $open = DASH_OPEN_TICKET;
     $m = [
         'total_customers'  => dash_safe('total_customers',  fn() => dash_val("SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id WHERE r.role_name = 'Customer'"), 0),
-        'active_employees' => dash_safe('active_employees', fn() => dash_val("SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id WHERE u.status = 'Active' AND r.role_name <> 'Customer'"), 0),
+        'active_employees' => dash_safe('active_employees', fn() => dash_val("SELECT COUNT(*) FROM users u JOIN roles r ON r.role_id = u.role_id WHERE u.account_status = 'Active' AND r.role_name <> 'Customer'"), 0),
         'active_inquiries' => dash_safe('active_inquiries', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE " . LEAD_ACTIVE), 0),
         'upcoming_bookings'=> dash_safe('upcoming_bookings',fn() => dash_upcoming_count(), 0),
         'open_tickets'     => dash_safe('open_tickets',     fn() => dash_val("SELECT COUNT(*) FROM cib_tickets WHERE status IN $open"), 0),
@@ -248,7 +248,7 @@ function build_manager(): array
                     (SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id = u.user_id AND " . LEAD_ACTIVE . ") AS active_inquiries,
                     (SELECT COUNT(*) FROM bookings b WHERE b.assigned_staff_id = u.user_id AND b.event_date >= " . dash_today() . " AND " . BOOKING_LIVE . ") AS upcoming_bookings
              FROM users u JOIN roles r ON r.role_id = u.role_id
-             WHERE r.role_name LIKE '%Sales%' AND u.status = 'Active' ORDER BY u.full_name"), []),
+             WHERE r.role_name LIKE '%Sales%' AND u.account_status = 'Active' ORDER BY u.full_name"), []),
         'attention'         => $attention,
         'upcoming_bookings' => dash_safe('upcoming_list', fn() => dash_upcoming_bookings(6), []),
         'activity'          => dash_safe('activity', fn() => dash_activity(7), []),
@@ -345,7 +345,7 @@ session_write_close();
 try {
     require_once __DIR__ . '/config/database.php';     // gives $conn (mysqli), same as tickets-api.php
 
-    $me = dash_rows("SELECT u.status, u.full_name, r.role_name FROM users u INNER JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1", [$uid])[0] ?? null;
+    $me = dash_rows("SELECT u.account_status AS status, u.full_name, r.role_name FROM users u INNER JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1", [$uid])[0] ?? null;
     if (!$me || $me['status'] !== 'Active') {
         dash_out(['success' => false, 'message' => 'Your account is no longer active. Please log in again.', 'code' => 'session_expired'], 401);
     }

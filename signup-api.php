@@ -1,18 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * signup-api.php
- * JSON endpoint for the Customer Sign-Up wizard (POST only).
- *   action=send_otp        phone (10 digits, e.g. 9171234567)
- *   action=verify_otp      code  (6 digits)
- *   action=create_account  full_name, email, username, password, confirm_password, terms
- *
- * Needs ONE database change first (see the SQL in the chat answer):
- *   ALTER TABLE users ADD COLUMN phone VARCHAR(20) NULL AFTER email,
- *                     ADD UNIQUE KEY uq_users_phone (phone);
- */
-
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 // Shared session setup (secure cookie settings). Public endpoint: an expired login just counts as logged out.
@@ -23,15 +11,16 @@ require_once __DIR__ . "/config/database.php";
 
 
 
-// TRUE  = no SMS is sent; the code is written to the PHP error log AND returned to the page
-//         so you can test locally. MUST be FALSE on a real server.
-const SIGNUP_DEV_MODE      = true;
 const OTP_LENGTH           = 6;
 const OTP_TTL_SECONDS      = 300;   // code is valid for 5 minutes
-const OTP_RESEND_SECONDS   = SIGNUP_DEV_MODE ? 5 : 30;    // wait before asking for another code
-const OTP_MAX_SENDS        = SIGNUP_DEV_MODE ? 100 : 5;   // per session ...    // per session ...
+const OTP_RESEND_SECONDS   = 30;     // wait before asking for another code
+const OTP_MAX_SENDS        = 5;      // per session, per 30-minute window
 const OTP_SEND_WINDOW      = 1800;  // ... per 30 minutes
 const OTP_MAX_ATTEMPTS     = 5;     // wrong guesses before the code is thrown away
+const OTP_MAX_IP_SENDS     = 10;    // per IP, per 30-minute window
+const OTP_MAX_IP_VERIFIES  = 30;    // per IP, per 30-minute window
+
+class SmsVerificationUnavailableException extends RuntimeException {}
 
 /* ---------------- helpers ---------------- */
 
@@ -49,29 +38,62 @@ function fail(string $message, int $status = 422, array $extra = []): void
     respond($status, array_merge(["success" => false, "message" => $message], $extra));
 }
 
-/** Send the SMS. Plug your provider in here (Semaphore, Twilio, Vonage, ...). */
-function sendOtpSms(string $e164Phone, string $code): void
+/**
+ * Sends a verification code through the configured provider.
+ * No provider is currently integrated, so live SMS verification remains unavailable.
+ */
+function sendOtpSms(string $e164Phone): void
 {
-    $text = "Your CRM verification code is {$code}. It expires in 5 minutes. Do not share it.";
+    throw new SmsVerificationUnavailableException("SMS verification provider is not configured.");
+}
 
-    if (SIGNUP_DEV_MODE) {
-        error_log("[signup] DEV MODE - code for {$e164Phone}: {$code}");
-        return;
+/**
+ * Confirms a code only through a provider; the CRM does not accept hardcoded or fallback codes.
+ */
+function verifyOtpSms(string $e164Phone, string $code): bool
+{
+    throw new SmsVerificationUnavailableException("SMS verification provider is not configured.");
+}
+
+/** IP-based caps supplement the per-session limits using the existing audit table. */
+function recordSignupOtpIpAttempt(mysqli $conn, string $action, int $maximum): void
+{
+    if (!in_array($action, ["signup_otp_send", "signup_otp_verify"], true)) {
+        throw new RuntimeException("Invalid signup rate-limit action.");
+    }
+    $ip = (string) ($_SERVER["REMOTE_ADDR"] ?? "");
+    if (!filter_var($ip, FILTER_VALIDATE_IP)) $ip = "unknown";
+
+    $stmt = $conn->prepare("SELECT COUNT(*) AS total FROM audit_logs
+        WHERE action = ? AND module = 'signup' AND ip_address = ?
+          AND created_at >= (NOW() - INTERVAL 30 MINUTE)");
+    $stmt->bind_param("ss", $action, $ip);
+    $stmt->execute();
+    $count = (int) ($stmt->get_result()->fetch_assoc()["total"] ?? 0);
+    $stmt->close();
+    if ($count >= $maximum) {
+        fail($action === "signup_otp_send"
+            ? "Too many code requests from this connection. Try again later."
+            : "Too many verification attempts from this connection. Try again later.", 429);
     }
 
-    // Production: call your SMS provider's API with $e164Phone and $text.
-    // Throw an exception if it fails so the user sees a clear message.
-    throw new RuntimeException("SMS provider is not configured.");
+    $stmt = $conn->prepare("INSERT INTO audit_logs (action, module, record_type, ip_address)
+        VALUES (?, 'signup', 'phone_verification', ?)");
+    $stmt->bind_param("ss", $action, $ip);
+    $stmt->execute();
+    $stmt->close();
 }
 
 function normalizePhone(string $raw): ?string
 {
-    $digits = preg_replace("/\D/", "", $raw) ?? "";
-    if (strlen($digits) === 12 && str_starts_with($digits, "63")) {
-        $digits = substr($digits, 2);
-    }
-    $digits = ltrim($digits, "0");
-    return preg_match("/^9\d{9}$/", $digits) ? $digits : null;   // PH mobile: 9XX XXX XXXX
+    $value = trim($raw);
+    if (!preg_match("/^\+?[0-9\s().-]+$/", $value)) return null;
+    $digits = preg_replace("/[\s().-]/", "", $value) ?? "";
+    $digits = ltrim($digits, "+");
+    if (preg_match("/^09\d{9}$/", $digits)) return substr($digits, 1);
+    if (preg_match("/^9\d{9}$/", $digits)) return $digits;
+    if (preg_match("/^\+?639\d{9}$/", $digits)) return substr($digits, 2);
+    return null;
 }
 
 /* ---------------- request checks ---------------- */
@@ -108,7 +130,7 @@ try {
             }
             $e164 = "+63" . $phone;
 
-            // rate limit (per session; add IP / CAPTCHA limits before using a paid SMS provider)
+            // Rate limit before charging the provider; count failed provider attempts too.
             $now   = time();
             $sends = array_values(array_filter(
                 (array) ($_SESSION["signup_sends"] ?? []),
@@ -133,17 +155,14 @@ try {
                 fail("This number already has an account. Log in instead.", 409);
             }
 
-            $code = str_pad((string) random_int(0, 10 ** OTP_LENGTH - 1), OTP_LENGTH, "0", STR_PAD_LEFT);
-            $key  = bin2hex(random_bytes(16));
-
-            sendOtpSms($e164, $code);
-
             $sends[] = $now;
             $_SESSION["signup_sends"] = $sends;
+            recordSignupOtpIpAttempt($conn, "signup_otp_send", OTP_MAX_IP_SENDS);
+            // A resend may invalidate the previous provider code; discard its app-side state first.
+            unset($_SESSION["signup"]);
+            sendOtpSms($e164);
             $_SESSION["signup"] = [
                 "phone"    => $e164,
-                "otp_hash" => hash_hmac("sha256", $code, $key),
-                "otp_key"  => $key,
                 "expires"  => $now + OTP_TTL_SECONDS,
                 "attempts" => 0,
                 "verified" => false,
@@ -155,15 +174,12 @@ try {
                 "resend_in"  => OTP_RESEND_SECONDS,
                 "expires_in" => OTP_TTL_SECONDS,
             ];
-            if (SIGNUP_DEV_MODE) {
-                $payload["dev_code"] = $code;   // never returned when SIGNUP_DEV_MODE is false
-            }
             respond(200, $payload);
 
         /* ============ 2) check the code ============ */
         case "verify_otp":
             $flow = $_SESSION["signup"] ?? null;
-            if (!is_array($flow) || empty($flow["otp_hash"])) {
+            if (!is_array($flow) || empty($flow["phone"]) || !empty($flow["verified"])) {
                 fail("Request a verification code first.");
             }
             if (time() > (int) $flow["expires"]) {
@@ -174,23 +190,25 @@ try {
                 fail("Too many wrong codes. Request a new one.", 429, ["expired" => true]);
             }
 
-            $code = preg_replace("/\D/", "", (string) ($_POST["code"] ?? "")) ?? "";
-            if (strlen($code) !== OTP_LENGTH) {
+            $code = trim((string) ($_POST["code"] ?? ""));
+            if (!preg_match("/^\d{" . OTP_LENGTH . "}$/", $code)) {
                 fail("Enter all " . OTP_LENGTH . " digits.");
             }
 
-            $_SESSION["signup"]["attempts"] = (int) $flow["attempts"] + 1;
-            $expected = hash_hmac("sha256", $code, (string) $flow["otp_key"]);
-
-            if (!hash_equals((string) $flow["otp_hash"], $expected)) {
-                $left = OTP_MAX_ATTEMPTS - (int) $_SESSION["signup"]["attempts"];
-                fail($left > 0
-                    ? "That code is not correct. {$left} " . ($left === 1 ? "try" : "tries") . " left."
-                    : "Too many wrong codes. Request a new one.");
+            recordSignupOtpIpAttempt($conn, "signup_otp_verify", OTP_MAX_IP_VERIFIES);
+            if (!verifyOtpSms((string) $flow["phone"], $code)) {
+                $attempts = (int) $flow["attempts"] + 1;
+                $_SESSION["signup"]["attempts"] = $attempts;
+                $left = OTP_MAX_ATTEMPTS - $attempts;
+                if ($left <= 0) {
+                    unset($_SESSION["signup"]);
+                    fail("Too many wrong codes. Request a new one.", 429, ["expired" => true]);
+                }
+                fail("That code is not correct. {$left} " . ($left === 1 ? "try" : "tries") . " left.");
             }
 
             $_SESSION["signup"]["verified"] = true;
-            unset($_SESSION["signup"]["otp_hash"], $_SESSION["signup"]["otp_key"]);
+            unset($_SESSION["signup"]["expires"], $_SESSION["signup"]["attempts"]);
             respond(200, ["success" => true, "message" => "Phone number verified."]);
 
         /* ============ 3) create the account ============ */
@@ -268,7 +286,7 @@ try {
 
             try {
                 $stmt = $conn->prepare(
-                    "INSERT INTO users (full_name, username, email, phone, password_hash, role_id, status)
+                    "INSERT INTO users (full_name, username, email, phone, password_hash, role_id, account_status)
                      VALUES (?, ?, ?, ?, ?, ?, 'Active')"
                 );
                 $stmt->bind_param("sssssi", $fullName, $username, $email, $phone, $hash, $roleId);
@@ -293,10 +311,14 @@ try {
         default:
             fail("Unknown action.", 400);
     }
-} catch (RuntimeException $e) {
-    error_log("Signup SMS error: " . $e->getMessage());
-    fail("We could not send the code. Try again in a moment.", 503);
+} catch (SmsVerificationUnavailableException $e) {
+    // Provider configuration and code details are deliberately omitted from logs and responses.
+    error_log("Signup SMS verification unavailable.");
+    fail("Phone verification is unavailable because no SMS provider is configured.", 503);
 } catch (mysqli_sql_exception $e) {
     error_log("Signup database error: " . $e->getMessage());
+    fail("Sign-up is temporarily unavailable. Please try again later.", 500);
+} catch (Throwable $e) {
+    error_log("Signup request failed.");
     fail("Sign-up is temporarily unavailable. Please try again later.", 500);
 }

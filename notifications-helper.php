@@ -4,7 +4,7 @@
  *
  * Put it in the SAME folder as the other *-api.php files, then in an API do:
  *     require_once __DIR__ . '/notifications-helper.php';
- *     notifySend($db, [ ... ]);          // $db = PDO or mysqli, both work
+ *     notifySend($db, [ ... ]);          // $db = AppDatabase or mysqli, both work
  *
  * One row per person per notification (table `notifications`, created automatically),
  * so every account only ever sees, and marks as read, its OWN notifications.
@@ -30,10 +30,10 @@
 
 function nfRows($db, string $sql, array $params = []): array
 {
-    if ($db instanceof PDO) {
+    if ($db instanceof AppDatabase) {
         $st = $db->prepare($sql);
         $st->execute($params);
-        return $st->fetchAll(PDO::FETCH_ASSOC);
+        return $st->fetchAll(AppDatabase::FETCH_ASSOC);
     }
     $st = $db->prepare($sql);
     if ($params) {
@@ -48,7 +48,7 @@ function nfRows($db, string $sql, array $params = []): array
 
 function nfRun($db, string $sql, array $params = []): void
 {
-    if ($db instanceof PDO) {
+    if ($db instanceof AppDatabase) {
         $db->prepare($sql)->execute($params);
         return;
     }
@@ -62,28 +62,7 @@ function nfRun($db, string $sql, array $params = []): void
 
 function nfEnsureTable($db): void
 {
-    static $done = false;
-    if ($done) {
-        return;
-    }
-    $sql = "CREATE TABLE IF NOT EXISTS notifications (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        type VARCHAR(20) NOT NULL DEFAULT 'ticket',
-        title VARCHAR(120) NOT NULL,
-        message VARCHAR(255) NOT NULL DEFAULT '',
-        page VARCHAR(80) NOT NULL DEFAULT '',
-        ref VARCHAR(60) NOT NULL DEFAULT '',
-        is_read TINYINT(1) NOT NULL DEFAULT 0,
-        created_at DATETIME NOT NULL,
-        INDEX idx_user_read (user_id, is_read, created_at)
-    ) ENGINE=InnoDB";
-    if ($db instanceof PDO) {
-        $db->exec($sql);
-    } else {
-        $db->query($sql);
-    }
-    $done = true;
+    // Notifications are provisioned centrally from database/catering_crm.sql.
 }
 
 function nfUserName($db, int $userId, string $fallback = 'A customer'): string
@@ -134,7 +113,7 @@ function notifySend($db, array $n): void
             foreach (nfRows(
                 $db,
                 "SELECT u.user_id FROM users u INNER JOIN roles r ON r.role_id = u.role_id
-                 WHERE u.status = 'Active' AND r.role_name IN ($marks)",
+                 WHERE u.account_status = 'Active' AND r.role_name IN ($marks)",
                 $roles
             ) as $row) {
                 $ids[] = (int) $row['user_id'];

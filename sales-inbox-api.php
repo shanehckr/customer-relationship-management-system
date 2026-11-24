@@ -20,12 +20,8 @@
  */
 
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
-$DB_HOST     = '127.0.0.1';
 $DB_NAME     = 'catering_crm';
 $DB_CATERING = 'catering_crm';   // leads table (same value as in inquiry-common.php)
-$DB_USER     = 'root';
-$DB_PASS     = '';
-
 // Where the customer's name / email come from. Change to match your customers table.
 $CUSTOMER_TABLE     = 'customers';
 $CUSTOMER_ID_COL    = 'id';
@@ -34,11 +30,7 @@ $CUSTOMER_EMAIL_COL = 'email';
 
 // Roles allowed to use this inbox (compared lower-case; underscores/dashes read as spaces).
 $ALLOWED_ROLES     = ['sales staff', 'sales', 'admin', 'manager'];
-$ROLE_SESSION_KEYS = ['role', 'user_role'];
-$NAME_SESSION_KEYS = ['user_name', 'name', 'full_name'];
-
-// TESTING ONLY: lets the page work when no staff is logged in. Set to false before going live.
-$ALLOW_TEST_STAFF = true;
+$ROLE_SESSION_KEY = 'role_name';
 
 // Conversations with these statuses cannot be replied to.
 $CLOSED_STATUSES_REGEX = '/closed|resolved|cancel/i';
@@ -78,26 +70,23 @@ function normRole($r): string {
     return trim(preg_replace('/\s+/', ' ', preg_replace('/[_-]+/', ' ', strtolower((string)$r))));
 }
 $role = '';
-foreach ($ROLE_SESSION_KEYS as $k) { if (!empty($_SESSION[$k])) { $role = normRole($_SESSION[$k]); break; } }
-if ($role !== '') {
-    if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('You do not have access to the sales inbox.', 403);
-} elseif (!$ALLOW_TEST_STAFF) {
-    fail('Please log in again.', 401);
-}
-$staffName = '';
-foreach ($NAME_SESSION_KEYS as $k) { if (!empty($_SESSION[$k])) { $staffName = trim((string)$_SESSION[$k]); break; } }
-if ($staffName === '') $staffName = 'Sales Staff';
+if (!empty($_SESSION[$ROLE_SESSION_KEY])) $role = normRole($_SESSION[$ROLE_SESSION_KEY]);
 $staffId = (int)($_SESSION['user_id'] ?? 0);
+if ($staffId < 1 || $role === '') fail('Please log in again.', 401);
+if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('You do not have access to the sales inbox.', 403);
 
 /* ------------------------- 3. DATABASE ------------------------- */
-try {
-    $db = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4", $DB_USER, $DB_PASS, [
-        PDO::ATTR_ERRMODE    => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-} catch (PDOException $e) {
-    fail('Database connection failed. Check the settings at the top of sales-inbox-api.php. (' . $e->getMessage() . ')', 500);
+require_once __DIR__ . '/config/database.php';
+$identity = $db->prepare("SELECT u.full_name, u.account_status, r.role_name FROM users u
+                          JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1");
+$identity->execute([$staffId]);
+$staffAccount = $identity->fetch();
+if (!$staffAccount || $staffAccount['account_status'] !== 'Active' ||
+    normRole($staffAccount['role_name']) !== $role ||
+    !in_array(normRole($staffAccount['role_name']), array_map('normRole', $ALLOWED_ROLES), true)) {
+    fail('Please log in again.', 401);
 }
+$staffName = trim((string)$staffAccount['full_name']) ?: 'Sales Staff';
 
 $CUSTOMER_PHOTO_SQL = 'NULL';   // customer profile photo (users.photo_path), see inboxPhotoUrl()
 /* The customer's account lives in the users table (there is no customers table):
@@ -116,30 +105,15 @@ try {
         $CUSTOMER_EMAIL_COL = $uCols['email'] ?? 'email';
         if (isset($uCols['photo_path'])) $CUSTOMER_PHOTO_SQL = "c.`{$uCols['photo_path']}`";
     }
-} catch (PDOException $e) { error_log('inbox: could not read the users table: ' . $e->getMessage()); }
+} catch (Throwable $e) { error_log('inbox: could not read the users table: ' . $e->getMessage()); }
 
 // Ensure base tables exist (customer-inbox-api.php normally creates these first).
-$db->exec("CREATE TABLE IF NOT EXISTS cib_conversations (
-    id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, title VARCHAR(160) NOT NULL,
-    reference VARCHAR(60) DEFAULT '', status VARCHAR(30) NOT NULL DEFAULT 'Active',
-    created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_messages (
-    id INT AUTO_INCREMENT PRIMARY KEY, conversation_id INT NOT NULL, sender_type VARCHAR(20) NOT NULL,
-    sender_name VARCHAR(120) DEFAULT '', message TEXT, attachments TEXT,
-    created_at DATETIME NOT NULL, INDEX (conversation_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_tickets (
-    id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, ticket_number VARCHAR(30) DEFAULT '',
-    subject VARCHAR(160) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Open',
-    conversation_id INT DEFAULT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL,
-    INDEX (customer_id)
-) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
-function ensureColumn(PDO $db, string $table, string $column, string $definition): void {
-    $st = $db->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
-    $st->execute([$column]);
-    if (!$st->fetch()) $db->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+function ensureColumn(AppDatabase $db, string $table, string $column, string $definition): void {
+    // Inbox columns are provisioned centrally from database/catering_crm.sql.
 }
 ensureColumn($db, 'cib_conversations', 'inquiry_id',    'INT NULL DEFAULT NULL');
 ensureColumn($db, 'cib_conversations', 'sales_read_at', 'DATETIME NULL DEFAULT NULL');
@@ -177,7 +151,7 @@ function assignedOnly(): string {
     return "EXISTS (SELECT 1 FROM `$DB_CATERING`.leads l WHERE l.`$LEAD_PK` = cv.inquiry_id AND l.assigned_staff_id $who)";
 }
 
-function conversationQuery(PDO $db, string $where, array $args): array {
+function conversationQuery(AppDatabase $db, string $where, array $args): array {
     global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL;
     $base = "cv.id, cv.customer_id, cv.title, cv.reference, cv.status, cv.inquiry_id,
         cv.created_at, cv.updated_at,
@@ -194,7 +168,7 @@ function conversationQuery(PDO $db, string $where, array $args): array {
         $st  = $db->prepare($sql);
         $st->execute($args);
         $rows = $st->fetchAll();
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         $st = $db->prepare("SELECT $base FROM cib_conversations cv
                             WHERE " . INQUIRY_ONLY . " AND " . assignedOnly() . " $where $order");
         $st->execute($args);
@@ -227,7 +201,7 @@ function conversationQuery(PDO $db, string $where, array $args): array {
  * Always uses the INQ reference and the event name so staff can find the inquiry directly.
  * **...** is shown in bold by pages.js.
  */
-function staffAcceptText(PDO $db, $inquiryId, string $subject, string $reference, string $text): string {
+function staffAcceptText(AppDatabase $db, $inquiryId, string $subject, string $reference, string $text): string {
     if (empty($inquiryId)) return $text;
 
     // Build the label: "Event Name (INQ-0000)"
@@ -266,7 +240,7 @@ function staffAcceptText(PDO $db, $inquiryId, string $subject, string $reference
     return $text;
 }
 
-function getConversation(PDO $db, $id): array {
+function getConversation(AppDatabase $db, $id): array {
     $rows = conversationQuery($db, 'AND cv.id = ?', [(int)$id]);
     if (!$rows) fail('Conversation not found.', 404);
     return $rows[0];
@@ -382,7 +356,7 @@ switch ($action) {
                                 WHERE p.inquiry_id = ? ORDER BY p.id DESC LIMIT 1");
             $st->execute([$conv['inquiry_id']]);
             $row = $st->fetch();
-        } catch (PDOException $e) {
+        } catch (Throwable $e) {
             $row = null;   // paymongo_payments table does not exist yet
         }
 

@@ -2,8 +2,8 @@
 /**
  * quotations-schema.php - shared by sales-inquiries.php, customer-inquiries-api.php,
  * sales-inbox-api.php and customer-inbox-api.php.
- * Creates the `quotations` table (and cib_messages.quotation_id) and holds the helpers every API uses,
- * so the sales screen, the customer's Quotation tab and the inbox card always show the same numbers.
+ * Holds the quotation helpers every API uses and mirrors editor writes into normalized quotation tables,
+ * so the sales screen, the customer's Quotation tab and the inbox card show the same values.
  * Put it in the SAME folder as bookings-schema.php.
  *
  * Statuses: Draft (staff only) -> Sent -> Accepted | Declined   (an older version becomes "Superseded" when a newer one is sent)
@@ -11,46 +11,83 @@
  */
 const QUOTE_DEPOSIT_RATE = 0.20;
 
-function ensureQuotationsSchema(PDO $db): void {
-    $db->exec("CREATE TABLE IF NOT EXISTS quotations (
-        quotation_id INT AUTO_INCREMENT PRIMARY KEY,
-        inquiry_id INT NOT NULL,
-        version INT NOT NULL DEFAULT 1,
-        status VARCHAR(20) NOT NULL DEFAULT 'Draft',
-        items TEXT NULL,
-        subtotal DECIMAL(12,2) NOT NULL DEFAULT 0,
-        total DECIMAL(12,2) NOT NULL DEFAULT 0,
-        deposit_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-        valid_until DATE NULL,
-        notes TEXT NULL,
-        prepared_by VARCHAR(120) NULL,
-        prepared_by_id INT NULL,
-        prepared_at DATETIME NULL,
-        sent_at DATETIME NULL,
-        responded_at DATETIME NULL,
-        INDEX idx_quote_inquiry (inquiry_id)
-    ) ENGINE=InnoDB");
-    // v2 columns: discount, extra_charge (additional fee), deposit_rate (percent)
-    foreach ([
-        'discount'     => "DECIMAL(12,2) NOT NULL DEFAULT 0",
-        'extra_charge' => "DECIMAL(12,2) NOT NULL DEFAULT 0",
-        'deposit_rate' => "INT NOT NULL DEFAULT 20",
-        'valid_until_time' => "TIME NULL",          // time of day the quotation stops being valid (with valid_until)
-    ] as $col => $def) {
-        $c = $db->prepare("SHOW COLUMNS FROM `quotations` LIKE ?");
-        $c->execute([$col]);
-        if (!$c->fetch()) $db->exec("ALTER TABLE `quotations` ADD COLUMN `$col` $def");
+function ensureQuotationsSchema(AppDatabase $db): void {
+    // Quotation tables and message links are provisioned centrally from database/catering_crm.sql.
+}
+
+/** Persist the version's money and immutable menu snapshots in the normalized tables. */
+function saveNormalizedQuotationVersion(AppDatabase $db, int $quotationId, int $version, array $items, float $subtotal,
+    float $discount, float $charges, float $total, int $depositRate, float $deposit, string $validUntil,
+    string $validUntilTime, string $notes, int $creator, bool $replaceItems): int {
+    $db->prepare('UPDATE quotation_versions SET is_current = 0 WHERE quotation_id = ? AND version_number <> ?')->execute([$quotationId, $version]);
+    $db->prepare("INSERT INTO quotation_versions
+        (quotation_id,version_number,is_current,response_status,subtotal,discount_amount,additional_charges,total_amount,
+         deposit_rate,deposit_amount,remaining_balance,valid_until,valid_until_time,terms_conditions,created_by)
+        VALUES (?,?,1,NULL,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE is_current=1,response_status=NULL,subtotal=VALUES(subtotal),discount_amount=VALUES(discount_amount),
+         additional_charges=VALUES(additional_charges),total_amount=VALUES(total_amount),deposit_rate=VALUES(deposit_rate),
+         deposit_amount=VALUES(deposit_amount),remaining_balance=VALUES(remaining_balance),valid_until=VALUES(valid_until),
+         valid_until_time=VALUES(valid_until_time),terms_conditions=VALUES(terms_conditions)")
+       ->execute([$quotationId,$version,$subtotal,$discount,$charges,$total,$depositRate,$deposit,
+           max(0,round($total-$deposit,2)),$validUntil,$validUntilTime,$notes !== '' ? $notes : null,$creator]);
+    $id = $db->prepare('SELECT quotation_version_id FROM quotation_versions WHERE quotation_id = ? AND version_number = ?');
+    $id->execute([$quotationId,$version]);
+    $versionId = (int)$id->fetchColumn();
+    if ($versionId < 1) throw new RuntimeException('Could not save the quotation version.');
+    if ($replaceItems) {
+        $db->prepare('DELETE FROM quotation_items WHERE quotation_version_id = ?')->execute([$versionId]);
+        $insert = $db->prepare('INSERT INTO quotation_items (quotation_version_id,menu_item_id,tier_id,item_name_snapshot,serving_option_snapshot,quantity,unit_price,subtotal) VALUES (?,?,?,?,?,?,?,?)');
+        foreach ($items as $item) $insert->execute([$versionId,$item['menu_item_id'],$item['tier_id'],
+            mb_substr($item['name'],0,150),$item['tier'] !== '' ? mb_substr($item['tier'],0,100) : null,
+            $item['quantity'],$item['unit_price'],$item['amount']]);
     }
-    // the chat message that announces a quotation
-    try {
-        $st = $db->prepare("SHOW COLUMNS FROM `cib_messages` LIKE 'quotation_id'");
-        $st->execute();
-        if (!$st->fetch()) $db->exec("ALTER TABLE `cib_messages` ADD COLUMN `quotation_id` INT NULL DEFAULT NULL");
-    } catch (PDOException $e) { /* cib_messages does not exist yet: the inbox APIs create it first */ }
+    return $versionId;
+}
+
+/** Keep workflow state in sync; quotation amounts and terms remain owned by quotation_versions. */
+function syncNormalizedQuotationVersion(AppDatabase $db, int $quotationId, bool $refreshItems = false): int {
+    $q = $db->prepare('SELECT version,status,sent_at,responded_at FROM quotations WHERE quotation_id = ? LIMIT 1');
+    $q->execute([$quotationId]); $row = $q->fetch();
+    if (!$row) throw new RuntimeException('Quotation was not found for normalized synchronization.');
+    $response = in_array($row['status'], ['Accepted','Declined'], true) ? $row['status'] : null;
+    $isCurrent = in_array($row['status'], ['Superseded','Withdrawn'], true) ? 0 : 1;
+    $up = $db->prepare('UPDATE quotation_versions SET is_current=?,response_status=?,sent_at=?,responded_at=? WHERE quotation_id=? AND version_number=?');
+    $up->execute([$isCurrent,$response,$row['sent_at'] ?: null,$row['responded_at'] ?: null,$quotationId,max(1,(int)$row['version'])]);
+    $id = $db->prepare('SELECT quotation_version_id FROM quotation_versions WHERE quotation_id=? AND version_number=?');
+    $id->execute([$quotationId,max(1,(int)$row['version'])]);
+    $versionId = (int)$id->fetchColumn();
+    if (!$versionId) throw new RuntimeException('Normalized quotation version was not found.');
+    return $versionId;
+}
+
+/** Enrich the workflow record from its normalized version and immutable line snapshots. */
+function quoteHydrate(AppDatabase $db, array $q): array {
+    $st = $db->prepare('SELECT * FROM quotation_versions WHERE quotation_id=? AND version_number=? LIMIT 1');
+    $st->execute([(int)$q['quotation_id'],max(1,(int)$q['version'])]);
+    $v = $st->fetch();
+    if (!$v) return $q; // Compatibility for any pre-migration historical rows.
+    $q['subtotal'] = (float)$v['subtotal']; $q['discount'] = (float)$v['discount_amount'];
+    $q['extra_charge'] = (float)$v['additional_charges']; $q['total'] = (float)$v['total_amount'];
+    $q['deposit_rate'] = (float)$v['deposit_rate']; $q['deposit_amount'] = (float)$v['deposit_amount'];
+    $q['valid_until'] = $v['valid_until']; $q['valid_until_time'] = $v['valid_until_time'];
+    $q['notes'] = (string)($v['terms_conditions'] ?? $q['notes'] ?? '');
+    $raw = json_decode((string)($q['items'] ?? ''),true) ?: [];
+    $items = $db->prepare('SELECT menu_item_id,tier_id,item_name_snapshot,serving_option_snapshot,quantity,unit_price,subtotal FROM quotation_items WHERE quotation_version_id=? ORDER BY quotation_item_id');
+    $items->execute([(int)$v['quotation_version_id']]); $lines = $items->fetchAll();
+    if ($lines) {
+        $q['items'] = json_encode(array_map(function($line,$i) use ($raw) {
+            $meta = is_array($raw[$i] ?? null) ? $raw[$i] : [];
+            $tier = (string)($line['serving_option_snapshot'] ?? '');
+            return array_merge($meta,['menu_item_id'=>(int)$line['menu_item_id'],'tier'=>$tier,
+                'description'=>$line['item_name_snapshot'].($tier !== '' ? ' - '.$tier : ''),
+                'quantity'=>(float)$line['quantity'],'unit_price'=>(float)$line['unit_price'],'amount'=>(float)$line['subtotal']]);
+        },$lines,array_keys($lines)),JSON_UNESCAPED_UNICODE);
+    }
+    return $q;
 }
 
 /** Primary-key column of the leads table. The customer inbox does not load inquiry-common.php, so find it here when $LEAD_PK is not set. */
-function quoteLeadPk(PDO $db): string {
+function quoteLeadPk(AppDatabase $db): string {
     global $LEAD_PK;
     if (!empty($LEAD_PK)) return $LEAD_PK;
     static $pk = null;
@@ -58,7 +95,7 @@ function quoteLeadPk(PDO $db): string {
     try {
         $r = $db->query("SHOW KEYS FROM leads WHERE Key_name = 'PRIMARY'")->fetch();
         $pk = $r['Column_name'] ?? 'lead_id';
-    } catch (PDOException $e) { $pk = 'lead_id'; }
+    } catch (Throwable $e) { $pk = 'lead_id'; }
     return $pk;
 }
 
@@ -241,7 +278,7 @@ function quoteHistory(array $rows, string $recipient = ''): array {
  * Quotations for many inquiries at once.
  * $forCustomer = true hides Draft versions. Returns [inquiry_id => quotation JSON (the latest one, with ->history)].
  */
-function quotesByInquiry(PDO $db, array $inquiryIds, bool $forCustomer = false, string $recipient = ''): array {
+function quotesByInquiry(AppDatabase $db, array $inquiryIds, bool $forCustomer = false, string $recipient = ''): array {
     $ids = array_values(array_unique(array_filter(array_map('intval', $inquiryIds))));
     if (!$ids) return [];
     $in = implode(',', array_fill(0, count($ids), '?'));
@@ -250,14 +287,14 @@ function quotesByInquiry(PDO $db, array $inquiryIds, bool $forCustomer = false, 
         $st = $db->prepare("SELECT q.*, l.event_name FROM quotations q LEFT JOIN leads l ON l.`" . quoteLeadPk($db) . "` = q.inquiry_id $where");
         $st->execute($ids);
         $found = $st->fetchAll();
-    } catch (PDOException $e) {       // never break the screen just because the event name could not be read
+    } catch (Throwable $e) {       // never break the screen just because the event name could not be read
         error_log('quotesByInquiry: event name lookup failed: ' . $e->getMessage());
         $st = $db->prepare("SELECT q.* FROM quotations q $where");
         $st->execute($ids);
         $found = $st->fetchAll();
     }
     $by = [];
-    foreach ($found as $r) $by[(int)$r['inquiry_id']][] = $r;
+    foreach ($found as $r) $by[(int)$r['inquiry_id']][] = quoteHydrate($db, $r);
     $out = [];
     foreach ($by as $iid => $rows) $out[$iid] = quoteShape($rows[0], quoteHistory($rows, $recipient), $forCustomer);
     return $out;
@@ -276,14 +313,15 @@ function quoteAttach(array $record, ?array $quote): array {
 }
 
 /** The quotation a booking should be priced from: the newest one the customer can act on. */
-function quoteForBooking(PDO $db, int $inquiryId): ?array {
+function quoteForBooking(AppDatabase $db, int $inquiryId): ?array {
     $st = $db->prepare("SELECT * FROM quotations WHERE inquiry_id = ? AND status IN ('Accepted','Sent') ORDER BY version DESC LIMIT 1");
     $st->execute([$inquiryId]);
-    return $st->fetch() ?: null;
+    $q = $st->fetch();
+    return $q ? quoteHydrate($db, $q) : null;
 }
 
 /** Quotations referenced by chat messages: [quotation_id => quotation JSON]. Used by both inbox APIs. */
-function quotesForMessages(PDO $db, array $messageRows, bool $forCustomer = false): array {
+function quotesForMessages(AppDatabase $db, array $messageRows, bool $forCustomer = false): array {
     $ids = [];
     foreach ($messageRows as $m) if (!empty($m['quotation_id'])) $ids[(int)$m['quotation_id']] = true;
     $ids = array_keys($ids);
@@ -294,13 +332,13 @@ function quotesForMessages(PDO $db, array $messageRows, bool $forCustomer = fals
         $st = $db->prepare("SELECT q.*, l.event_name FROM quotations q LEFT JOIN leads l ON l.`" . quoteLeadPk($db) . "` = q.inquiry_id $where");
         $st->execute($ids);
         $found = $st->fetchAll();
-    } catch (PDOException $e) {
+    } catch (Throwable $e) {
         error_log('quotesForMessages: event name lookup failed: ' . $e->getMessage());
         $st = $db->prepare("SELECT q.* FROM quotations q $where");
         $st->execute($ids);
         $found = $st->fetchAll();
     }
     $out = [];
-    foreach ($found as $q) $out[(int)$q['quotation_id']] = quoteShape($q, [], $forCustomer);
+    foreach ($found as $q) $out[(int)$q['quotation_id']] = quoteShape(quoteHydrate($db, $q), [], $forCustomer);
     return $out;
 }

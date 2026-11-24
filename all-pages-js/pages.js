@@ -1110,11 +1110,20 @@ function crmInquiryFields(record) {
   const guestsRaw = crmInquiryPick(record, ["expected_guests", "guests", "pax"]);
   const hasPax = crmArrangementHasPax(crmInquiryPick(record, ["arrangement", "service_type", "service"]));
   const guestsNum = hasPax ? guestsRaw.replace(/\s*(pax|guests?)$/i, "") : "";
+  const rawArrangementDetails = record && (record.arrangement_details || record.delivery_details);
+  let arrangementDetails = rawArrangementDetails && typeof rawArrangementDetails === "object" ? rawArrangementDetails : null;
+  if (!arrangementDetails && typeof rawArrangementDetails === "string") {
+    try { arrangementDetails = JSON.parse(rawArrangementDetails); } catch (_) { arrangementDetails = null; }
+  }
+  if (!arrangementDetails || typeof arrangementDetails !== "object" || Array.isArray(arrangementDetails)) arrangementDetails = null;
+  const arrangement = crmInquiryPick(record, ["arrangement", "service_type", "service"]);
   return {
     customer: crmInquiryPick(record, ["customer_name", "customer", "client_name"]) || "Customer",
     ref: crmInquiryPick(record, ["inquiry_ref", "inquiry_code", "reference", "inquiry_id", "id"]),
     title: crmInquiryPick(record, ["event_title", "event_name", "inquiry_event_name", "title"]) || "—",
-    arrangement: crmInquiryPick(record, ["arrangement", "service_type", "service"]) || "—",
+    arrangement: arrangement || "—",
+    locationLabel: /pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue / Address"),
+    arrangementDetails,
     stage: crmInquiryPick(record, ["stage", "status", "inquiry_status"]) || "New Inquiry",
     staff: crmInquiryPick(record, ["assigned_staff", "assigned_to", "staff_name"]) || "Unassigned",
     eventDate: crmInquiryDate(crmInquiryPick(record, ["event_date", "date"])),
@@ -1570,7 +1579,7 @@ function crmAvCardHTML(record, index, mine) {
         (f.eventTime ? '<div><span class="stat-label">' + crmEscape(f.timeLabel) + '</span><span class="av-fact">' + crmEscape(f.eventTime) + "</span></div>" : "") +
         (f.hasPax ? '<div><span class="stat-label">Guests (PAX)</span><span class="av-fact is-green">' + crmEscape(guests) + "</span></div>" : "") +
         '<div><span class="stat-label">Catering Arrangement</span><span class="av-fact">' + crmEscape(f.arrangement) + "</span></div>" +
-        '<div><span class="stat-label">Event Location</span><span class="av-fact av-loc" title="' + crmEscape(location) + '">' + crmEscape(location) + "</span></div>" +
+        '<div><span class="stat-label">' + crmEscape(f.locationLabel) + '</span><span class="av-fact av-loc" title="' + crmEscape(location) + '">' + crmEscape(location) + "</span></div>" +
       "</div>" +
       actions +
     "</article>"
@@ -1611,6 +1620,13 @@ function crmAvDetailHTML(record, mine) {
       }).join("")
     : '<li class="av-d-menu-empty">No menu items were selected.</li>';
   const field = (label, value, cls) => '<div><span class="av-d-label">' + label + '</span><span class="av-d-value' + (cls ? " " + cls : "") + '">' + value + "</span></div>";
+  const detailRows = /deliver/i.test(f.arrangement)
+    ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
+    : /pick-?up/i.test(f.arrangement)
+      ? [["pickup_notes", "Pickup Notes"]]
+      : f.hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+  const arrangementFields = f.arrangementDetails ? detailRows
+    .filter(([key]) => f.arrangementDetails[key]).map(([key, label]) => field(label, dash(f.arrangementDetails[key]))).join("") : "";
   return (
     '<button type="button" class="iq-back" data-iq-action="back"><i class="bi bi-arrow-left" aria-hidden="true"></i>' + (mine ? "Back to My Inquiries" : "Back to Available Inquiries") + "</button>" +
     '<div class="av-d-head">' +
@@ -1633,7 +1649,7 @@ function crmAvDetailHTML(record, mine) {
         (f.hasPax ? field("Number of Guests (PAX)", dash(f.guestsNum ? f.guestsNum + " Guests" : ""), "is-green") : "") +
       "</div>" +
       '<div class="av-d-split">' +
-        field("Complete Event Location", dash(pick(["event_location", "location", "venue", "venue_address"]))) +
+        field(f.locationLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
         '<div><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
       "</div>" +
     "</section>" +
@@ -1678,6 +1694,13 @@ function crmAvMineDetailHTML(record) {
   const staff = f.staff && f.staff !== "Unassigned" ? f.staff : "";
   const guests = f.guestsNum ? f.guestsNum + " Guests" : "—";
   const field = (label, value, cls) => '<div><span class="av-d-label">' + label + '</span><span class="av-d-value' + (cls ? " " + cls : "") + '">' + value + "</span></div>";
+  const detailRows = /deliver/i.test(f.arrangement)
+    ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
+    : /pick-?up/i.test(f.arrangement)
+      ? [["pickup_notes", "Pickup Notes"]]
+      : f.hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+  const arrangementFields = f.arrangementDetails ? detailRows
+    .filter(([key]) => f.arrangementDetails[key]).map(([key, label]) => field(label, dash(f.arrangementDetails[key]))).join("") : "";
   const card = (letter, title, headRight, body, extra) =>
     '<section class="card iq-detail-card av-d-card' + (extra ? " " + extra : "") + '">' +
       '<div class="av-d-card-head"><h3 class="iq-section-title">' + letter + ". " + title + "</h3>" + (headRight || "") + "</div>" + body +
@@ -1727,7 +1750,7 @@ function crmAvMineDetailHTML(record) {
       field("Catering Arrangement", dash(f.arrangement)) +
     "</div>" +
     '<div class="av-d-split">' +
-      field("Event Location", dash(pick(["event_location", "location", "venue", "venue_address"]))) +
+      field(f.locationLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
       '<div><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
     "</div>");
 
@@ -2038,6 +2061,11 @@ function crmInitSalesAvailable(root) {
           openIndex = -1;
           showList();
           render(records);
+          if (state) {
+            state.textContent = data.message || "Inquiry claimed successfully. It is now in My Inquiries.";
+            state.classList.add("is-success");
+            state.hidden = false;
+          }
           document.dispatchEvent(new CustomEvent("crm:claim-inquiry", { detail: { ref } }));
         })
         .catch((error) => {
@@ -3041,7 +3069,7 @@ function crmInitManagerInbox(root) {
   const $ = (selector) => root.querySelector(selector);
   const el = {
     shell: $("#miShell"), list: $("#miList"), listState: $("#miListState"), noResults: $("#miNoResults"),
-    search: $("#miSearch"), unread: $("#miUnread"), listTitle: $("#miListTitle"),
+    search: $("#miSearch"), unread: $("#miUnread"), unreadToggle: $("#miUnreadToggle"), all: $("#miAll"), listCount: $("#miListCount"), listTitle: $("#miListTitle"),
     staffMenu: $("#miStaffMenu"), staffLabel: $("#miStaffLabel"), readMenu: $("#miReadMenu"), readLabel: $("#miReadLabel"),
     clear: $("#miClear"), empty: $("#miEmpty"), thread: $("#miThread"), feed: $("#miFeed"),
     avatar: $("#miAvatar"), name: $("#miName"), ref: $("#miRef"), subject: $("#miSubject"),
@@ -3054,13 +3082,13 @@ function crmInitManagerInbox(root) {
   const TABS = {
     sales: {
       list: "list_conversations", listKey: "conversations", messages: "conversation_messages", idParam: "conversation_id", itemKey: "conversation",
-      title: "Conversations", search: "Search customer or inquiry ID...", allStaff: "All Sales Staff", staffWord: "Sales",
+      title: "Conversations", search: "Search customer, inquiry, or message...", allStaff: "Sales", staffWord: "Sales",
       empty: "No sales conversations yet.", openLabel: "Open Inquiry Details", openIcon: "bi-folder2-open",
       handled: "Customer replies are handled by assigned Sales Staff.", responsible: "Responsible Sales Staff",
     },
     support: {
       list: "list_tickets", listKey: "tickets", messages: "ticket_messages", idParam: "ticket_id", itemKey: "ticket",
-      title: "Support Tickets", search: "Search customer or ticket ID...", allStaff: "All Support Staff", staffWord: "CS",
+      title: "Support Tickets", search: "Search customer or ticket ID...", allStaff: "Support", staffWord: "CS",
       empty: "No support tickets yet.", openLabel: "View Ticket Details", openIcon: "bi-ticket-detailed",
       handled: "Customer replies are handled by assigned Customer Service Staff.", responsible: "Responsible Customer Service Staff",
     },
@@ -3156,7 +3184,10 @@ function crmInitManagerInbox(root) {
     if (st.staff !== "all" && !names.includes(st.staff)) st.staff = "all";
     el.staffMenu.innerHTML = dropdownItems([{ value: "all", label: cfg().allStaff }].concat(names.map((n) => ({ value: n, label: n }))), st.staff);
     el.staffLabel.textContent = st.staff === "all" ? cfg().allStaff : st.staff;
-    el.readLabel.textContent = { all: "All Messages", unread: "Unread", read: "Read" }[st.read];
+    el.readLabel.textContent = { all: "Status", unread: "Unread", read: "Read" }[st.read];
+    el.unreadToggle.setAttribute("aria-pressed", st.read === "unread" ? "true" : "false");
+    el.all.classList.toggle("is-active", st.staff === "all" && st.read === "all" && !el.search.value.trim());
+    el.all.setAttribute("aria-pressed", st.staff === "all" && st.read === "all" && !el.search.value.trim() ? "true" : "false");
     el.readMenu.querySelectorAll(".custom-dropdown-item").forEach((a) =>
       a.toggleAttribute("aria-selected", a.dataset.value === st.read));
   }
@@ -3175,7 +3206,7 @@ function crmInitManagerInbox(root) {
     const rows = visibleRows();
     const unread = items().filter((t) => t.unread > 0).length;
     el.unread.hidden = unread === 0;
-    el.unread.textContent = unread + " Unread";
+    el.unread.textContent = String(unread);
 
     el.list.innerHTML = rows.map((t) =>
       '<button type="button" class="csi-item' + (t.unread > 0 ? " is-unread" : "") + '" data-id="' + crmEscape(t.id) + '"' +
@@ -3194,6 +3225,7 @@ function crmInitManagerInbox(root) {
     ).join("");
 
     const total = items().length;
+    el.listCount.textContent = String(total);
     el.noResults.hidden = !(total > 0 && rows.length === 0);
     el.listState.hidden = total > 0;
     if (total === 0) el.listState.textContent = st.error || cfg().empty;
@@ -3282,8 +3314,12 @@ function crmInitManagerInbox(root) {
       // Name + time ABOVE the bubble (customer on the left, staff on the right).
       const who = '<strong class="mi-sender">' + crmEscape(m.sender_name || "") + "</strong>";
       const whenTag = '<span class="mi-time">' + crmEscape(when) + "</span>";
+      const messageAvatar = !m.is_mine
+        ? crmAvatarHTML(crmTicketInitials(m.sender_name || ""), "", "mi-message-avatar")
+        : "";
       const bubbleBody = (m.message ? "<p>" + crmRichText(m.message) + "</p>" : "") + (quotationCard(m.quotation) || "") + (paymentRequestCard(m.payment_request) || "") + files;
       return '<article class="csi-msg mi-msg' + (m.is_mine ? " is-mine" : "") + '">' +
+        messageAvatar +
         '<div class="csi-msg-meta mi-meta">' + (m.is_mine ? whenTag + who : who + whenTag) + "</div>" +
         (bubbleBody ? '<div class="csi-bubble">' + bubbleBody + "</div>" : "") + photos +
       "</article>";
@@ -3395,7 +3431,19 @@ function crmInitManagerInbox(root) {
     const item = event.target.closest(".csi-item");
     if (item) select(item.dataset.id);
   });
-  el.search.addEventListener("input", renderList);
+  el.search.addEventListener("input", () => { renderFilters(); renderList(); });
+  el.unreadToggle.addEventListener("click", () => {
+    st.read = st.read === "unread" ? "all" : "unread";
+    renderFilters();
+    renderList();
+  });
+  el.all.addEventListener("click", () => {
+    el.search.value = "";
+    st.staff = "all";
+    st.read = "all";
+    renderFilters();
+    renderList();
+  });
   el.back.addEventListener("click", () => el.shell.classList.remove("is-thread-open"));
   el.clear.addEventListener("click", () => {
     el.search.value = "";
@@ -3885,6 +3933,7 @@ function crmCalEvent(record) {
     guests: crmArrangementHasPax(arrangementText) ? pick(["expected_guests", "guests", "pax"]).replace(/\s*(pax|guests?)$/i, "") : "",
 
     arrangement: arrangementText,
+    locationLabel: /pick-?up/i.test(arrangementText) ? "Pickup Location" : (/deliver/i.test(arrangementText) ? "Delivery Address" : "Event Venue / Address"),
 
     key: crmCalArrangementKey(arrangementText),
 
@@ -4010,7 +4059,7 @@ function crmCalBookingHTML(ev) {
           (ev.hasPax ? field("Guest Count (PAX)", value(ev.guests ? ev.guests + " Guests" : "")) : "") +
           field("Catering Arrangement", '<span class="cal-arr-pill is-' + ev.key + '"><i class="bi ' + arr.icon + '" aria-hidden="true"></i>' + crmEscape(ev.arrangement || arr.label) + "</span>") +
           field("Assigned Staff", '<span class="iq-value">' + person(ev.staff, ev.staffPhoto, "Unassigned") + "</span>") +
-          field("Event Location / Venue Address", value(ev.location), ev.hasPax ? "tk-span-all" : "") +
+          field(ev.locationLabel, value(ev.location), ev.hasPax ? "tk-span-all" : "") +
         "</div>" +
       "</section>" +
       '<section class="card iq-detail-card">' + head("Customer Information") +
@@ -4367,6 +4416,7 @@ function crmInitCalendar(root) {
     openIndex = i;
 
     set("#calDetailLocation", ev.location);
+    set("#calDetailLocationLabel", ev.locationLabel);
 
     const pill = root.querySelector("#calDetailArrangement");
 
@@ -5056,7 +5106,8 @@ function crmInitTicketCards(root) {
         showDetail(data.ticket);
         return true;
       } catch (error) {
-        window.alert(error.message || "Unable to update this ticket.");
+        if (window.crmToast) window.crmToast(error.message || "Unable to update this ticket.", "error");
+        else console.error("CRM toast component was not loaded before ticket updates.");
         showDetail(ticket); // put the dropdowns back to what is saved
         return false;
       }
@@ -5742,11 +5793,8 @@ function crmInitMenuManagement(page) {
   const firstNumber = (price) => { const m = String(price || '').replace(/,/g, '').match(/\d+(\.\d+)?/); return m ? Number(m[0]) : 0; };
 
   function toast(message) {
-    const box = $('mmToast');
-    box.textContent = message;
-    box.hidden = false;
-    clearTimeout(toast.t);
-    toast.t = setTimeout(() => { box.hidden = true; }, 3200);
+    if (window.crmToast) window.crmToast(message, "success");
+    else console.error("CRM toast component was not loaded before menu management.");
   }
 
   const peso = (n) => '\u20B1' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -5816,7 +5864,7 @@ function crmInitMenuManagement(page) {
   }
 
   function render() {
-    ['all', 'Best Sellers', 'Bilao', 'Catering Packages'].forEach((c) => {
+    ['all', 'Lechon', 'Bilao', 'Viands'].forEach((c) => {
       const n = c === 'all' ? state.items.length : state.items.filter((i) => i.category === c).length;
       const badge = page.querySelector('[data-count="' + c + '"]');
       if (badge) badge.textContent = n;
@@ -5845,7 +5893,8 @@ function crmInitMenuManagement(page) {
       const body = el('div', 'mm-card-body');
       body.appendChild(el('span', 'mm-tag', item.category));
       body.appendChild(el('h3', 'mm-name', item.name));
-      body.appendChild(el('p', 'mm-specs', item.specs));
+      body.appendChild(el('p', 'mm-specs', item.specs || 'Serving capacity not provided'));
+      body.appendChild(el('span', 'mm-availability', item.status || 'Active'));
       if (item.tiers && item.tiers.length) body.appendChild(el('p', 'mm-tier-count', item.tiers.length + (item.tiers.length === 1 ? ' portion tier' : ' portion tiers')));
       card.appendChild(body);
 
@@ -5858,8 +5907,8 @@ function crmInitMenuManagement(page) {
       edit.appendChild(icon('bi-pencil-square'));
       const del = el('button', 'mm-icon-btn mm-icon-danger');
       del.type = 'button'; del.dataset.mmDelete = item.id;
-      del.setAttribute('aria-label', 'Delete ' + item.name); del.title = 'Delete';
-      del.appendChild(icon('bi-trash3'));
+      del.setAttribute('aria-label', 'Archive ' + item.name); del.title = 'Archive';
+      del.appendChild(icon('bi-archive'));
       actions.append(view, edit, del);
       card.appendChild(actions);
       grid.appendChild(card);
@@ -5949,6 +5998,7 @@ function crmInitMenuManagement(page) {
   function addTierRow(t) {
     t = t || {};
     const row = el('div', 'mm-tier');
+    row.dataset.tierId = t.tier_id || t.id || '';
     const name = el('input', 'mm-input mm-tier-input'); name.type = 'text'; name.maxLength = 100; name.placeholder = 'e.g. 1/4 KG Portion'; name.autocomplete = 'off'; name.dataset.tier = 'name'; name.value = t.name || '';
     const price = el('input', 'mm-input mm-tier-input'); price.type = 'text'; price.inputMode = 'decimal'; price.maxLength = 14; price.placeholder = '230'; price.autocomplete = 'off'; price.dataset.tier = 'price';
     price.value = t.price !== undefined && t.price !== null && t.price !== '' ? commaNumber(String(Number(t.price))) : '';
@@ -5976,7 +6026,7 @@ function crmInitMenuManagement(page) {
       const num = Number(raw.replace(/[,\u20B1\s]/g, ''));
       if (!name) { get('name').classList.add('is-invalid'); error = error || 'Tier ' + (i + 1) + ': enter the portion name.'; }
       if (!raw || !isFinite(num) || num < 0) { get('price').classList.add('is-invalid'); error = error || 'Tier ' + (i + 1) + ': enter a valid price.'; }
-      tiers.push({ name, price: isFinite(num) ? num : 0, pax });
+      tiers.push({ tier_id: Number(row.dataset.tierId) || null, name, price: isFinite(num) ? num : 0, pax });
     });
     return { tiers, error };
   }
@@ -6087,7 +6137,8 @@ function crmInitMenuManagement(page) {
   function resetForm(item) {
     form.reset();
     ['item_name', 'category', 'display_price', 'serving_specs', 'tiers', 'photo'].forEach((n) => fieldError(n, ''));
-    setDd($('mmCategoryDd'), item ? item.category : 'Best Sellers', false);
+      setDd($('mmCategoryDd'), item ? item.category : 'Lechon', false);
+      $('mmTiers').hidden = !!(item && item.category === 'Bilao');
     $('mmFormError').hidden = true;
     state.editId = item ? item.id : null;
     $('mmFormTitle').textContent = item ? 'Edit Menu Item' : 'Add New Menu Item';
@@ -6103,14 +6154,17 @@ function crmInitMenuManagement(page) {
   }
   function validate() {
     let ok = true;
-    const need = { item_name: 'Enter the item name.', display_price: 'Enter the display price or range.', serving_specs: 'Enter the serving / PAX specs.' };
+    const category = form.elements.category.value;
+    const need = { item_name: 'Enter the item name.' };
+    if (category === 'Bilao') need.display_price = 'Enter the item price.';
     Object.keys(need).forEach((n) => {
       const empty = !form.elements[n].value.trim();
       fieldError(n, empty ? need[n] : ''); if (empty) ok = false;
     });
-    const tierCheck = readTiers();
+    const tierCheck = category === 'Bilao' ? { tiers: [], error: '' } : readTiers();
     fieldError('tiers', tierCheck.error);
     if (tierCheck.error) ok = false;
+    if (category !== 'Bilao' && !tierCheck.tiers.length) { fieldError('tiers', 'Add at least one price tier.'); ok = false; }
     const file = form.elements.photo.files[0];
     if (!file && !state.editId) { fieldError('photo', 'Upload a photo of the item.'); ok = false; }
     else if (file && !/^image\/(png|jpe?g|webp)$/.test(file.type)) { fieldError('photo', 'Use a PNG, JPG or WEBP photo.'); ok = false; }
@@ -6152,7 +6206,7 @@ function crmInitMenuManagement(page) {
       const pickedPhoto = form.elements.photo.files[0];
       if (pickedPhoto) { const small = await shrinkPhoto(pickedPhoto); if (small) body.set('photo', small, small.name); }
       body.set('csrf_token', state.csrf);
-      body.set('tiers', JSON.stringify(readTiers().tiers));
+      body.set('tiers', JSON.stringify(form.elements.category.value === 'Bilao' ? [] : readTiers().tiers));
       if (state.editId) body.set('menu_item_id', state.editId);
       const data = await call(state.editId ? 'edit' : 'add', body);
       if (state.editId) state.items = state.items.map((i) => (i.id === data.item.id ? data.item : i));
@@ -6222,6 +6276,13 @@ function crmInitMenuManagement(page) {
   });
 
   // tiers: add / remove a row
+  $('mmCategoryDd').addEventListener('click', (e) => {
+    const option = e.target.closest('.custom-dropdown-item');
+    if (!option) return;
+    const category = option.dataset.value;
+    $('mmTiers').hidden = category === 'Bilao';
+    $('mmPrice').placeholder = category === 'Bilao' ? 'e.g. 1,150' : 'Tier prices are entered below';
+  });
   $('mmAddTier').addEventListener('click', () => {
     if (tierBox().children.length >= MAX_TIERS) return;
     addTierRow({});
@@ -8030,7 +8091,7 @@ if (!window.__crmDropdownAutoScrollBound) {
    Send, Prepare Revised Version) using sales-inquiries.php (quotation_save / quotation_send).
    Deposit = 20% of the total. No CSS here: it only uses classes that already exist in all-pages.css
    (custom-modal-card, iw-dialog, modal-input-field, modal-input-label, modal-btn-*, csi-outline-btn,
-   ci-food, ci-summary, ci-lines, ci-note, stage-pill, mm-toast) and Bootstrap utilities.
+   ci-food, ci-summary, ci-lines, ci-note, stage-pill, and Bootstrap utilities.
    ============================================================================================ */
 (function () {
   if (window.__crmQuotationUi) return;
@@ -8049,13 +8110,9 @@ if (!window.__crmDropdownAutoScrollBound) {
     return found.length === 1 ? parseFloat(found[0].replace(/,/g, "")) || 0 : 0;
   }
 
-  function toast(message) {
-    let t = document.getElementById("qtToast");
-    if (!t) { t = document.createElement("div"); t.id = "qtToast"; t.className = "mm-toast"; document.body.appendChild(t); }
-    t.textContent = message;
-    t.hidden = false;
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => { t.hidden = true; }, 5000);
+  function toast(message, type) {
+    if (window.crmToast) window.crmToast(message, type || "success");
+    else console.error("CRM toast component was not loaded before quotation actions.");
   }
 
   function post(action, fields) {
@@ -8277,33 +8334,33 @@ if (!window.__crmDropdownAutoScrollBound) {
   document.addEventListener("crm:quotation-prepare", (e) => {
     const ctx = ctxOf(e);
     const q = ctx.record && ctx.record.quotation;
-    if (isDeclined(ctx.record)) return toast(DECLINED_MSG);
-    if (q && q.status === "Accepted") return toast("The customer already accepted this quotation.");
-    if (q && q.status !== "Draft" && q.status !== "Withdrawn") return toast("A quotation was already sent. Use “Prepare Revised Version” to change it.");
+    if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
+    if (q && q.status === "Accepted") return toast("The customer already accepted this quotation.", "warning");
+    if (q && q.status !== "Draft" && q.status !== "Withdrawn") return toast("A quotation was already sent. Use “Prepare Revised Version” to change it.", "warning");
     openEditor(Object.assign(ctx, { mode: "save", base: q || null }));
   });
 
   document.addEventListener("crm:quotation-revise", (e) => {
     const ctx = ctxOf(e);
     const q = ctx.record && ctx.record.quotation;
-    if (isDeclined(ctx.record)) return toast(DECLINED_MSG);
+    if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
     if (!q || q.status === "Draft") return openEditor(Object.assign(ctx, { mode: "save", base: q || null }));
-    if (q.status === "Accepted") return toast("The customer already accepted this quotation, so it can no longer be revised.");
+    if (q.status === "Accepted") return toast("The customer already accepted this quotation, so it can no longer be revised.", "warning");
     openEditor(Object.assign(ctx, { mode: "revise", base: q }));
   });
 
   document.addEventListener("crm:quotation-preview", (e) => {
     const q = e.detail.record && e.detail.record.quotation;
-    if (!q) return toast("Prepare a quotation first.");
+    if (!q) return toast("Prepare a quotation first.", "warning");
     openPreview(q, e.detail.record);
   });
 
   document.addEventListener("crm:quotation-send", (e) => {
     const ctx = ctxOf(e);
     const q = ctx.record && ctx.record.quotation;
-    if (isDeclined(ctx.record)) return toast(DECLINED_MSG);
-    if (!q) return toast("Prepare a quotation first.");
-    if (q.status !== "Draft") return toast("This version was already " + String(q.status).toLowerCase() + ". Use “Prepare Revised Version” to send a new one.");
+    if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
+    if (!q) return toast("Prepare a quotation first.", "warning");
+    if (q.status !== "Draft") return toast("This version was already " + String(q.status).toLowerCase() + ". Use “Prepare Revised Version” to send a new one.", "warning");
     crmConfirm({
       title: "Send quotation?",
       message: [
@@ -8320,7 +8377,7 @@ if (!window.__crmDropdownAutoScrollBound) {
         if (!ok) return null;
         return post("quotation_send", { inquiry_ref: ctx.ref }).then((data) => { applyResult(ctx, data); toast(data.message || "Sent."); });
       })
-      .catch((err) => toast(err.message));
+      .catch((err) => toast(err.message, "error"));
   });
 })();
 

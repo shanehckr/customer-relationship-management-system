@@ -7,7 +7,7 @@
  *   GET reports-api.php?range=custom&start=YYYY-MM-DD&end=YYYY-MM-DD
  *
  * Put it in the SAME folder as inquiry-common.php, bookings-schema.php and quotations-schema.php.
- * It only READS tables your other pages already use (nothing is created or changed except empty ticket / quotation tables if missing):
+ * It only reads tables provisioned by database/catering_crm.sql; request-time schema changes are not performed:
  *   users + roles -> the 5 roles | leads -> inquiries | quotations | bookings | cib_tickets -> support tickets
  *
  * THE 5 ROLES
@@ -36,20 +36,41 @@ define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 
 require __DIR__ . '/inquiry-common.php';
+// Keep internal PHP/database exceptions out of this JSON API response.
+set_exception_handler(function ($e) {
+    error_log('reports-api: ' . $e->getMessage());
+    fail('An internal error occurred while loading reports.', 500);
+});
+
+$uid = (int)($_SESSION['user_id'] ?? 0);
+if ($uid < 1) fail('Please log in again.', 401);
+
+try {
+    $identity = $db->prepare('SELECT u.account_status, r.role_name FROM users u
+                              JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1');
+    $identity->execute([$uid]);
+    $account = $identity->fetch();
+} catch (Throwable $e) {
+    error_log('reports-api: account authorization lookup failed: ' . $e->getMessage());
+    fail('Unable to verify your account.', 500);
+}
+if (!$account || $account['account_status'] !== 'Active') fail('Please log in again.', 401);
+
+$role = normRole($account['role_name']);
+$isAdmin = str_contains($role, 'admin');
+$isManager = !$isAdmin && str_contains($role, 'manager');
+$isSales = !$isAdmin && !$isManager && str_contains($role, 'sales');
+$isCs = !$isAdmin && !$isManager && !$isSales &&
+    (str_contains($role, 'service') || (bool)preg_match('/\bcs\b/', $role));
+if (!$isAdmin && !$isManager && !$isSales && !$isCs) fail('You do not have access to reports.', 403);
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') fail('GET required.', 405);
+
 require __DIR__ . '/bookings-schema.php';
 require __DIR__ . '/quotations-schema.php';
 require __DIR__ . '/booking-feedback.php';
 ensureBookingsSchema($db);
 ensureQuotationsSchema($db);
-
-if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') fail('GET required.', 405);
-
-$db->exec("CREATE TABLE IF NOT EXISTS `$DB_CRM`.cib_tickets (
-    id INT AUTO_INCREMENT PRIMARY KEY, customer_id INT NOT NULL, ticket_number VARCHAR(30) DEFAULT '',
-    subject VARCHAR(160) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Open', conversation_id INT DEFAULT NULL,
-    created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, INDEX (customer_id)
-) ENGINE=InnoDB");
-ensureColumn($db, $DB_CRM, 'cib_tickets', 'priority', "VARCHAR(20) NOT NULL DEFAULT 'Medium'");
 
 /* ------------------------------------------------------------------ helpers ------------------------------------------------------------------ */
 
@@ -57,7 +78,7 @@ function rpDay($v): string { return substr((string)$v, 0, 10); }
 function rpIn($v, string $from, string $to): bool { $d = rpDay($v); return $d !== '' && $d >= $from && $d <= $to; }
 
 /** Every user with their role name. Works with users.role_id -> roles, or with a text role column. */
-function rpLoadUsers(PDO $db, string $crm): array {
+function rpLoadUsers(AppDatabase $db, string $crm): array {
     $cols = [];
     foreach ($db->query("SHOW COLUMNS FROM `$crm`.users")->fetchAll() as $c) $cols[strtolower($c['Field'])] = $c['Field'];
     $pk = usersPk($db, $crm);
@@ -71,7 +92,7 @@ function rpLoadUsers(PDO $db, string $crm): array {
     $base = "u.`$pk` AS id, $nameSql AS name, $regSql AS registered, $statusSql AS status";
     try {
         $rows = $db->query("SELECT $base, r.role_name AS role FROM `$crm`.users u LEFT JOIN `$crm`.roles r ON r.role_id = u.role_id")->fetchAll();
-    } catch (PDOException $e) {                      // no role_id / roles table: the role is stored as text on the user
+    } catch (Throwable $e) {                      // no role_id / roles table: the role is stored as text on the user
         $roleSql = "''";
         foreach (['role', 'user_role', 'role_name', 'user_type', 'account_type'] as $c) if (isset($cols[$c])) { $roleSql = "u.`{$cols[$c]}`"; break; }
         $rows = $db->query("SELECT $base, $roleSql AS role FROM `$crm`.users u")->fetchAll();
@@ -158,22 +179,9 @@ function rpTicketStatus($status): string {
 
 /* ------------------------------------------------------------------ who is asking ------------------------------------------------------------------ */
 
-$uid = (int)sessionFirst(['user_id', 'id', 'staff_id', 'admin_id', 'manager_id']);
-if (!$uid) fail('Please log in again.', 401);
-
 $users = rpLoadUsers($db, $DB_CRM);
 $names = [];
 foreach ($users as $u) $names[$u['id']] = $u['name'];
-
-$roleRaw = sessionFirst(['role_name', 'role', 'user_role', 'user_type', 'account_type']);
-if ($roleRaw === '') foreach ($users as $u) if ($u['id'] === $uid) $roleRaw = $u['role'];
-$role = normRole($roleRaw);
-
-$isAdmin   = str_contains($role, 'admin');
-$isManager = !$isAdmin && str_contains($role, 'manager');
-$isSales   = !$isAdmin && !$isManager && str_contains($role, 'sales');
-$isCs      = !$isAdmin && !$isManager && !$isSales && (str_contains($role, 'service') || (bool)preg_match('/\bcs\b/', $role));
-if (!$isAdmin && !$isManager && !$isSales && !$isCs) fail('You do not have access to reports.', 403);
 
 $orgWide     = $isAdmin || $isManager;
 $showSales   = $orgWide || $isSales;     // customer + sales sections
@@ -241,10 +249,10 @@ if ($showSales) {
     // customer feedback: never breaks the report (no table / no column = the Feedback tab just shows zeros)
     try {
         ensureBookingFeedbackSchema($db);
-        $fbRows = $db->query("SELECT f.id, f.booking_id, f.rating, f.comments, f.images, f.created_at,
+        $fbRows = $db->query("SELECT f.feedback_id, f.booking_id, f.rating, f.comments, f.images, f.created_at,
                                      b.booking_ref, b.customer_name, b.event_title, b.assigned_staff_id, b.assigned_staff
                               FROM booking_feedback f LEFT JOIN bookings b ON b.booking_id = f.booking_id
-                              WHERE f.rating > 0 ORDER BY f.created_at DESC, f.id DESC")->fetchAll();
+                              WHERE f.rating > 0 ORDER BY f.created_at DESC, f.feedback_id DESC")->fetchAll();
     } catch (Throwable $e) { error_log('reports-api: feedback rows: ' . $e->getMessage()); }
     try {
         if ($db->query("SHOW COLUMNS FROM `bookings` LIKE 'feedback_requested_at'")->fetch()) {

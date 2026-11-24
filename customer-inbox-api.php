@@ -5,8 +5,8 @@
  * Put this file in the SAME folder as customer-inbox.html, e.g.
  *   C:\xampp\htdocs\customer-relationship-management-system\customer-inbox-api.php
  *
- * It creates its own tables on first run (cib_conversations, cib_messages,
- * cib_tickets, cib_ticket_messages), so you only need to set the 4 DB values below.
+ * Database access and schema are provided centrally by config/database.php and
+ * database/catering_crm.sql.
  *
  * Actions used by customerPages.js:
  *   list_conversations, messages, send_message,
@@ -14,16 +14,9 @@
  */
 
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
-$DB_HOST = '127.0.0.1';
-$DB_NAME = 'catering_crm';          // <-- your database name in phpMyAdmin (create it if needed)
-$DB_USER = 'root';         // XAMPP default
-$DB_PASS = '';             // XAMPP default is empty
+$DB_NAME = 'catering_crm';
 
-// Which session keys hold the logged-in customer's id (first one found is used).
-$SESSION_KEYS = ['customer_id', 'user_id', 'id'];
-
-// If nobody is logged in (testing only), use this customer id. Set to null to require login.
-$TEST_CUSTOMER_ID = 1;
+// Login establishes these canonical identity fields.
 
 $UPLOAD_DIR = __DIR__ . '/uploads/inbox';   // saved files
 $UPLOAD_URL = 'uploads/inbox';              // how the browser reaches them
@@ -56,70 +49,24 @@ if (!defined('SESSION_API')) define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 
 /* ------------------------- 2. DATABASE ------------------------- */
-try {
-    $root = new PDO("mysql:host=$DB_HOST;charset=utf8mb4", $DB_USER, $DB_PASS, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
-    $root->exec("CREATE DATABASE IF NOT EXISTS `$DB_NAME` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-    $db = new PDO("mysql:host=$DB_HOST;dbname=$DB_NAME;charset=utf8mb4", $DB_USER, $DB_PASS, [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
-} catch (PDOException $e) {
-    fail('Database connection failed. Check the settings at the top of customer-inbox-api.php. (' . $e->getMessage() . ')', 500);
-}
-
-$db->exec("CREATE TABLE IF NOT EXISTS cib_conversations (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    customer_id INT NOT NULL,
-    title VARCHAR(160) NOT NULL,
-    reference VARCHAR(60) DEFAULT '',
-    status VARCHAR(30) NOT NULL DEFAULT 'Active',
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    INDEX (customer_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_messages (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    conversation_id INT NOT NULL,
-    sender_type VARCHAR(20) NOT NULL,
-    sender_name VARCHAR(120) DEFAULT '',
-    message TEXT,
-    attachments TEXT,
-    created_at DATETIME NOT NULL,
-    INDEX (conversation_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_tickets (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    customer_id INT NOT NULL,
-    ticket_number VARCHAR(30) DEFAULT '',
-    subject VARCHAR(160) NOT NULL,
-    status VARCHAR(30) NOT NULL DEFAULT 'Open',
-    conversation_id INT DEFAULT NULL,
-    created_at DATETIME NOT NULL,
-    updated_at DATETIME NOT NULL,
-    INDEX (customer_id)
-) ENGINE=InnoDB");
-$db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_messages (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    ticket_id INT NOT NULL,
-    sender_type VARCHAR(20) NOT NULL,
-    sender_name VARCHAR(120) DEFAULT '',
-    message TEXT,
-    attachments TEXT,
-    created_at DATETIME NOT NULL,
-    INDEX (ticket_id)
-) ENGINE=InnoDB");
+require_once __DIR__ . '/config/database.php';
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 require_once __DIR__ . '/quotations-schema.php';
 ensureQuotationsSchema($db);
 require_once __DIR__ . '/payments-schema.php';
 ensurePaymentRequestsSchema($db);
 
 /* ------------------------- 3. WHO IS LOGGED IN ------------------------- */
-$customerId = null;
-foreach ($SESSION_KEYS as $key) {
-    if (!empty($_SESSION[$key])) { $customerId = (int)$_SESSION[$key]; break; }
-}
-if (!$customerId && $TEST_CUSTOMER_ID) $customerId = (int)$TEST_CUSTOMER_ID;
-if (!$customerId) fail('Please log in again.', 401);
+$customerId = (int)($_SESSION['user_id'] ?? 0);
+$sessionRole = strtolower(trim((string)($_SESSION['role_name'] ?? '')));
+if ($customerId < 1 || $sessionRole !== 'customer') fail('Please log in again.', 401);
+$identity = $db->prepare("SELECT u.user_id FROM users u JOIN roles r ON r.role_id = u.role_id
+                          WHERE u.user_id = ? AND u.account_status = 'Active' AND r.role_name = 'Customer' LIMIT 1");
+$identity->execute([$customerId]);
+if (!$identity->fetchColumn()) fail('Please log in again.', 401);
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 require_once __DIR__ . '/booking-feedback.php';       // "please rate us" message + card after an event is completed
 
@@ -127,19 +74,12 @@ require_once __DIR__ . '/booking-feedback.php';       // "please rate us" messag
 function now(): string { return date('Y-m-d H:i:s'); }
 
 /* Audit trail shown on the staff Tickets page (also written by tickets-api.php and cs-inbox-api.php). */
-$db->exec("CREATE TABLE IF NOT EXISTS cib_ticket_activity (
-    id INT AUTO_INCREMENT PRIMARY KEY, ticket_id INT NOT NULL, action VARCHAR(255) NOT NULL,
-    performed_by VARCHAR(120) NOT NULL DEFAULT '', performed_by_role VARCHAR(60) NOT NULL DEFAULT '',
-    created_at DATETIME NOT NULL, INDEX (ticket_id)
-) ENGINE=InnoDB");
+    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
 /* Unread badges for the customer: when the customer last opened a conversation / ticket. */
-function cibEnsureColumn(PDO $db, string $table, string $column, string $definition): bool {
-    $st = $db->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
-    $st->execute([$column]);
-    if ($st->fetch()) return false;
-    $db->exec("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
-    return true;
+function cibEnsureColumn(AppDatabase $db, string $table, string $column, string $definition): bool {
+    // Inbox columns are provisioned centrally from database/catering_crm.sql.
+    return false;
 }
 foreach (['cib_conversations', 'cib_tickets'] as $cibTable) {
     // first time only: everything that already exists counts as read
@@ -148,14 +88,14 @@ foreach (['cib_conversations', 'cib_tickets'] as $cibTable) {
     }
 }
 
-function ownConversation(PDO $db, int $customerId, $id): array {
+function ownConversation(AppDatabase $db, int $customerId, $id): array {
     $st = $db->prepare('SELECT * FROM cib_conversations WHERE id = ? AND customer_id = ?');
     $st->execute([(int)$id, $customerId]);
     $row = $st->fetch();
     if (!$row) fail('Conversation not found.', 404);
     return $row;
 }
-function ownTicket(PDO $db, int $customerId, $id): array {
+function ownTicket(AppDatabase $db, int $customerId, $id): array {
     $st = $db->prepare('SELECT * FROM cib_tickets WHERE id = ? AND customer_id = ?');
     $st->execute([(int)$id, $customerId]);
     $row = $st->fetch();
@@ -192,11 +132,17 @@ function customerHideQuoteCode(string $text): string {
 }
 
 function shapeMessage(array $m): array {
+    $senderType = (string)($m['sender_type'] ?? 'staff');
+    $senderName = trim((string)($m['sender_name'] ?? ''));
+    // Payment gateway notices are stored as staff rows for compatibility; expose a display hint only.
+    $isSystem = $senderType === 'system' || ($senderType === 'staff' && preg_match('/^(payments|payment system)$/i', $senderName) === 1);
     return [
         'id' => (int)$m['id'],
         'message' => customerHideQuoteCode((string)$m['message']),
-        'is_mine' => $m['sender_type'] === 'customer',
-        'sender_name' => $m['sender_type'] === 'customer' ? 'You' : ($m['sender_name'] ?: 'Catering team'),
+        'is_mine' => $senderType === 'customer',
+        'is_system' => $isSystem,
+        'system_kind' => $isSystem ? ($senderType === 'system' ? 'system' : 'payment') : '',
+        'sender_name' => $senderType === 'customer' ? 'You' : ($senderName ?: 'Catering team'),
         'attachments' => $m['attachments'] ? json_decode($m['attachments'], true) : [],
         'created_at' => str_replace(' ', 'T', $m['created_at']),
     ];
@@ -390,74 +336,6 @@ switch ($action) {
            ->execute([$ticket['id'], 'Ticket reopened by the customer', '', 'Customer', now()]);
         notifyTicketStaff($db, $ticket, $customerId, 'Ticket reopened', 'reopened');
         out(['success' => true]);
-    }
-
-    case 'seed_test_data': {
-        // TEST ONLY: open  customer-inbox-api.php?action=seed_test_data  in the browser.
-        // Replaces THIS customer's inbox data with examples. Delete this case before going live.
-        $db->beginTransaction();
-        try {
-            $db->prepare('DELETE FROM cib_messages WHERE conversation_id IN (SELECT id FROM cib_conversations WHERE customer_id = ?)')->execute([$customerId]);
-            $db->prepare('DELETE FROM cib_ticket_messages WHERE ticket_id IN (SELECT id FROM cib_tickets WHERE customer_id = ?)')->execute([$customerId]);
-            $db->prepare('DELETE FROM cib_tickets WHERE customer_id = ?')->execute([$customerId]);
-            $db->prepare('DELETE FROM cib_conversations WHERE customer_id = ?')->execute([$customerId]);
-
-            $newConv = function (string $title, string $ref, string $status, string $at) use ($db, $customerId): int {
-                $db->prepare('INSERT INTO cib_conversations (customer_id, title, reference, status, created_at, updated_at) VALUES (?,?,?,?,?,?)')
-                   ->execute([$customerId, $title, $ref, $status, $at, $at]);
-                return (int)$db->lastInsertId();
-            };
-            $addMsg = function (int $cid, string $who, string $msg, string $at) use ($db): void {
-                $db->prepare('INSERT INTO cib_messages (conversation_id, sender_type, sender_name, message, created_at) VALUES (?,?,?,?,?)')
-                   ->execute([$cid, $who, $who === 'customer' ? 'You' : 'Catering team', $msg, $at]);
-                $db->prepare('UPDATE cib_conversations SET updated_at = ? WHERE id = ?')->execute([$at, $cid]);
-            };
-
-            $c1 = $newConv('Corporate Gala Dinner', 'INQ-2026-0419', 'Active', '2026-11-01 09:00:00');
-            $addMsg($c1, 'staff',    'Hello! We reviewed your inquiry for the Corporate Gala Dinner.', '2026-11-01 09:00:00');
-            $addMsg($c1, 'customer', 'Great, thank you. Can you do 80 guests with a plated menu?',      '2026-11-01 09:10:00');
-            $addMsg($c1, 'staff',    'Yes, we can. We are preparing your quotation now.',               '2026-11-03 09:00:00');
-            $addMsg($c1, 'staff',    'We sent your quotation. Please check your email.',                '2026-11-03 09:05:00');
-
-            $c2 = $newConv('Wedding Reception', 'INQ-2026-0420', 'Active', '2026-10-28 14:00:00');
-            $addMsg($c2, 'customer', 'Hi, we would like a quote for a wedding reception on Dec 20.',    '2026-10-28 14:00:00');
-            $addMsg($c2, 'staff',    'Congratulations! How many guests are you expecting?',             '2026-10-29 10:00:00');
-            $addMsg($c2, 'customer', 'About 120 guests. Thank you!',                                    '2026-10-30 15:30:00');
-
-            $c3 = $newConv('Birthday Buffet', 'INQ-2026-0421', 'Active', '2026-10-20 10:00:00');
-            $addMsg($c3, 'staff',    'Your birthday buffet is confirmed. See you on the day!',          '2026-10-21 11:00:00');
-
-            // Ticket 1 (open) with its linked conversation, ticket 2 (resolved)
-            $c4 = $newConv('Change event date', '', 'Support', '2026-11-02 08:00:00');
-            $addMsg($c4, 'customer', 'I need to move my event to December 22.', '2026-11-02 08:00:00');
-
-            $addTicket = function (string $subject, string $status, ?int $convId, string $at) use ($db, $customerId): int {
-                $db->prepare('INSERT INTO cib_tickets (customer_id, subject, status, conversation_id, created_at, updated_at) VALUES (?,?,?,?,?,?)')
-                   ->execute([$customerId, $subject, $status, $convId, $at, $at]);
-                $id = (int)$db->lastInsertId();
-                $db->prepare('UPDATE cib_tickets SET ticket_number = ? WHERE id = ?')->execute(['TCK-' . str_pad((string)$id, 4, '0', STR_PAD_LEFT), $id]);
-                return $id;
-            };
-            $addTicketMsg = function (int $tid, string $who, string $msg, string $at) use ($db): void {
-                $db->prepare('INSERT INTO cib_ticket_messages (ticket_id, sender_type, sender_name, message, created_at) VALUES (?,?,?,?,?)')
-                   ->execute([$tid, $who, $who === 'customer' ? 'You' : 'Support team', $msg, $at]);
-                $db->prepare('UPDATE cib_tickets SET updated_at = ? WHERE id = ?')->execute([$at, $tid]);
-            };
-
-            $t1 = $addTicket('Change event date', 'Open', $c4, '2026-11-02 08:00:00');
-            $addTicketMsg($t1, 'customer', 'I need to move my event to December 22.',                '2026-11-02 08:00:00');
-            $addTicketMsg($t1, 'staff',    'Thanks! We are checking availability for December 22.', '2026-11-03 08:00:00');
-
-            $t2 = $addTicket('Invoice address wrong', 'Resolved', null, '2026-10-15 13:00:00');
-            $addTicketMsg($t2, 'customer', 'The address on my invoice is wrong.',                   '2026-10-15 13:00:00');
-            $addTicketMsg($t2, 'staff',    'Fixed and re-sent. Marking this as resolved.',          '2026-10-16 09:00:00');
-
-            $db->commit();
-        } catch (Throwable $e) {
-            $db->rollBack();
-            throw $e;
-        }
-        out(['success' => true, 'message' => 'Test data created for customer id ' . $customerId . '. Now open the Inbox page and refresh.']);
     }
 
     default:

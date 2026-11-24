@@ -17,42 +17,8 @@ require_once __DIR__ . '/quotations-schema.php';
 const PAY_REQUEST_URL = 'xendit-api.php?action=pay_request&id=';   // the customer's "Pay Now" link
 const PAY_REQUEST_DAYS_BEFORE_EVENT = 1;                            // default due date = event date minus this many days
 
-function ensurePaymentRequestsSchema(PDO $db): void {
-    $db->exec("CREATE TABLE IF NOT EXISTS payment_requests (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        booking_id INT NOT NULL,
-        inquiry_id INT NULL,
-        customer_id INT NULL,
-        amount DECIMAL(12,2) NOT NULL,
-        due_date DATE NULL,
-        note VARCHAR(500) NULL,
-        status VARCHAR(20) NOT NULL DEFAULT 'Pending',
-        requested_by VARCHAR(120) NULL,
-        requested_by_id INT NULL,
-        requested_at DATETIME NOT NULL,
-        invoice_id VARCHAR(80) NULL,
-        checkout_url TEXT NULL,
-        invoice_created_at DATETIME NULL,
-        payment_id VARCHAR(80) NULL,
-        method VARCHAR(40) NULL,
-        paid_amount DECIMAL(12,2) NULL,
-        paid_at DATETIME NULL,
-        UNIQUE KEY uq_pr_invoice (invoice_id),
-        INDEX idx_pr_booking (booking_id),
-        INDEX idx_pr_customer (customer_id)
-    ) ENGINE=InnoDB");
-    // the time of day of the "pay by" deadline (due_date is the day)
-    try {
-        $c = $db->prepare("SHOW COLUMNS FROM `payment_requests` LIKE 'due_time'");
-        $c->execute();
-        if (!$c->fetch()) $db->exec("ALTER TABLE `payment_requests` ADD COLUMN `due_time` TIME NULL");
-    } catch (PDOException $e) { error_log('payments-schema: could not add payment_requests.due_time: ' . $e->getMessage()); }
-    // the chat message that carries the payment card
-    try {
-        $st = $db->prepare("SHOW COLUMNS FROM `cib_messages` LIKE 'payment_request_id'");
-        $st->execute();
-        if (!$st->fetch()) $db->exec("ALTER TABLE `cib_messages` ADD COLUMN `payment_request_id` INT NULL DEFAULT NULL");
-    } catch (PDOException $e) { /* cib_messages does not exist yet: the inbox APIs create it first */ }
+function ensurePaymentRequestsSchema(AppDatabase $db): void {
+    // Payment request tables and message links are provisioned centrally from database/catering_crm.sql.
 }
 
 /** Default due date: PAY_REQUEST_DAYS_BEFORE_EVENT days before the event, but never in the past and never after the event. */
@@ -125,7 +91,7 @@ function paymentRequestShape(array $r, bool $forCustomer = false): array {
  * The request each booking should show: its Pending one, otherwise its latest Paid one, otherwise none.
  * Returns [booking_id => payment request JSON].
  */
-function paymentRequestsByBooking(PDO $db, array $bookingIds, bool $forCustomer = false): array {
+function paymentRequestsByBooking(AppDatabase $db, array $bookingIds, bool $forCustomer = false): array {
     $ids = array_values(array_unique(array_filter(array_map('intval', $bookingIds))));
     if (!$ids) return [];
     $in = implode(',', array_fill(0, count($ids), '?'));
@@ -133,7 +99,7 @@ function paymentRequestsByBooking(PDO $db, array $bookingIds, bool $forCustomer 
         $st = $db->prepare(paymentRequestSelect() . " WHERE pr.booking_id IN ($in) AND pr.status IN ('Pending','Paid') ORDER BY pr.id DESC");
         $st->execute($ids);
         $rows = $st->fetchAll();
-    } catch (PDOException $e) { error_log('paymentRequestsByBooking: ' . $e->getMessage()); return []; }
+    } catch (Throwable $e) { error_log('paymentRequestsByBooking: ' . $e->getMessage()); return []; }
     $pending = []; $paid = [];
     foreach ($rows as $r) {
         $bid = (int)$r['booking_id'];
@@ -149,7 +115,7 @@ function paymentRequestsByBooking(PDO $db, array $bookingIds, bool $forCustomer 
 }
 
 /** Payment requests referenced by chat messages: [payment_request_id => JSON]. Used by both inbox APIs. */
-function paymentRequestsForMessages(PDO $db, array $messageRows, bool $forCustomer = false): array {
+function paymentRequestsForMessages(AppDatabase $db, array $messageRows, bool $forCustomer = false): array {
     $ids = [];
     foreach ($messageRows as $m) if (!empty($m['payment_request_id'])) $ids[(int)$m['payment_request_id']] = true;
     $ids = array_keys($ids);
@@ -159,7 +125,7 @@ function paymentRequestsForMessages(PDO $db, array $messageRows, bool $forCustom
         $st = $db->prepare(paymentRequestSelect() . " WHERE pr.id IN ($in)");
         $st->execute($ids);
         $rows = $st->fetchAll();
-    } catch (PDOException $e) { error_log('paymentRequestsForMessages: ' . $e->getMessage()); return []; }
+    } catch (Throwable $e) { error_log('paymentRequestsForMessages: ' . $e->getMessage()); return []; }
     $out = [];
     foreach ($rows as $r) $out[(int)$r['id']] = paymentRequestShape($r, $forCustomer);
     return $out;

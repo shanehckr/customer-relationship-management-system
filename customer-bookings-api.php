@@ -22,25 +22,23 @@ require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see
 ensureBookingsSchema($db);
 ensureBookingFeedbackSchema($db);
 
-/* Auto-complete (Confirmed + past date + fully paid -> Completed) and the "please rate us" inbox message.
-   Runs on every request to this API, so the progress bar and Feedback tab stay up to date without staff action. */
-try { completeFinishedBookings($db, $DB_CRM ?? ''); }   // never lets this step break the page
-catch (Throwable $e) { error_log('customer-bookings-api: completeFinishedBookings failed: ' . $e->getMessage()); }
 ensurePaymentRequestsSchema($db);
 
 /* ---------- who is logged in ---------- */
-// Same fallback order customer-inbox-api.php uses.
-$customerId = (int)sessionFirst(['customer_id', 'user_id', 'id']);
-if (!$customerId) {
-    // TESTING only: matches the $TEST_CUSTOMER_ID default in customer-inbox-api.php.
-    // Set to 0 (or delete this block) before going live.
-    $TEST_CUSTOMER_ID = 1;
-    if ($TEST_CUSTOMER_ID) $customerId = (int)$TEST_CUSTOMER_ID;
-    else fail('Please log in again.', 401);
-}
+$customerId = (int)($_SESSION['user_id'] ?? 0);
+$sessionRole = strtolower(trim((string)($_SESSION['role_name'] ?? '')));
+if ($customerId < 1 || $sessionRole !== 'customer') fail('Please log in again.', 401);
+$identity = $db->prepare("SELECT u.user_id FROM users u JOIN roles r ON r.role_id = u.role_id
+                          WHERE u.user_id = ? AND u.account_status = 'Active' AND r.role_name = 'Customer' LIMIT 1");
+$identity->execute([$customerId]);
+if (!$identity->fetchColumn()) fail('Please log in again.', 401);
+
+/* Auto-complete and feedback-request processing runs only after customer identity is validated. */
+try { completeFinishedBookings($db, $DB_CRM ?? ''); }
+catch (Throwable $e) { error_log('customer-bookings-api: completeFinishedBookings failed: ' . $e->getMessage()); }
 
 /* ---------- helpers ---------- */
-function ownBooking(PDO $db, int $customerId, $id): array {
+function ownBooking(AppDatabase $db, int $customerId, $id): array {
     $st = $db->prepare('SELECT * FROM bookings WHERE booking_id = ? AND customer_id = ?');
     $st->execute([(int)$id, $customerId]);
     $row = $st->fetch();
@@ -54,7 +52,7 @@ function money($v): float { return (float)($v ?? 0); }
  * The booking row can be missing pax / arrangement (they were typed on the inquiry and never copied over).
  * Look them up on the linked inquiry so "Expected Guests" can show for Buffet with Set-up.
  */
-function inquiryExtras(PDO $db, array $b): array {
+function inquiryExtras(AppDatabase $db, array $b): array {
     global $DB_CATERING;
     $out = ['pax' => null, 'arrangement' => null];
     if (empty($b['inquiry_id'])) return $out;
@@ -76,7 +74,7 @@ function inquiryExtras(PDO $db, array $b): array {
  * name / email / phone by customer_id. Column names are auto-detected like sales-inbox-api.php does.
  * If the account has no email/phone, fall back to what the customer typed on the inquiry (leads row).
  */
-function customerContact(PDO $db, array $b): array {
+function customerContact(AppDatabase $db, array $b): array {
     global $DB_CATERING;
     $out = ['name' => trim((string)($b['customer_name'] ?? '')), 'email' => '', 'phone' => ''];
 
@@ -141,7 +139,46 @@ function customerContact(PDO $db, array $b): array {
 }
 
 /** One booking row -> everything the page might want, flat + nested. */
-function shapeBooking(PDO $db, array $b): array {
+function bookingMenuItems(AppDatabase $db, int $bookingId): array {
+    $st = $db->prepare('SELECT item_name_snapshot, serving_option_snapshot, quantity, unit_price, subtotal
+                        FROM booking_items WHERE booking_id = ? ORDER BY booking_item_id ASC');
+    $st->execute([$bookingId]);
+    return array_map(static fn(array $item): array => [
+        'name' => (string)$item['item_name_snapshot'],
+        'serving_option' => (string)($item['serving_option_snapshot'] ?? ''),
+        'quantity' => (float)$item['quantity'],
+        'unit_price' => (float)$item['unit_price'],
+        'subtotal' => (float)$item['subtotal'],
+    ], $st->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function bookingPaymentHistory(AppDatabase $db, int $bookingId): array {
+    $st = $db->prepare("SELECT p.payment_type, p.payment_reference, p.amount, p.currency, p.payment_status,
+                               p.paid_at, p.created_at, g.payment_method, g.gateway_transaction_id,
+                               g.response_reference, g.gateway_status, g.completed_at
+                        FROM payments p
+                        LEFT JOIN gateway_transactions g ON g.transaction_id = (
+                            SELECT g2.transaction_id FROM gateway_transactions g2
+                            WHERE g2.payment_id = p.payment_id
+                            ORDER BY COALESCE(g2.completed_at, g2.initiated_at, g2.created_at) DESC, g2.transaction_id DESC
+                            LIMIT 1
+                        )
+                        WHERE p.booking_id = ?
+                        ORDER BY COALESCE(g.completed_at, p.paid_at, p.created_at) DESC, p.payment_id DESC");
+    $st->execute([$bookingId]);
+    return array_map(static fn(array $payment): array => [
+        'type' => (string)$payment['payment_type'],
+        'reference' => (string)($payment['gateway_transaction_id'] ?: ($payment['response_reference'] ?: $payment['payment_reference'])),
+        'amount' => (float)$payment['amount'],
+        'currency' => (string)$payment['currency'],
+        'status' => (string)$payment['payment_status'],
+        'method' => (string)($payment['payment_method'] ?? ''),
+        'paid_at' => $payment['completed_at'] ?: $payment['paid_at'],
+        'created_at' => (string)$payment['created_at'],
+    ], $st->fetchAll(PDO::FETCH_ASSOC));
+}
+
+function shapeBooking(AppDatabase $db, array $b): array {
     $extra = inquiryExtras($db, $b);
     if ((int)($b['expected_guests'] ?? 0) <= 0 && $extra['pax']) $b['expected_guests'] = $extra['pax'];
     if (empty($b['arrangement']) && $extra['arrangement']) $b['arrangement'] = $extra['arrangement'];
@@ -172,7 +209,10 @@ function shapeBooking(PDO $db, array $b): array {
     if (!empty($b['event_date'])) {
         $d = new DateTime($b['event_date']);
         $dateLabel = $d->format('F j, Y');
-        if (!empty($b['event_time'])) $dateLabel .= ' · ' . $b['event_time'];
+        if (!empty($b['event_time'])) {
+            $time = DateTime::createFromFormat('H:i:s', (string)$b['event_time']) ?: DateTime::createFromFormat('H:i', (string)$b['event_time']);
+            $dateLabel .= ' · ' . ($time ? $time->format('g:i A') : (string)$b['event_time']);
+        }
     }
 
     $prog = bookingProgress($b);
@@ -192,12 +232,13 @@ function shapeBooking(PDO $db, array $b): array {
         'schedule'          => $dateLabel,
         'venue'             => $b['location'],
         'location'          => $b['location'],
-        'arrangement'       => $b['arrangement'],
+        'arrangement'       => arrangementDisplay((string)$b['arrangement']),
         'package'           => $b['package'],
         'expected_guests'   => (int)$b['expected_guests'],
         'guests'            => (int)$b['expected_guests'],
         'pax'               => (int)$b['expected_guests'],
         'special_requests'  => (string)($b['special_requests'] ?? ''),
+        'items'             => bookingMenuItems($db, (int)$b['booking_id']),
         'booking_status'    => $b['booking_status'],
         'status'            => $b['booking_status'],
         'assigned_staff'    => $b['assigned_staff'],
@@ -220,6 +261,7 @@ function shapeBooking(PDO $db, array $b): array {
             'payment_status'    => $b['payment_status'],
             'percent_paid'      => $percent,
         ],
+        'payment_history' => bookingPaymentHistory($db, (int)$b['booking_id']),
 
         // Request Full Payment: the open request (with its Pay Now link) or the last paid one
         'payment_request' => paymentRequestsByBooking($db, [(int)$b['booking_id']], true)[(int)$b['booking_id']] ?? null,
@@ -300,7 +342,7 @@ switch ($action) {
         if (mb_strlen($comments) > 1000) fail('Comments are too long (max 1000 characters).');
 
         // One feedback per booking. Photos already saved count toward the limit of 4.
-        $existing = $db->prepare('SELECT id, images FROM booking_feedback WHERE booking_id = ? ORDER BY id DESC LIMIT 1');
+        $existing = $db->prepare('SELECT feedback_id, images FROM booking_feedback WHERE booking_id = ? ORDER BY feedback_id DESC LIMIT 1');
         $existing->execute([(int)$b['booking_id']]);
         $prev = $existing->fetch();
         $prevImages = ($prev && $prev['images']) ? (json_decode($prev['images'], true) ?: []) : [];
@@ -319,6 +361,14 @@ switch ($action) {
         $db->prepare('INSERT INTO booking_feedback (booking_id, customer_id, rating, comments, images, created_at) VALUES (?,?,?,?,?,?)
                       ON DUPLICATE KEY UPDATE rating = VALUES(rating), comments = VALUES(comments), images = VALUES(images), created_at = VALUES(created_at)')
            ->execute([$payload['booking_id'], $customerId, $rating, $comments, $payload['images'], $payload['created_at']]);
+        $feedbackIdQuery = $db->prepare('SELECT feedback_id FROM booking_feedback WHERE booking_id = ?');
+        $feedbackIdQuery->execute([$payload['booking_id']]);
+        $feedbackId = (int)$feedbackIdQuery->fetchColumn();
+        $attachmentInsert = $db->prepare("INSERT INTO feedback_attachments (feedback_id, media_type, file_path, original_name, mime_type, file_size)
+                                          VALUES (?, 'IMAGE', ?, ?, ?, ?)");
+        foreach ($images as $image) {
+            $attachmentInsert->execute([$feedbackId, (string)$image['url'], (string)$image['name'], (string)$image['mime_type'], (int)$image['size']]);
+        }
 
         // Bell: the Sales Staff of this booking (+ Admin / Manager) sees the new feedback.
         $nfEvent = trim((string)($b['event_title'] ?? '')) !== '' ? $b['event_title'] : 'an event';

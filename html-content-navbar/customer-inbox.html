@@ -1,6 +1,9 @@
 <main class="cib-page" id="cibPage" data-api-url="customer-inbox-api.php">
-  <header class="cib-page-header">
-    <h2>INBOX</h2>
+  <header class="cib-page-header crm-inbox-page-heading">
+    <div class="cib-heading-copy">
+      <h2>Inbox</h2>
+      <p class="cib-page-subtitle">Communicate with our team, follow up on your concerns, and receive updates about your catering arrangements.</p>
+    </div>
   </header>
 
   <nav class="cib-tabs" aria-label="Inbox sections" role="tablist">
@@ -17,11 +20,21 @@
         </div>
       </div>
       <p class="cib-state" id="cibConversationState" role="status">Loading conversations…</p>
-      <div class="cib-list" id="cibConversationList" aria-live="polite"></div>
+      <div class="cib-list" id="cibConversationList" aria-live="polite">
+        <div class="cib-list-empty" id="cibConversationEmpty" role="status" hidden>
+          <svg viewBox="0 0 64 54" aria-hidden="true" focusable="false">
+            <path d="M9 7h31a5 5 0 0 1 5 5v19a5 5 0 0 1-5 5H25L14 44v-8h-5a5 5 0 0 1-5-5V12a5 5 0 0 1 5-5Z" />
+            <path d="M28 15h27a5 5 0 0 1 5 5v17a5 5 0 0 1-5 5h-6v7l-10-7h-8" />
+            <path d="M14 19h20M14 25h15" />
+          </svg>
+          <h3>No conversations</h3>
+          <p>You don't have any conversations yet.</p>
+        </div>
+      </div>
     </aside>
 
     <section class="cib-thread" aria-label="Conversation messages">
-      <header class="cib-thread-header">
+      <header class="cib-thread-header" id="cibThreadHeader">
         <button class="cib-back-button" type="button" data-back-to="cibMessagesPanel" aria-label="Back to conversations"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m15 18-6-6 6-6"></path></svg><span>Conversations</span></button>
         <div class="cib-thread-heading">
           <h2 id="cibThreadTitle">Choose a conversation</h2>
@@ -29,6 +42,19 @@
         </div>
         <span class="cib-tag" id="cibThreadStatus" hidden></span>
       </header>
+      <section class="cib-empty-state" id="cibInboxEmpty" aria-live="polite" hidden>
+        <div class="cib-empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 88 76" focusable="false">
+            <path class="cib-illustration-paper" d="M21 22h43a5 5 0 0 1 5 5v35a5 5 0 0 1-5 5H21a5 5 0 0 1-5-5V27a5 5 0 0 1 5-5Z" />
+            <path d="m17 28 25 20 26-20M17 62l18-16m33 16L50 46" />
+            <path d="M29 14h30a4 4 0 0 1 4 4v17H25V18a4 4 0 0 1 4-4Z" />
+            <path d="M33 22h22M33 28h15M72 18l5-5m-3 13h7" />
+            <circle cx="14" cy="17" r="2" />
+          </svg>
+        </div>
+        <h3>No conversations yet</h3>
+        <p>Your messages with our team will appear here once you start an inquiry or we contact you.</p>
+      </section>
       <div class="cib-feed" id="cibMessageFeed" aria-live="polite" aria-label="Messages">
         <p class="cib-state">Select a conversation to view its messages.</p>
       </div>
@@ -98,7 +124,7 @@
     <div class="modal-content custom-modal-card cib-modal-card">
       <header class="cib-modal-header">
         <div>
-          <p class="cib-modal-eyebrow">CUSTOMER SUPPORT</p>
+          <p class="cib-modal-eyebrow">Customer Support</p>
           <h2 id="cibTicketModalTitle">Create Support Ticket</h2>
         </div>
         <button class="cib-icon-button cib-modal-close" id="cibCloseTicketModal" type="button" aria-label="Close create support ticket form">

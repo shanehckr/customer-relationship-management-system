@@ -7,14 +7,24 @@
 
   <!-- Page header -->
   <div class="ci-header">
-    <h2 class="ci-title">MY INQUIRIES</h2>
+    <div class="ci-heading-copy">
+      <h2 class="ci-title">My Inquiries</h2>
+      <p class="ci-page-subtitle">View and track your catering requests, quotations, and booking conversions.</p>
+    </div>
     <button type="button" class="ci-back" id="ciBack" aria-label="Back to main menu">
       <i class="bi bi-arrow-left" aria-hidden="true"></i> Back to main menu
     </button>
     <button type="button" class="ci-btn-primary" id="ciAddBtn" data-iw-open>+ Add Inquiry</button>
   </div>
 
-  <!-- Inquiry structure stays visible while the backend returns zero records. -->
+  <section class="ci-empty-state" id="ciEmptyState" aria-live="polite" hidden>
+    <div class="ci-empty-icon" aria-hidden="true"><i class="bi bi-clipboard2-check"></i></div>
+    <h3>No inquiries yet</h3>
+    <p>You haven't submitted any catering inquiry yet. Start an inquiry to get a quotation from our team.</p>
+    <button type="button" class="ci-btn-primary" data-iw-open>+ Add Inquiry</button>
+  </section>
+
+  <!-- Inquiry structure is shown only when at least one record exists. -->
   <div class="ci-layout" id="ciLayout">
 
     <!-- LEFT: inquiry list and count -->
@@ -34,19 +44,14 @@
            (On tablet/phone the button in the page header above is used instead.) -->
       <div class="ci-hero-row">
         <header class="ci-hero">
-          <h3 class="ci-hero-title" id="ciHeroTitle">Inquiry overview</h3>
+      <div class="ci-hero-copy"><h3 class="ci-hero-title" id="ciHeroTitle">Inquiry Overview</h3><p id="ciHeroDescription">Your inquiry progress and event details.</p><span class="ci-reference" id="ciInquiryReference" hidden></span></div>
           <span class="ci-pill ci-pill-on-green" id="ciHeroStatus">0 inquiries</span>
         </header>
         <button type="button" class="ci-btn-primary ci-hero-add" data-iw-open>+ Add Inquiry</button>
       </div>
 
-      <ol class="ci-stepper" id="ciStepper" aria-label="Inquiry progress">
-        <li class="ci-step is-todo"><span class="ci-node">1</span><span class="ci-step-label">Submitted</span></li>
-        <li class="ci-step is-todo"><span class="ci-node">2</span><span class="ci-step-label">Under review</span></li>
-        <li class="ci-step is-todo"><span class="ci-node">3</span><span class="ci-step-label">Quotation</span></li>
-        <li class="ci-step is-todo"><span class="ci-node">4</span><span class="ci-step-label">Confirmation</span></li>
-        <li class="ci-step is-todo"><span class="ci-node">5</span><span class="ci-step-label">Completed</span></li>
-      </ol>
+      <div class="ci-event-strip" id="ciEventStrip" aria-label="Event summary"></div>
+      <ol class="ci-stepper" id="ciStepper" aria-label="Inquiry progress"></ol>
 
       <div class="rp-tabs ci-tabs" role="tablist" aria-label="Inquiry sections">
         <button type="button" class="rp-tab active" role="tab" id="ciTabDetails"
@@ -59,29 +64,26 @@
         </button>
       </div>
 
-      <div id="ciPanelDetails" role="tabpanel" aria-labelledby="ciTabDetails">
+      <div id="ciPanelDetails" role="tabpanel" aria-labelledby="ciTabDetails"><div class="ci-details-grid" id="ciDetailsContent"></div><template id="ciOldDetailsTemplate">
         <section class="ci-box ci-panel">
-          <div class="ci-panel-head"><h4>Event details</h4></div>
+          <div class="ci-panel-head"><h4>Event Details</h4></div>
           <h3 class="ci-event-title">No inquiry selected</h3>
           <dl class="ci-meta">
-            <div class="ci-meta-item"><dt>Event date</dt><dd>—</dd></div>
+            <div class="ci-meta-item"><dt>Event Date</dt><dd>—</dd></div>
             <div class="ci-meta-item is-wide"><dt>Venue</dt><dd>—</dd></div>
-            <div class="ci-meta-item"><dt>Service arrangement</dt><dd>—</dd></div>
+            <div class="ci-meta-item"><dt>Service Arrangement</dt><dd>—</dd></div>
             <div class="ci-meta-item"><dt>Package</dt><dd>—</dd></div>
           </dl>
-          <h4 class="ci-section-title">Selected dishes <span class="ci-zero-count">0</span></h4>
+          <h4 class="ci-section-title">Selected Dishes <span class="ci-zero-count">0</span></h4>
           <div class="ci-note">No dishes selected.</div>
         </section>
-      </div>
+      </template></div>
 
       <div id="ciPanelQuote" role="tabpanel" aria-labelledby="ciTabQuote" hidden>
         <div class="ci-note">0 quotations. No quotation is available yet.</div>
       </div>
     </section>
   </div>
-  <!-- Live status message shown after a successful inquiry submission -->
-  <div class="ci-toast" id="ciToast" role="status" aria-live="polite" hidden></div>
-
 </div>
 
 
@@ -132,20 +134,27 @@
         <div class="iw-body" id="iwBody">
 
           <!-- ================= STEP 1: MENU & DISHES ================= -->
-          <section class="iw-panel" data-iw-step="1">
-
-            <div class="iw-section-head">
-              <h3 class="iw-h3">Select from our menu</h3>
-              <span class="iw-count" id="iwCount" aria-live="polite">0 selected</span>
+          <section class="iw-panel iw-menu-step" data-iw-step="1">
+            <div class="iw-food-column">
+              <div class="iw-food-heading">
+                <h3 class="iw-h3">Food Menu</h3>
+                <p class="iw-error" id="iwErrDishes" role="alert" hidden></p>
+              </div>
+              <nav class="iw-category-tabs" aria-label="Menu categories">
+                <button type="button" class="iw-category-tab is-active" data-iw-category="All Menu" aria-pressed="true"><i class="bi bi-grid" aria-hidden="true"></i>All Menu</button>
+                <button type="button" class="iw-category-tab" data-iw-category="Lechon" aria-pressed="false"><i class="bi bi-piggy-bank" aria-hidden="true"></i>Lechon</button>
+                <button type="button" class="iw-category-tab" data-iw-category="Bilao" aria-pressed="false"><i class="bi bi-basket" aria-hidden="true"></i>Bilao</button>
+                <button type="button" class="iw-category-tab" data-iw-category="Viands" aria-pressed="false"><i class="bi bi-egg-fried" aria-hidden="true"></i>Viands</button>
+              </nav>
+              <div class="iw-menu" id="iwMenu" aria-live="polite">
+                <p class="iw-menu-state" id="iwMenuState">Loading menu...</p>
+              </div>
             </div>
-            <p class="iw-error" id="iwErrDishes" role="alert" hidden></p>
-
-            <!-- The menu is NOT written here. customer-pages.js loads it from menu-management.php (?action=list),
-                 the same menu Admin / Manager maintain in Menu Management, grouped by category
-                 (Best Sellers, Bilao, Catering Packages). Each item is a checkbox named "dishes". -->
-            <div class="iw-menu" id="iwMenu" aria-live="polite">
-              <p class="iw-menu-state" id="iwMenuState">Loading menu...</p>
-            </div>
+            <aside class="iw-selected-panel" aria-labelledby="iwSelectedTitle">
+              <h3 class="iw-selected-heading" id="iwSelectedTitle"><i class="bi bi-cart3" aria-hidden="true"></i>Selected Items <span class="iw-count" id="iwCount" aria-live="polite" aria-label="0 selected items">0</span></h3>
+              <ul class="iw-selected-list" id="iwSelectedItems" aria-live="polite"></ul>
+              <div class="iw-selected-note"><i class="bi bi-info-circle" aria-hidden="true"></i><p>Your selected dishes and serving sizes for this inquiry.</p></div>
+            </aside>
           </section>
 
           <!-- ================= STEP 2: EVENT DETAILS ================= -->
@@ -166,29 +175,147 @@
             </div>
 
             <div class="iw-field">
-              <label class="iw-label" for="iwVenue">Venue or delivery address</label>
-              <input class="iw-input" id="iwVenue" name="venue" type="text" maxlength="255"
-                     placeholder="Complete venue address" autocomplete="off" required>
-              <p class="iw-error" id="iwErrVenue" hidden></p>
-            </div>
-
-            <div class="iw-field">
               <label class="iw-label" id="iwArrangementLabel" for="iwArrangementToggle">Service arrangement</label>
               <div class="dropdown iw-dropdown">
-                <input type="hidden" id="iwArrangement" name="arrangement" value="Customer Pickup">
+                <input type="hidden" id="iwArrangement" name="arrangement" value="">
                 <button type="button" class="custom-dropdown-toggle iw-dd-toggle" id="iwArrangementToggle"
                         data-bs-toggle="dropdown" data-bs-display="static"
                         aria-haspopup="listbox" aria-expanded="false" aria-describedby="iwErrArrangement">
-                  <span class="iw-dd-value">Customer Pickup</span>
+                  <span class="iw-dd-value">Select service arrangement</span>
                   <i class="bi bi-chevron-down iw-select-icon" aria-hidden="true"></i>
                 </button>
                 <ul class="dropdown-menu custom-dropdown-menu" role="listbox" aria-labelledby="iwArrangementLabel">
-                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Customer Pickup" aria-selected="true">Customer Pickup</button></li>
-                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Delivery" aria-selected="false">Delivery</button></li>
-                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Buffet with setup" aria-selected="false">Buffet with setup</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="" aria-selected="true" disabled>Select service arrangement</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Customer Pickup" aria-selected="false">Customer Pickup</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Delivery" aria-selected="false">Food Delivery</button></li>
+                  <li><button type="button" class="dropdown-item custom-dropdown-item" role="option" data-value="Buffet with setup" aria-selected="false">On-site Catering</button></li>
                 </ul>
               </div>
               <p class="iw-error" id="iwErrArrangement" hidden></p>
+            </div>
+
+            <div class="iw-arrangement-fields" id="iwArrangementFields" hidden>
+              <section class="iw-service-section" id="iwPickupSection" aria-labelledby="iwPickupTitle" hidden>
+                <h3 id="iwPickupTitle">Pickup Information</h3>
+                <p>Where will you collect your catering order?</p>
+                <hr>
+                <div class="iw-service-grid">
+                  <div class="iw-field iw-service-full-field">
+                    <label class="iw-label" for="iwPickupLocation">Pickup Location <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input iw-pickup-location" id="iwPickupLocation" type="text" readonly
+                           placeholder="Loading the business pickup location..." aria-describedby="iwPickupLocationHelp iwPickupLocationNotice">
+                    <p class="iw-error" id="iwErrPickupLocation" hidden></p>
+                    <p class="iw-service-help" id="iwPickupLocationHelp">Pickup location is the business address configured by the catering team.</p>
+                    <p class="iw-error iw-pickup-warning" id="iwPickupLocationNotice" role="status" hidden></p>
+                  </div>
+                  <div class="iw-field iw-service-full-field">
+                    <label class="iw-label" for="iwPickupTime">Pickup Time <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwPickupTime" name="pickup_time" type="time" min="08:00" max="20:00" step="900"
+                           title="Choose a pickup time between 8:00 AM and 8:00 PM" data-time-label="Pickup time" disabled>
+                    <p class="iw-error" id="iwErrPickupTime" hidden></p>
+                  </div>
+                  <div class="iw-field iw-service-full-field">
+                    <label class="iw-label" for="iwPickupNotes">Pickup Notes <span class="iw-optional">(Optional)</span></label>
+                    <textarea class="iw-input iw-textarea" id="iwPickupNotes" name="pickup_notes" maxlength="500" rows="2"
+                              placeholder="e.g. Our representative will collect the order. Please have it ready for vehicle loading." disabled></textarea>
+                    <p class="iw-error" id="iwErrPickupNotes" hidden></p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="iw-service-section" id="iwDeliverySection" aria-labelledby="iwDeliveryTitle" hidden>
+                <h3 id="iwDeliveryTitle">Delivery Information</h3>
+                <p>Where should we deliver your catering order?</p>
+                <hr>
+                <div class="iw-service-grid">
+                  <div class="iw-field iw-service-full-field">
+                    <label class="iw-label" for="iwDeliveryAddress">Delivery Address <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwDeliveryAddress" name="delivery_address" type="text" maxlength="255"
+                           placeholder="House number, street, building, subdivision or village" autocomplete="street-address" disabled>
+                    <p class="iw-error" id="iwErrDeliveryAddress" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwDeliveryBarangay">Barangay <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwDeliveryBarangay" name="delivery_barangay" type="text" maxlength="100" placeholder="Enter barangay" autocomplete="address-level3" disabled>
+                    <p class="iw-error" id="iwErrDeliveryBarangay" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwDeliveryCity">City / Municipality <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwDeliveryCity" name="delivery_city" type="text" maxlength="100" placeholder="Enter city or municipality" autocomplete="address-level2" disabled>
+                    <p class="iw-error" id="iwErrDeliveryCity" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwDeliveryProvince">Province <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwDeliveryProvince" name="delivery_province" type="text" maxlength="100" placeholder="Enter province" autocomplete="address-level1" disabled>
+                    <p class="iw-error" id="iwErrDeliveryProvince" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwDeliveryLandmark">Nearest Landmark <span class="iw-optional">(Optional)</span></label>
+                    <input class="iw-input" id="iwDeliveryLandmark" name="delivery_landmark" type="text" maxlength="160"
+                           placeholder="e.g. Near the barangay hall, beside the church" autocomplete="off" disabled>
+                    <p class="iw-error" id="iwErrDeliveryLandmark" hidden></p>
+                  </div>
+                  <div class="iw-field iw-service-full-field">
+                    <label class="iw-label" for="iwDeliveryInstructions">Delivery Instructions <span class="iw-optional">(Optional)</span></label>
+                    <textarea class="iw-input iw-textarea" id="iwDeliveryInstructions" name="delivery_instructions" maxlength="500" rows="2"
+                              placeholder="Additional directions for our delivery staff..." disabled></textarea>
+                    <p class="iw-error" id="iwErrDeliveryInstructions" hidden></p>
+                  </div>
+                  <div class="iw-field iw-service-full-field" id="iwDeliveryTimeField">
+                    <label class="iw-label" for="iwDeliveryTime">Preferred Delivery Time <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwDeliveryTime" name="delivery_time" type="time" min="08:00" max="20:00" step="900"
+                           title="Choose a delivery time between 8:00 AM and 8:00 PM" data-time-label="Preferred delivery time" disabled>
+                    <p class="iw-error" id="iwErrDeliveryTime" hidden></p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="iw-service-section" id="iwOnsiteSection" aria-labelledby="iwOnsiteTitle" hidden>
+                <h3 id="iwOnsiteTitle">Venue Information</h3>
+                <p>Where will the catering team set up and serve your event?</p>
+                <hr>
+                <div class="iw-service-grid" id="iwOnsiteGrid">
+                  <div class="iw-field iw-service-full-field" id="iwVenueField">
+                    <label class="iw-label" id="iwVenueLabel" for="iwVenue">Event Venue / Address <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwVenue" name="venue" type="text" maxlength="255"
+                           placeholder="House number, street, building, subdivision or village" autocomplete="street-address" disabled>
+                    <p class="iw-error" id="iwErrVenue" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwOnsiteBarangay">Barangay <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwOnsiteBarangay" name="onsite_barangay" type="text" maxlength="100" placeholder="Enter barangay" autocomplete="address-level3" disabled>
+                    <p class="iw-error" id="iwErrOnsiteBarangay" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwOnsiteCity">City / Municipality <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwOnsiteCity" name="onsite_city" type="text" maxlength="100" placeholder="Enter city or municipality" autocomplete="address-level2" disabled>
+                    <p class="iw-error" id="iwErrOnsiteCity" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwOnsiteProvince">Province <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwOnsiteProvince" name="onsite_province" type="text" maxlength="100" placeholder="Enter province" autocomplete="address-level1" disabled>
+                    <p class="iw-error" id="iwErrOnsiteProvince" hidden></p>
+                  </div>
+                  <div class="iw-field">
+                    <label class="iw-label" for="iwOnsiteLandmark">Nearest Landmark <span class="iw-optional">(Optional)</span></label>
+                    <input class="iw-input" id="iwOnsiteLandmark" name="onsite_landmark" type="text" maxlength="160"
+                           placeholder="e.g. Near the barangay hall, beside the church" autocomplete="off" disabled>
+                    <p class="iw-error" id="iwErrOnsiteLandmark" hidden></p>
+                  </div>
+                  <div class="iw-field" id="iwEventTimeField">
+                    <label class="iw-label" id="iwEventTimeLabel" for="iwEventTime">Event Time <span class="iw-required" aria-hidden="true">*</span></label>
+                    <input class="iw-input" id="iwEventTime" name="event_time" type="time" min="08:00" max="20:00" step="900"
+                           title="Choose an event time between 8:00 AM and 8:00 PM" data-time-label="Event time" disabled>
+                    <p class="iw-error" id="iwErrEventTime" hidden></p>
+                  </div>
+                  <div class="iw-field iw-service-full-field" id="iwSetupNotesField">
+                    <label class="iw-label" for="iwSetupNotes">Setup Notes <span class="iw-optional">(Optional)</span></label>
+                    <textarea class="iw-input iw-textarea" id="iwSetupNotes" name="setup_notes" maxlength="500" rows="2"
+                              placeholder="e.g. Outdoor setup, covered area beside the stage." disabled></textarea>
+                    <p class="iw-error" id="iwErrSetupNotes" hidden></p>
+                  </div>
+                </div>
+              </section>
             </div>
           </section>
 
@@ -220,28 +347,54 @@
               </div>
             </div>
 
-            <section class="iw-review">
-              <h4 class="iw-review-title">Event details</h4>
-              <dl class="iw-review-grid">
-                <div><dt>Event</dt><dd id="iwRvEvent"></dd></div>
-                <div><dt>Event date</dt><dd id="iwRvDate"></dd></div>
-                <div><dt>Venue</dt><dd id="iwRvVenue"></dd></div>
-                <div><dt>Service</dt><dd id="iwRvService"></dd></div>
-              </dl>
-            </section>
+            <div class="iw-review-stack">
+              <section class="iw-review iw-review-event">
+                <h4 class="iw-review-title">Event Information</h4>
+                <dl class="iw-review-event-grid">
+                  <div><dt>Event Name</dt><dd id="iwRvEvent"></dd></div>
+                  <div><dt>Event Date</dt><dd id="iwRvDate"></dd></div>
+                  <div><dt>Service Arrangement</dt><dd id="iwRvService"></dd></div>
+                </dl>
+              </section>
 
-            <section class="iw-review">
-              <h4 class="iw-review-title">Menu selection</h4>
-              <dl class="iw-review-grid">
-                <div><dt>Catering package</dt><dd id="iwRvPackage"></dd></div>
-                <div><dt>Selected menu items</dt><dd id="iwRvDishes"></dd></div>
-              </dl>
-            </section>
+              <section class="iw-review">
+                <h4 class="iw-review-title" id="iwRvArrangementTitle"></h4>
+                <dl class="iw-review-detail-grid" id="iwRvArrangementDetails"></dl>
+              </section>
 
-            <section class="iw-review">
-              <h4 class="iw-review-title">Additional information</h4>
-              <p class="iw-review-notes" id="iwRvNotes"></p>
-            </section>
+              <section class="iw-review">
+                <h4 class="iw-review-title">Menu Selection</h4>
+                <div class="iw-review-menu-layout">
+                  <div class="iw-review-table-wrap">
+                    <table class="iw-review-table">
+                      <caption class="visually-hidden">Selected menu items, servings, prices, and subtotals</caption>
+                      <thead>
+                        <tr>
+                          <th scope="col">Menu Item</th>
+                          <th scope="col">Quantity / Serving</th>
+                          <th scope="col">Price</th>
+                          <th scope="col">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody id="iwRvMenuRows"></tbody>
+                    </table>
+                  </div>
+                  <aside class="iw-pricing-summary" aria-label="Pricing Summary">
+                    <h5>Pricing Summary</h5>
+                    <div class="iw-pricing-row"><span>Menu Subtotal</span><strong id="iwRvMenuSubtotal"></strong></div>
+                    <div class="iw-pricing-row iw-pricing-total"><span>Estimated Total</span><strong id="iwRvEstimatedTotal"></strong></div>
+                    <p>Final pricing, including any applicable service fees, will be confirmed in your quotation.</p>
+                  </aside>
+                </div>
+              </section>
+
+              <section class="iw-review">
+                <h4 class="iw-review-title">Additional Information</h4>
+                <dl class="iw-review-dietary">
+                  <div><dt>Dietary Requests</dt><dd class="iw-review-notes" id="iwRvNotes"></dd></div>
+                </dl>
+              </section>
+            </div>
 
             <p class="iw-error" id="iwSubmitError" role="alert" hidden></p>
           </section>
@@ -250,7 +403,10 @@
         <!-- Footer buttons -->
         <footer class="iw-footer">
           <button type="button" class="iw-btn-ghost" id="iwBack">Cancel</button>
+          <div class="iw-footer-right">
+            <div class="iw-estimate" id="iwFooterEstimate"><span>Estimated Subtotal:</span><strong id="iwSubtotal">₱0</strong></div>
           <button type="button" class="iw-btn-primary" id="iwNext">Continue <i class="bi bi-arrow-right" aria-hidden="true"></i></button>
+          </div>
         </footer>
 
       </form>

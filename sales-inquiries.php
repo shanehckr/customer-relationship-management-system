@@ -19,12 +19,10 @@ require __DIR__ . '/quotations-schema.php';
 require __DIR__ . '/bookings-schema.php';
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 $staff = requireSalesStaff();
-ensureColumn($db, $DB_CATERING, 'leads', 'decline_reason', 'TEXT NULL');
-ensureColumn($db, $DB_CATERING, 'leads', 'declined_at', 'DATETIME NULL');
 $action = $_GET['action'] ?? '';
 
 /** The inquiry, only if it is assigned to the logged-in staff. */
-function myLead(PDO $db, array $staff, string $ref): array {
+function myLead(AppDatabase $db, array $staff, string $ref): array {
     global $LEAD_PK;
     $id = leadIdFromRef($ref);
     $st = $db->prepare("SELECT * FROM leads WHERE `$LEAD_PK` = ? AND assigned_staff_id = ?");
@@ -33,14 +31,14 @@ function myLead(PDO $db, array $staff, string $ref): array {
     if (!$lead) fail('This inquiry is not assigned to you.', 403);
     return $lead;
 }
-function quoteRows(PDO $db, int $inquiryId): array {
+function quoteRows(AppDatabase $db, int $inquiryId): array {
     $st = $db->prepare('SELECT * FROM quotations WHERE inquiry_id = ? ORDER BY version DESC');
     $st->execute([$inquiryId]);
     return $st->fetchAll();
 }
 
 /** The official menu with portion tiers: [menu_item_id => [id,name,category,photo,specs,base_price,price_text,tiers[]]]. Same tables loadMenu() reads. */
-function salesMenuCatalog(PDO $db): array {
+function salesMenuCatalog(AppDatabase $db): array {
     global $DB_CATERING, $DB_CRM;
     foreach (array_unique([$DB_CATERING, $DB_CRM]) as $schema) {
         try {
@@ -49,7 +47,7 @@ function salesMenuCatalog(PDO $db): array {
             if (in_array('is_active', $cols, true)) $where = ' WHERE is_active <> 0';
             elseif (in_array('status', $cols, true)) $where = " WHERE LOWER(status) NOT IN ('inactive','unavailable','archived','deleted','disabled')";
             $rows = $db->query("SELECT menu_item_id, item_name, category, display_price, serving_specs, photo_path FROM `$schema`.menu_items$where ORDER BY category, item_name")->fetchAll();
-        } catch (PDOException $e) { continue; }
+        } catch (Throwable $e) { continue; }
         $menu = [];
         foreach ($rows as $m) {
             $price = trim((string)$m['display_price']);
@@ -67,14 +65,56 @@ function salesMenuCatalog(PDO $db): array {
         if (!$menu) continue;
         try {
             $in = implode(',', array_map('intval', array_keys($menu)));
-            foreach ($db->query("SELECT menu_item_id, tier_name, price, pax_description FROM `$schema`.menu_item_tiers WHERE menu_item_id IN ($in) ORDER BY sort_order")->fetchAll() as $t) {
+            foreach ($db->query("SELECT menu_item_id, tier_id, tier_name, price, pax_description FROM `$schema`.menu_item_tiers WHERE menu_item_id IN ($in) AND is_active = 1 ORDER BY sort_order")->fetchAll() as $t) {
                 $menu[(int)$t['menu_item_id']]['tiers'][] = ['name' => (string)$t['tier_name'], 'price' => round((float)$t['price'], 2),
                     'pax' => trim((string)$t['pax_description'])];
             }
-        } catch (PDOException $e) { /* no tiers table */ }
+        } catch (Throwable $e) { /* no tiers table */ }
         return $menu;
     }
     return [];
+}
+
+/** Resolve every selected line against the live menu so browser prices and labels are never authoritative. */
+function quotationMenuLines(AppDatabase $db, $raw): array {
+    $input = is_string($raw) ? json_decode($raw, true) : $raw;
+    if (!is_array($input) || !$input) fail('Add at least one menu item to the quotation.');
+    $lines = []; $subtotal = 0.0;
+    foreach ($input as $row) {
+        if (!is_array($row)) continue;
+        $menuId = (int)($row['menu_item_id'] ?? 0);
+        $qty = (float)($row['quantity'] ?? 0);
+        if ($menuId < 1 || $qty < 1 || $qty > 100000) fail('Choose a valid menu item and quantity for every quotation line.');
+        $menu = $db->prepare("SELECT menu_item_id,item_name,category,base_price,display_price,serving_specs,status FROM menu_items WHERE menu_item_id=? LIMIT 1");
+        $menu->execute([$menuId]); $item = $menu->fetch();
+        if (!$item || !in_array(strtolower((string)$item['status']), ['active','1'], true)) fail('A selected menu item is no longer available. Refresh the menu and try again.');
+        $tierName = trim((string)($row['tier'] ?? '')); $tierId = null; $unit = null; $pax = trim((string)($item['serving_specs'] ?? ''));
+        $tiers = $db->prepare('SELECT tier_id,tier_name,price,pax_description FROM menu_item_tiers WHERE menu_item_id=? AND is_active=1 ORDER BY sort_order');
+        $tiers->execute([$menuId]); $availableTiers = $tiers->fetchAll();
+        if ($availableTiers) {
+            $selected = null;
+            foreach ($availableTiers as $candidate) if (strcasecmp(trim((string)$candidate['tier_name']), $tierName) === 0) { $selected = $candidate; break; }
+            if (!$selected) fail('Choose a valid pricing tier for ' . $item['item_name'] . '.');
+            $tierId = (int)$selected['tier_id']; $tierName = (string)$selected['tier_name'];
+            $unit = (float)$selected['price']; $pax = trim((string)($selected['pax_description'] ?? ''));
+        } else {
+            if ($tierName !== '') fail('This menu item does not have pricing tiers.');
+            if ($item['base_price'] === null) fail($item['item_name'] . ' does not have a fixed price in Menu Management.');
+            $unit = (float)$item['base_price'];
+            if ($unit <= 0) {
+                preg_match('/\d[\d,]*(?:\.\d+)?/', (string)$item['display_price'], $match);
+                if (!$match) fail($item['item_name'] . ' does not have a valid menu price.');
+                $unit = (float)str_replace(',', '', $match[0]);
+            }
+        }
+        $amount = round($qty * $unit, 2); $subtotal += $amount;
+        $lines[] = ['menu_item_id'=>$menuId,'tier_id'=>$tierId,'name'=>(string)$item['item_name'],
+            'category'=>(string)$item['category'],'tier'=>$tierName,'pax'=>$pax,'quantity'=>$qty,
+            'unit_price'=>round($unit,2),'amount'=>$amount,
+            'description'=>(string)$item['item_name'].($tierName !== '' ? ' - '.$tierName : '')];
+    }
+    if (!$lines) fail('Add at least one valid menu item to the quotation.');
+    return [$lines,round($subtotal,2)];
 }
 
 if ($action === 'menu') {
@@ -175,7 +215,7 @@ if ($action === 'quotation_save') {
     $iid = (int)$lead[$LEAD_PK];
     if ($lead['stage'] === 'Declined') fail('This inquiry is declined. Move it back to In Progress to reopen it before preparing a quotation.');
 
-    [$items, $subtotal] = quoteCleanItems($_POST['items'] ?? '');
+    [$items, $subtotal] = quotationMenuLines($db, $_POST['items'] ?? '');
 
     $money = fn($v) => round(max(0, (float)str_replace(',', '', (string)$v)), 2);
     // additional fee: none for Customer Pickup; editable for Delivery (e.g. 450, depends on the address) and Buffet with Setup
@@ -197,22 +237,28 @@ if ($action === 'quotation_save') {
     if (mb_strlen($notes) > 2000) fail('The note is too long (max 2000 characters).');
     $mode = ($_POST['mode'] ?? 'save') === 'revise' ? 'revise' : 'save';
     $deposit = round($total * $rate / 100, 2);
-    $itemsJson = json_encode($items, JSON_UNESCAPED_UNICODE);
+    $itemsJson = json_encode(array_map(static function($item) { unset($item['tier_id']); return $item; }, $items), JSON_UNESCAPED_UNICODE);
 
     $rows = quoteRows($db, $iid);
     $latest = $rows[0] ?? null;
     if ($latest && $latest['status'] === 'Accepted') fail('The customer already accepted this quotation, so it can no longer be changed.');
 
-    if ($latest && $latest['status'] === 'Draft') {                      // edit the open draft
-        $db->prepare('UPDATE quotations SET items=?, subtotal=?, extra_charge=?, discount=?, total=?, deposit_rate=?, deposit_amount=?, valid_until=?, valid_until_time=?, notes=?, prepared_by=?, prepared_by_id=?, prepared_at=? WHERE quotation_id=?')
-           ->execute([$itemsJson, $subtotal, $extra, $discount, $total, $rate, $deposit, $validUntil, $validTime, $notes, $staff['name'], $staff['id'], now(), $latest['quotation_id']]);
-    } else {
-        if ($latest && $mode !== 'revise' && $latest['status'] !== 'Withdrawn') fail('This was already sent. Use "Prepare Revised Version" to change it.');
-        $version = $latest ? (int)$latest['version'] + 1 : 1;
-        $db->prepare("INSERT INTO quotations (inquiry_id, version, status, items, subtotal, extra_charge, discount, total, deposit_rate, deposit_amount, valid_until, valid_until_time, notes, prepared_by, prepared_by_id, prepared_at)
-                      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-           ->execute([$iid, $version, 'Draft', $itemsJson, $subtotal, $extra, $discount, $total, $rate, $deposit, $validUntil, $validTime, $notes, $staff['name'], $staff['id'], now()]);
-    }
+    $db->beginTransaction();
+    try {
+        if ($latest && $latest['status'] === 'Draft') {
+            $quoteId = (int)$latest['quotation_id']; $version = (int)$latest['version'];
+            $db->prepare('UPDATE quotations SET items=?,discount=?,extra_charge=?,total=?,deposit_amount=?,notes=?,prepared_by=?,prepared_by_id=?,prepared_at=? WHERE quotation_id=?')
+               ->execute([$itemsJson,$discount,$extra,$total,$deposit,$notes,$staff['name'],$staff['id'],now(),$quoteId]);
+        } else {
+            if ($latest && $mode !== 'revise' && $latest['status'] !== 'Withdrawn') fail('This was already sent. Use "Prepare Revised Version" to change it.');
+            $version = $latest ? (int)$latest['version'] + 1 : 1;
+            $db->prepare('INSERT INTO quotations (lead_id,inquiry_id,created_by,version,status,items,discount,extra_charge,total,deposit_amount,notes,prepared_by,prepared_by_id,prepared_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+               ->execute([$iid,$iid,$staff['id'],$version,'Draft',$itemsJson,$discount,$extra,$total,$deposit,$notes,$staff['name'],$staff['id'],now()]);
+            $quoteId = (int)$db->lastInsertId();
+        }
+        saveNormalizedQuotationVersion($db,$quoteId,$version,$items,$subtotal,$discount,$extra,$total,$rate,$deposit,$validUntil,$validTime,$notes,(int)$staff['id'],true);
+        $db->commit();
+    } catch (Throwable $e) { if ($db->inTransaction()) $db->rollBack(); throw $e; }
     $quote = quotesByInquiry($db, [$iid], false, (string)($lead['customer_name'] ?? ''))[$iid];
     out(['success' => true, 'message' => 'Quotation saved as a draft.', 'quotation' => $quote]);
 }
@@ -228,12 +274,18 @@ if ($action === 'quotation_send') {
         $st->execute([$iid]);
         $q = $st->fetch();
         if (!$q) { $db->rollBack(); fail('Prepare a quotation first.'); }
+        $q = quoteHydrate($db, $q);
         if ($q['status'] !== 'Draft') { $db->rollBack(); fail('This version was already ' . strtolower($q['status']) . '. Use "Prepare Revised Version" to send a new one.'); }
         if ((float)$q['total'] <= 0) { $db->rollBack(); fail('The total must be greater than zero.'); }
         if (!$q['valid_until'] || deadlineExpired($q['valid_until'], $q['valid_until_time'] ?? null)) { $db->rollBack(); fail('The valid-until date and time have passed. Edit the draft and choose a new one.'); }
 
+        $oldVersions = $db->prepare("SELECT quotation_id FROM quotations WHERE inquiry_id = ? AND quotation_id <> ? AND status IN ('Sent','Declined') FOR UPDATE");
+        $oldVersions->execute([$iid, $q['quotation_id']]);
+        $oldVersionIds = array_map('intval', $oldVersions->fetchAll(AppDatabase::FETCH_COLUMN));
         $db->prepare("UPDATE quotations SET status = 'Superseded' WHERE inquiry_id = ? AND quotation_id <> ? AND status IN ('Sent','Declined')")->execute([$iid, $q['quotation_id']]);
+        foreach ($oldVersionIds as $oldVersionId) syncNormalizedQuotationVersion($db, $oldVersionId);
         $db->prepare("UPDATE quotations SET status = 'Sent', sent_at = ? WHERE quotation_id = ?")->execute([now(), $q['quotation_id']]);
+        syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
         $db->prepare("UPDATE leads SET stage = ? WHERE `$LEAD_PK` = ?")->execute(['Quotation Sent', $iid]);
 
         // announce it in the customer's chat (if the inquiry already has a conversation)

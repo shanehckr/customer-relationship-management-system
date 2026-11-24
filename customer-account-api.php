@@ -67,16 +67,6 @@ function requirePost(): void
 
 try {
     require_once __DIR__ . "/config/database.php";   // gives $conn (mysqli)
-
-    // phone already exists in your users table; the profile photo needs one more column.
-    $col = $conn->query("SHOW COLUMNS FROM users LIKE 'photo_path'");
-    if ($col->num_rows === 0) {
-        $conn->query("ALTER TABLE users ADD COLUMN photo_path VARCHAR(255) NULL DEFAULT NULL");
-    }
-    $col = $conn->query("SHOW COLUMNS FROM users LIKE 'phone'");
-    if ($col->num_rows === 0) {
-        $conn->query("ALTER TABLE users ADD COLUMN phone VARCHAR(20) NULL DEFAULT NULL");
-    }
 } catch (Throwable $e) {
     error_log("customer-account-api setup: " . $e->getMessage());
     respond(500, ["success" => false, "message" => "The account service is unavailable. Please try again later."]);

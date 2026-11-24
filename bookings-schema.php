@@ -1,35 +1,11 @@
 <?php
 /**
  * bookings-schema.php - shared by sales-inbox-api.php and bookings.php.
- * Creates the bookings table (if you do not have one) and adds any missing column.
- * Column names are the ones the Bookings page in pages.js already reads (crmBookingFields).
+ * Booking workflow helpers. The schema is provisioned centrally by database/catering_crm.sql.
+ * Legacy response field names are retained for the existing Bookings page contract.
  */
-function ensureBookingsSchema(PDO $db): void {
-    $db->exec("CREATE TABLE IF NOT EXISTS bookings (
-        booking_id INT AUTO_INCREMENT PRIMARY KEY, booking_ref VARCHAR(30) NULL, inquiry_id INT NULL, customer_id INT NULL,
-        customer_name VARCHAR(160) DEFAULT '', event_title VARCHAR(160) DEFAULT '', event_date DATE NULL, event_time VARCHAR(20) NULL,
-        location VARCHAR(255) DEFAULT '', arrangement VARCHAR(60) DEFAULT '', package VARCHAR(160) DEFAULT '', expected_guests INT NULL,
-        quotation_amount DECIMAL(12,2) NULL, amount_paid DECIMAL(12,2) NOT NULL DEFAULT 0, remaining_balance DECIMAL(12,2) NULL,
-        payment_status VARCHAR(20) NOT NULL DEFAULT 'Unpaid', payment_method VARCHAR(40) NULL, payment_reference VARCHAR(60) NULL,
-        paid_at DATETIME NULL, assigned_staff_id INT NULL, assigned_staff VARCHAR(120) NULL,
-        booking_status VARCHAR(20) NOT NULL DEFAULT 'Confirmed', created_at DATETIME NULL,
-        UNIQUE KEY uq_booking_inquiry (inquiry_id)
-    ) ENGINE=InnoDB");
-    foreach ([
-        'booking_ref' => "VARCHAR(30) NULL", 'inquiry_id' => "INT NULL", 'customer_id' => "INT NULL",
-        'customer_name' => "VARCHAR(160) DEFAULT ''", 'event_title' => "VARCHAR(160) DEFAULT ''", 'event_date' => "DATE NULL",
-        'event_time' => "VARCHAR(20) NULL", 'location' => "VARCHAR(255) DEFAULT ''", 'arrangement' => "VARCHAR(60) DEFAULT ''",
-        'package' => "VARCHAR(160) DEFAULT ''", 'expected_guests' => "INT NULL", 'quotation_amount' => "DECIMAL(12,2) NULL", 'deposit_amount' => "DECIMAL(12,2) NULL",
-        'amount_paid' => "DECIMAL(12,2) NOT NULL DEFAULT 0", 'remaining_balance' => "DECIMAL(12,2) NULL",
-        'payment_status' => "VARCHAR(20) NOT NULL DEFAULT 'Unpaid'", 'payment_method' => "VARCHAR(40) NULL",
-        'payment_reference' => "VARCHAR(60) NULL", 'paid_at' => "DATETIME NULL", 'assigned_staff_id' => "INT NULL",
-        'assigned_staff' => "VARCHAR(120) NULL", 'booking_status' => "VARCHAR(20) NOT NULL DEFAULT 'Confirmed'", 'created_at' => "DATETIME NULL",
-        'fulfillment_status' => "VARCHAR(30) NULL", 'fulfillment_updated_at' => "DATETIME NULL",
-    ] as $col => $def) {
-        $st = $db->prepare("SHOW COLUMNS FROM `bookings` LIKE ?");
-        $st->execute([$col]);
-        if (!$st->fetch()) $db->exec("ALTER TABLE `bookings` ADD COLUMN `$col` $def");
-    }
+function ensureBookingsSchema(AppDatabase $db): void {
+    // Schema is provisioned centrally from database/catering_crm.sql.
 }
 
 /* =====================================================================================================
@@ -44,7 +20,7 @@ function bookingProgressKind(string $arrangement): string {
     $a = strtolower($arrangement);
     if (strpos($a, 'pick') !== false) return 'pickup';
     if (strpos($a, 'deliver') !== false) return 'delivery';
-    if (strpos($a, 'buffet') !== false || strpos($a, 'setup') !== false || strpos($a, 'set-up') !== false || strpos($a, 'set up') !== false) return 'buffet';
+    if (strpos($a, 'buffet') !== false || strpos($a, 'setup') !== false || strpos($a, 'set-up') !== false || strpos($a, 'set up') !== false || strpos($a, 'on_site') !== false || strpos($a, 'onsite') !== false) return 'buffet';
     return 'generic';
 }
 
