@@ -427,3 +427,155 @@ container.innerHTML = doc.body.innerHTML;
     if (e.target.closest("#burgerToggle")) hideTip();
   });
 })();
+
+
+// ---- Red dot on the sidebar Inbox icon while there are unread messages (every role) ----
+// Same lists the inbox pages use: customer (conversations + tickets), sales staff (conversations),
+// customer service (tickets), admin / manager (conversations + tickets). An item is unread when
+// its unread / unread_count is above 0. The dot replaces the white dot of the Inbox icon.
+(function () {
+  const FEEDS = {
+    "customer":         [["customer-inbox-api.php", "list_conversations", "conversations"], ["customer-inbox-api.php", "list_tickets", "tickets"]],
+    "sales staff":      [["sales-inbox-api.php", "list_conversations", "conversations"]],
+    "customer service": [["cs-inbox-api.php", "list_tickets", "tickets"]],
+    "manager":          [["manager-admin-inbox-api.php", "list_conversations", "conversations"], ["manager-admin-inbox-api.php", "list_tickets", "tickets"]],
+    "admin":            [["manager-admin-inbox-api.php", "list_conversations", "conversations"], ["manager-admin-inbox-api.php", "list_tickets", "tickets"]],
+  };
+  const feeds = FEEDS[CRM_ROLE];
+  if (!feeds) return;
+
+  const isUnread = (item) => !!item && (
+    ["unread_count", "unread", "unread_messages", "unread_total"].some((key) => Number(item[key]) > 0) ||
+    item.has_unread === true || item.is_unread === true || item.has_unread === 1 || item.is_unread === 1);
+  // Admin / Manager cannot mark a message as read on the server (their inbox is read-only), so the browser remembers
+  // which conversations they already opened: the dot clears once they opened the newest message, and comes back on a newer one.
+  const WATCHER = CRM_ROLE === "admin" || CRM_ROLE === "manager";
+  const SEEN_KEY = "crmInboxSeen:" + CRM_ROLE;
+  let seen = {};
+  try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "{}") || {}; } catch (e) { seen = {}; }
+  const seenKey = (kind, id) => kind + ":" + id;
+  const unreadFor = (kind, item) => isUnread(item) && !(WATCHER && seen[seenKey(kind, item.id)] && String(item.last_message_at || "") <= seen[seenKey(kind, item.id)]);
+  if (WATCHER && window.fetch) {
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      const p = nativeFetch(input, init);
+      try {
+        const url = String(typeof input === "string" ? input : (input && input.url) || "");
+        const m = /manager-admin-inbox-api\.php\?.*action=(conversation_messages|ticket_messages)/.exec(url);
+        if (m) {
+          p.then((res) => res.clone().json()).then((data) => {
+            const item = data && (data.conversation || data.ticket);
+            if (!item || item.id == null) return;
+            seen[seenKey(m[1] === "ticket_messages" ? "tickets" : "conversations", item.id)] = String(item.last_message_at || "9999");
+            try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch (e) { /* storage blocked */ }
+            if (window.crmRefreshInboxDot) window.crmRefreshInboxDot();
+          }).catch(() => {});
+        }
+      } catch (e) { /* never break the page */ }
+      return p;
+    };
+  }
+  const CACHE_KEY = "crmInboxUnread:" + CRM_ROLE;
+  let cached = null;
+  try { cached = sessionStorage.getItem(CACHE_KEY); } catch (e) { /* storage blocked */ }
+  let hasUnread = cached === "1", busy = false, again = false, refreshTimer = 0;
+
+  const inboxLinks = () => Array.from(document.querySelectorAll(".sidebar-nav .nav-link"))
+    .filter((a) => /loadPage\(\s*['"][^'"]*inbox/i.test(a.getAttribute("onclick") || "") ||
+      /^inbox$/i.test(((a.querySelector(".nav-text") || a).textContent || "").trim()));
+
+  // The dot is drawn on top of the icon's own white dot (works for <svg>, <img> and icon fonts).
+  function placeDot(link) {
+    const icon = link.querySelector(".sidebar-icon") || link.querySelector("svg, img, i");
+    const dot = link.querySelector(":scope > .crm-unread-dot");
+    if (!icon || !dot) return;
+    const lr = link.getBoundingClientRect(), ir = icon.getBoundingClientRect();
+    if (!lr.width || !ir.width) return;
+    const scale = link.offsetWidth ? lr.width / link.offsetWidth : 1;   // the page runs at a zoom, so convert back to CSS px
+    dot.style.left = ((ir.right - lr.left) / scale - link.clientLeft - 6.5) + "px";
+    dot.style.top = ((ir.top - lr.top) / scale - link.clientTop - 2.5) + "px";
+  }
+
+  // Clean chat icon without the baked-in white dot (black line; the sidebar's own filter makes it white / the right colour).
+  const INBOX_ICON = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8z"/></svg>');
+
+  function paint() {
+    inboxLinks().forEach((link) => {
+      const img = link.querySelector("img.sidebar-icon");
+      if (img && img.getAttribute("data-crm-inbox-icon") !== "1") {
+        img.setAttribute("data-crm-inbox-icon", "1");
+        img.src = INBOX_ICON;
+      }
+      if (getComputedStyle(link).position === "static") link.style.position = "relative";
+      let dot = link.querySelector(":scope > .crm-unread-dot");
+      if (!dot) {
+        dot = document.createElement("span");
+        dot.className = "crm-unread-dot";
+        dot.setAttribute("aria-hidden", "true");
+        link.appendChild(dot);
+      }
+      link.classList.add("crm-inbox-link");
+      link.classList.toggle("has-unread", hasUnread);
+      link.setAttribute("data-unread", hasUnread ? "true" : "false");
+      placeDot(link);
+    });
+  }
+  const repaint = () => requestAnimationFrame(paint);
+
+  async function refresh() {
+    if (document.hidden) return;
+    if (busy) { again = true; return; }
+    busy = true;
+    try {
+      const results = await Promise.all(feeds.map((feed) =>
+        fetch(feed[0] + "?action=" + feed[1], { credentials: "same-origin", cache: "no-store", headers: { Accept: "application/json" } })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => {
+            const list = data && (data[feed[2]] || (data.data && data.data[feed[2]]) || data.data);
+            return Array.isArray(list) ? list : null;
+          })
+          .catch(() => null)));
+      const lists = results.filter(Boolean);
+      const anyUnread = results.some((l, i) => l && l.some((item) => unreadFor(feeds[i][2], item)));
+      window.crmInboxDotInfo = { role: CRM_ROLE, links: inboxLinks().length, lists: results.map((l) => (l ? l.length : null)), unread: results.map((l, i) => (l ? l.filter((item) => unreadFor(feeds[i][2], item)).length : null)) };
+      if (anyUnread) hasUnread = true;
+      else if (lists.length === results.length) hasUnread = false;   // only clear it when every list answered
+      try { sessionStorage.setItem(CACHE_KEY, hasUnread ? "1" : "0"); } catch (e) { /* storage blocked */ }
+      paint();
+    } finally {
+      busy = false;
+      if (again) { again = false; refresh(); }
+    }
+  }
+  const refreshSoon = (ms) => { clearTimeout(refreshTimer); refreshTimer = setTimeout(refresh, ms == null ? 300 : ms); };
+  window.crmRefreshInboxDot = () => refreshSoon(0);   // other scripts can call this after sending / reading a message
+
+  document.addEventListener("DOMContentLoaded", () => {
+    repaint();          // instantly, from the last known state
+    refresh();          // then check the server right away
+    setInterval(refresh, 5000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+    window.addEventListener("focus", refresh);
+
+    // opening another page, or reading a conversation, can clear the dot
+    const main = document.getElementById("mainContentArea");
+    if (main) new MutationObserver(() => refreshSoon(300)).observe(main, { childList: true });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest("#managerInboxPage, #cibPage, .csi-shell, .csi-page")) return;
+      refreshSoon(350);                                  // the server has marked it read
+      setTimeout(refresh, 1500);                         // safety re-check for a slow save
+    });
+
+    // keep the dot on the icon when the sidebar collapses / expands or the window changes
+    window.addEventListener("resize", repaint);
+    const burger = document.getElementById("burgerToggle");
+    if (burger) burger.addEventListener("click", () => { setTimeout(repaint, 50); setTimeout(repaint, 400); });
+    const sidebar = document.getElementById("crmSidebar");
+    if (sidebar) {
+      if (window.ResizeObserver) new ResizeObserver(repaint).observe(sidebar);
+      new MutationObserver(repaint).observe(sidebar, { attributes: true, attributeFilter: ["class"] });
+    }
+    repaint();
+  });
+})();

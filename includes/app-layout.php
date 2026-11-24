@@ -83,7 +83,7 @@
     
     <link rel="stylesheet" href="all-pages-css/stylesheet-login.css">
     <link rel="stylesheet" href="all-pages-css/navbar.css?v=7">
-    <link rel="stylesheet" href="all-pages-css/all-pages.css?v=54">
+    <link rel="stylesheet" href="all-pages-css/all-pages.css?v=55">
     <link rel="stylesheet" href="all-pages-css/Notification.css">
     <link rel="stylesheet" href="all-pages-css/toast.css?v=2">
     

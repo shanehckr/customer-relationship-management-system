@@ -343,7 +343,7 @@
       var minus = el("button", "iw-qty-btn", "−");
       minus.type = "button"; minus.setAttribute("aria-label", "Decrease quantity for " + it.name);
       var qv = document.createElement("input");
-      qv.type = "number"; qv.className = "iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.value = "1";
+      qv.type = "number"; qv.className = "iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.defaultValue = "1"; qv.value = "1";
       qv.name = "qty_" + it.id; qv.setAttribute("aria-label", "Quantity for " + it.name);
       var plus = el("button", "iw-qty-btn", "+");
       plus.type = "button"; plus.setAttribute("aria-label", "Increase quantity for " + it.name);
@@ -890,8 +890,8 @@
           ["City / Municipality", details.city || "\u2014"],
           ["Province", details.province || "\u2014"]
         ];
-        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
         arrangementRows.push(["Delivery Time", d.event_time ? time12(d.event_time) : "\u2014"]);
+        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
         if (details.instructions) arrangementRows.push(["Delivery Instructions", details.instructions]);
       } else {
         arrangementTitle.textContent = "Venue Information";
@@ -909,7 +909,7 @@
       arrangementList.textContent = "";
       arrangementRows.forEach(function (row) {
         var field = el("div", "iw-review-detail");
-        if (/address|location|instructions|notes/i.test(row[0])) field.classList.add("iw-review-detail-wide");
+        if (/address|location|instructions|notes|landmark/i.test(row[0])) field.classList.add("iw-review-detail-wide");
         field.appendChild(el("dt", "", row[0]));
         field.appendChild(el("dd", "", row[1]));
         arrangementList.appendChild(field);
@@ -930,7 +930,13 @@
           var row = el("tr");
           row.appendChild(el("th", "iw-review-item", line.item.name || line.input.value));
           row.lastChild.scope = "row";
-          row.appendChild(el("td", "", line.quantity + " \u00D7 " + (line.serving || line.item.category || "Serving")));
+          var servingCell = el("td", "iw-review-serving");
+          var servingName = line.tier ? String(line.tier.value || "").trim() : String(line.serving || "").trim();
+          var servingPax = line.tier ? String(line.tier.getAttribute("data-tier-pax") || "").trim() : "";
+          if (servingPax && servingPax.toLowerCase() === servingName.toLowerCase()) servingPax = "";
+          servingCell.appendChild(el("span", "iw-review-serving-main", line.quantity + " \u00D7 " + (servingName || line.item.category || "Serving")));
+          if (servingPax) servingCell.appendChild(el("span", "iw-review-serving-pax", servingPax));
+          row.appendChild(servingCell);
           row.appendChild(el("td", "iw-review-money", pesoDisplay(line.unitPrice)));
           row.appendChild(el("td", "iw-review-money", pesoDisplay(line.subtotal)));
           menuRows.appendChild(row);
@@ -1207,7 +1213,9 @@
     // keep the opened list inside the scrolling form body
     modal.addEventListener("shown.bs.dropdown", function (e) {
       var menu = e.target.parentNode && e.target.parentNode.querySelector(".dropdown-menu");
-      if (menu && menu.scrollIntoView) menu.scrollIntoView({ block: "nearest" });
+      if (!menu) return;
+      var m = menu.getBoundingClientRect(), b = els.body.getBoundingClientRect();
+      if (m.bottom > b.bottom) els.body.scrollTop += (m.bottom - b.bottom) + 8;
     });
     form.addEventListener("submit", function (e) { e.preventDefault(); });
 
@@ -1227,7 +1235,15 @@
 
     els.notes.addEventListener("input", updateNotesCount);
 
-    $("iwArrangement").addEventListener("change", function () { syncArrangementFields(true); });
+    $("iwArrangement").addEventListener("change", function () {
+      syncArrangementFields(true);
+      var sec = [$("iwPickupSection"), $("iwDeliverySection"), $("iwOnsiteSection")]
+        .filter(function (s) { return s && !s.hidden; })[0];
+      if (sec) {
+        var top = sec.getBoundingClientRect().top - els.body.getBoundingClientRect().top;
+        els.body.scrollTop += top - 12;
+      }
+    });
     syncArrangementFields(false);
     (function wireEventDate() {
       var evDate = $("iwEventDate");
@@ -2503,10 +2519,10 @@
       }).filter(function (o) { return o.name; });
     }
 
-    function renderDishes(panel, record, hasPax) {
+    function renderDishes(panel, record, hasPax, letter) {
       var items = dishItems(record, hasPax);
       var tag = make("span", "av-d-tag", items.length + " Item" + (items.length === 1 ? "" : "s") + " Requested");
-      var card = avCard("B", "Food Orders", tag);
+      var card = avCard(letter || "B", "Food Orders", tag);
       if (!items.length) {
         card.appendChild(make("p", "av-d-menu-empty", "No dishes selected."));
         panel.appendChild(card);
@@ -2517,7 +2533,7 @@
         { key: "category", label: "Food Category", cls: "" },
         { key: "name", label: "Menu Item / Variety", cls: "av-d-item" },
         { key: "qty", label: "Quantity / Serving", cls: "av-d-qty" },
-        { key: "details", label: "Order Details", cls: "av-d-details" }
+        { key: "details", label: "Price", cls: "av-d-details" }
       ].filter(function (c) {
         return c.key === "name" || items.some(function (it) { return it[c.key]; });
       });
@@ -2525,7 +2541,7 @@
       var table = make("table", "av-d-table");
       var thead = document.createElement("thead");
       var hr = document.createElement("tr");
-      cols.forEach(function (c) { hr.appendChild(make("th", c.key === "qty" ? "av-d-qty" : "", c.label)); });
+      cols.forEach(function (c) { hr.appendChild(make("th", c.key === "qty" ? "av-d-qty" : (c.key === "details" ? "av-d-price" : ""), c.label)); });
       thead.appendChild(hr);
       table.appendChild(thead);
       var tbody = document.createElement("tbody");
@@ -2557,49 +2573,65 @@
         detailsContent.appendChild(make("div", "ci-note ci-note-negative mb-3", "This inquiry was declined" + (why ? ": " + why : ".") + " You are welcome to send a new inquiry anytime."));
       }
 
-      // A. Event Information (same fields as the staff side)
-      var info = make("section", "ci-approved-card");
-      info.appendChild(make("h3", "ci-approved-title", "A. Event Information"));
-      [["Event Name", firstValue(record,["event_name","title"])], ["Number of Guests", hasPax ? firstValue(record,["pax","expected_guests"]) + " pax" : ""], ["Additional Notes", firstValue(record,["special_requests","notes","customer_notes"]) || "—"]].forEach(function(row) {
-        if (row[1] !== "") { info.appendChild(make("span","ci-approved-label",row[0])); info.appendChild(make("div","ci-approved-value",row[1])); }
-      });
-      detailsContent.appendChild(info);
-      var service = make("section", "ci-approved-card ci-service-card");
-      service.appendChild(make("h3", "ci-approved-title", "B. Service Arrangement"));
-      service.appendChild(make("span", "ci-approved-label", "Catering Arrangement"));
-      service.appendChild(make("div", "ci-approved-value", arrangement || "—"));
+      /* A. Event Information (same look as the staff "View Details": av-d-* classes) */
+      var info = avCard("A", "Event Information");
+      var grid = make("div", "av-d-grid av-d-grid-3");
+      grid.appendChild(avField("Event Name", firstValue(record, ["event_name", "title"]), "is-lg"));
+      grid.appendChild(avField("Event Date", fmtDay(firstValue(record, ["event_date", "date"]))));
+      grid.appendChild(avField("Catering Arrangement", arrangement));
+      if (record.event_time_display || record.event_time) {
+        grid.appendChild(avField(asText(record.event_time_label) || "Event Time", asText(record.event_time_display) || asText(record.event_time)));
+      }
+      if (hasPax) {
+        var pax = asText(firstValue(record, ["pax", "expected_guests"]));
+        if (pax) grid.appendChild(avField("Number of Guests", pax + " pax"));
+      }
+      var pkg = asText(firstValue(record, ["package_name", "package"]));
+      if (pkg) { var pkgBox = avField("Package", pkg); pkgBox.className = "is-wide"; grid.appendChild(pkgBox); }
+      info.appendChild(grid);
+
+      var split = make("div", "av-d-split");
+      var notes = make("div");
+      notes.appendChild(make("span", "av-d-label", "Special Requests"));
+      notes.appendChild(make("div", "av-d-note", asText(firstValue(record, ["special_requests", "notes", "customer_notes"])) || "\u2014"));
+      split.appendChild(notes);
+      info.appendChild(split);
+      var pair = make("div", "ci-info-pair");   // Event Information + Delivery Address side by side (like My Bookings)
+      pair.appendChild(info);
+      detailsContent.appendChild(pair);
+
+      /* B. Delivery Address / Pickup Location / Event Location: its own card so the customer never mixes it up with the event details */
       var arrangementDetails = record.arrangement_details || record.delivery_details;
       if (typeof arrangementDetails === "string") { try { arrangementDetails = JSON.parse(arrangementDetails); } catch (_) { arrangementDetails = null; } }
       if (!arrangementDetails || typeof arrangementDetails !== "object" || Array.isArray(arrangementDetails)) arrangementDetails = null;
-      var locationLabel = asText(record.event_location_label) || (/pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue / Address"));
-      service.appendChild(make("span", "ci-approved-label", locationLabel));
-      service.appendChild(make("div", "ci-approved-value", firstValue(record,["event_location","venue","address","location"]) || "—"));
-      if (arrangementDetails) {
-        var detailRows = /deliver/i.test(arrangement)
-          ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
-          : /pick-?up/i.test(arrangement)
-            ? [["pickup_notes", "Pickup Notes"]]
-            : hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+      var locationLabel = asText(record.event_location_label) || (/pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Location"));
+      var locationValue = firstValue(record, ["event_location", "venue", "address", "location"]);
+      var detailRows = !arrangementDetails ? [] : /deliver/i.test(arrangement)
+        ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
+        : /pick-?up/i.test(arrangement)
+          ? [["pickup_notes", "Pickup Notes"]]
+          : hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+      var hasLocation = asText(locationValue) || detailRows.some(function (entry) { return arrangementDetails[entry[0]]; });
+      var nextLetter = "B";
+      if (hasLocation) {
+        var place = avCard("B", locationLabel);
+        var placeGrid = make("div", "av-d-grid");
+        var addressBox = avField(/deliver/i.test(arrangement) ? "Street / Address" : "Location", locationValue);   // the card title already says "Delivery Address"
+        addressBox.className = "is-wide";
+        placeGrid.appendChild(addressBox);
         detailRows.forEach(function (entry) {
-          if (arrangementDetails[entry[0]]) {
-            service.appendChild(make("span", "ci-approved-label", entry[1]));
-            service.appendChild(make("div", "ci-approved-value", arrangementDetails[entry[0]]));
-          }
+          if (!arrangementDetails[entry[0]]) return;
+          var box = avField(entry[1], arrangementDetails[entry[0]]);
+          if (/instructions|notes/.test(entry[0])) box.className = "is-wide";   // long text gets its own row
+          placeGrid.appendChild(box);
         });
+        place.appendChild(placeGrid);
+        pair.appendChild(place);
+        nextLetter = "C";
       }
-      if (record.event_time_display || record.event_time) { service.appendChild(make("span", "ci-approved-label", asText(record.event_time_label) || "Event time")); service.appendChild(make("div", "ci-approved-value", asText(record.event_time_display) || asText(record.event_time))); }
-      detailsContent.appendChild(service);
-      var menu = make("section", "ci-approved-card ci-menu-card");
-      menu.appendChild(make("h3", "ci-approved-title", "C. Menu Selected"));
-      var dishes = dishItems(record, hasPax);
-      var table = make("div", "ci-approved-menu");
-      var heading = make("div", "ci-approved-menu-head");
-      ["Menu Item","Serving Size","Quantity"].forEach(function(x) { heading.appendChild(make("strong","",x)); });
-      table.appendChild(heading);
-      dishes.forEach(function(dish) { var row = make("div","ci-approved-menu-row"); row.appendChild(make("span","",dish.name)); row.appendChild(make("span","",dish.tier || dish.pax || "—")); row.appendChild(make("span","",dish.qty || "1")); table.appendChild(row); });
-      if (!dishes.length) table.appendChild(make("div","ci-approved-menu-row","No menu items selected."));
-      menu.appendChild(table);
-      detailsContent.appendChild(menu);
+
+      /* Food Orders */
+      renderDishes(detailsContent, record, hasPax, nextLetter);
     }
 
     function peso(value) {
@@ -2942,15 +2974,6 @@
         });
         quotePanel.appendChild(payment);
         quotePanel.appendChild(make("div", "ci-payment-verified", "✓  Deposit has been verified. Your booking is now confirmed."));
-        var viewBooking = make("button", "ci-btn-primary ci-view-booking", "View Booking Details →");
-        viewBooking.type = "button";
-        viewBooking.addEventListener("click", function () {
-          try { sessionStorage.setItem("crmOpenBookingId", String(booking.booking_id)); } catch (e) { /* continue to the bookings list */ }
-          var nav = document.querySelector('a[href*="customer-bookings"], [data-page="customer-bookings.html"]');
-          if (typeof window.loadPage === "function") window.loadPage("customer-bookings.html", nav || null);
-          else window.location.href = "index.php#bookings";
-        });
-        quotePanel.appendChild(viewBooking);
       } else if (status === "Accepted") {
         quotePanel.appendChild(make("div", "ci-note", "You accepted this quotation. Pay the " + peso(quotation.deposit_amount) + " deposit online (GCash or Maya) to confirm your booking."));
       } else if (status === "Declined") {
@@ -2958,6 +2981,41 @@
       } else if (expired) {
         quotePanel.appendChild(make("div", "ci-note", "This quotation has expired. Please message the catering team for a new one."));
       }
+    }
+
+    function openBooking(booking) {
+      try { sessionStorage.setItem("crmOpenBookingId", String(booking.booking_id)); } catch (e) { /* continue to the bookings list */ }
+      var nav = document.querySelector('a[href*="customer-bookings"], [data-page="customer-bookings.html"]');
+      if (typeof window.loadPage === "function") window.loadPage("customer-bookings.html", nav || null);
+      else window.location.href = "index.php#bookings";
+    }
+
+    /* Banner between the progress bar and the tabs, only when this inquiry already has a booking */
+    function renderBookingBanner(record) {
+      var old = page.querySelector("#ciBookingBanner");
+      if (old) old.remove();
+      var tabs = page.querySelector(".ci-tabs");
+      if (!record.booking || !record.booking.booking_id || !tabs || !tabs.parentNode) return;
+      var banner = make("div", "ci-callout ci-booking-banner");
+      banner.id = "ciBookingBanner";
+      banner.setAttribute("role", "status");
+      var icon = make("span", "ci-callout-icon");
+      var check = make("i", "bi bi-check-lg");
+      check.setAttribute("aria-hidden", "true");
+      icon.appendChild(check);
+      var copy = make("div", "");
+      copy.appendChild(make("h4", "", "This inquiry has been converted into a confirmed booking."));
+      copy.appendChild(make("p", "", "Your event is now a confirmed booking. You can view the booking details, payments, and updates."));
+      var go = make("button", "ci-btn-primary", "View Booking ");
+      go.type = "button";
+      var arrow = make("i", "bi bi-arrow-right");
+      arrow.setAttribute("aria-hidden", "true");
+      go.appendChild(arrow);
+      go.addEventListener("click", function () { openBooking(record.booking); });
+      banner.appendChild(icon);
+      banner.appendChild(copy);
+      banner.appendChild(go);
+      tabs.parentNode.insertBefore(banner, tabs);
     }
 
     function activateTab(name) {
@@ -3000,6 +3058,7 @@
         });
       }
       renderSteps(record);
+      renderBookingBanner(record);
       renderDetails(record);
       renderQuote(record);
       activateTab(record.booking ? "quote" : "details");
@@ -3607,7 +3666,20 @@
         feed.append(make("p", "cib-state", "No messages in this conversation yet."));
         return;
       }
+      var lastDay = "";
       messages.forEach(function (message) {
+        /* day separator (Today / Yesterday / date) whenever the day changes, like a real chat */
+        var when = parseDate(value(message, ["created_at", "sent_at", "timestamp"]));
+        var validWhen = !Number.isNaN(when.getTime());
+        if (validWhen) {
+          var dayKey = when.toDateString();
+          if (dayKey !== lastDay) {
+            lastDay = dayKey;
+            var now = new Date(), yest = new Date(); yest.setDate(now.getDate() - 1);
+            feed.append(make("div", "cib-day-sep", dayKey === now.toDateString() ? "Today" : dayKey === yest.toDateString() ? "Yesterday" :
+              when.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })));
+          }
+        }
         var mine = message.is_mine === true || String(value(message, ["direction", "sender_type"], "")).toLowerCase() === "outgoing" || message.from_customer === true;
         var systemUpdate = message.is_system === true;
         var bubble = make("article", "cib-message" + (mine ? " is-mine" : "") + (systemUpdate ? " is-system" : ""));
@@ -3628,9 +3700,9 @@
         if (payCard) bubble.append(payCard);
         var rateCard = cibFeedbackCard(value(message, ["feedback_request"]));
         if (rateCard) bubble.append(rateCard);
-        var who = systemUpdate ? (message.system_kind === "system" ? "System update" : "Payment update") : value(message, ["sender_name", "sender", "author_name"], mine ? "You" : "");
-        var sent = messageTime(value(message, ["created_at", "sent_at", "timestamp"]));
-        bubble.append(make("div", "cib-message-meta", [sent, who].filter(Boolean).join(" · ")));
+        var who = systemUpdate ? (message.system_kind === "system" ? "System update" : "Payment update") : (mine ? "" : value(message, ["sender_name", "sender", "author_name"], ""));
+        var sent = validWhen ? when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : messageTime(value(message, ["created_at", "sent_at", "timestamp"]));
+        bubble.append(make("div", "cib-message-meta", [who, sent].filter(Boolean).join(" · ")));
         feed.append(bubble);
       });
       /* The feed has a fixed height and scrolls: always show the newest message.
@@ -4356,7 +4428,7 @@
     if (node) node.textContent = first ? greeting + ", " + first + "!" : "Welcome back!";
     var dateNode = page.querySelector("#homeTodayDate");
     var dateLabel = page.querySelector("#homeTodayDateLabel") || dateNode;
-    if (dateLabel) dateLabel.textContent = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date());
+    if (dateLabel) dateLabel.textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date());
   }
 
   function renderRecord(page, record, kind) {

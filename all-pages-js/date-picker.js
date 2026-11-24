@@ -291,7 +291,11 @@
       if (stay) { e.stopPropagation(); e.preventDefault(); }   // Esc closes the popup only, not the modal behind it
       return;
     }
-    if (isDate(el) && (e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) { e.preventDefault(); open(el); }
+    if (isDate(el) && (e.key === " " || e.code === "Space" || e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) {
+      e.preventDefault();                                   // stops the browser's own calendar
+      if (input === el && pop && !pop.hidden) close();      // Space again closes ours
+      else open(el);
+    }
   }, true);
 
   // Typing in the field while the popup is open: keep the popup on the same date.

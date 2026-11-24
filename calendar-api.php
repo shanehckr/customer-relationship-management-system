@@ -39,7 +39,7 @@ $bookings = $st->fetchAll();
 // Pax / arrangement are typed on the inquiry (leads row) and may never have been copied onto the booking.
 $inqIds = [];
 foreach ($bookings as $b) {
-    if (!empty($b['inquiry_id']) && ((int)($b['expected_guests'] ?? 0) <= 0 || empty($b['arrangement']))) {
+    if (!empty($b['inquiry_id']) && ((int)($b['expected_guests'] ?? 0) <= 0 || empty($b['arrangement']) || trim((string)($b['customer_name'] ?? '')) === '')) {
         $inqIds[(int)$b['inquiry_id']] = true;
     }
 }
@@ -48,7 +48,7 @@ if ($inqIds) {
     try {
         $ids = array_keys($inqIds);
         $in  = implode(',', array_fill(0, count($ids), '?'));
-        $iq  = $db->prepare("SELECT lead_id, arrangement, expected_guests FROM `$DB_CATERING`.leads WHERE lead_id IN ($in)");
+        $iq  = $db->prepare("SELECT lead_id, arrangement, expected_guests, customer_name FROM `$DB_CATERING`.leads WHERE lead_id IN ($in)");
         $iq->execute($ids);
         foreach ($iq->fetchAll() as $r) $inqMap[(int)$r['lead_id']] = $r;
     } catch (Throwable $e) { error_log('calendar-api: inquiry lookup failed: ' . $e->getMessage()); }
@@ -58,6 +58,7 @@ foreach ($bookings as &$b) {
     if (!$q) continue;
     if ((int)($b['expected_guests'] ?? 0) <= 0 && (int)($q['expected_guests'] ?? 0) > 0) $b['expected_guests'] = (int)$q['expected_guests'];
     if (empty($b['arrangement']) && !empty($q['arrangement'])) $b['arrangement'] = $q['arrangement'];
+    if (trim((string)($b['customer_name'] ?? '')) === '' && !empty($q['customer_name'])) $b['customer_name'] = $q['customer_name'];   // booking row has no name: use the inquiry's customer
 }
 unset($b);
 

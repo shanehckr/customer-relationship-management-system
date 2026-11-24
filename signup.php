@@ -63,10 +63,10 @@ if (empty($_SESSION["signup_csrf_token"])) {
 
         <!-- Progress: the 4 steps are a real sequence -->
         <ol class="su-progress" aria-label="Sign-up progress">
-          <li class="su-dot is-current" data-dot="1"><span class="visually-hidden">Step 1: Mobile number</span></li>
+          <li class="su-dot is-current" data-dot="1"><span class="visually-hidden">Step 1: Email address</span></li>
           <li class="su-dot" data-dot="2"><span class="visually-hidden">Step 2: Verification code</span></li>
           <li class="su-dot" data-dot="3"><span class="visually-hidden">Step 3: Your name</span></li>
-          <li class="su-dot" data-dot="4"><span class="visually-hidden">Step 4: Account details</span></li>
+          <li class="su-dot" data-dot="4"><span class="visually-hidden">Step 4: Mobile number and account details</span></li>
         </ol>
         <p class="su-count" id="suCount" aria-live="polite">Step 1 of 4</p>
 
@@ -75,20 +75,18 @@ if (empty($_SESSION["signup_csrf_token"])) {
 
           <div class="alert alert-danger d-none" id="suAlert" role="alert" tabindex="-1"></div>
 
-          <!-- ============ STEP 1: mobile number ============ -->
+          <!-- ============ STEP 1: email ============ -->
           <section class="su-step is-active" data-step="1" aria-labelledby="suTitle1">
-            <h2 class="su-title" id="suTitle1">What's your mobile number?</h2>
-            <p class="reset-desc su-desc">We'll text you a 6-digit code to confirm it's yours.</p>
+            <h2 class="su-title" id="suTitle1">What's your email address?</h2>
+            <p class="reset-desc su-desc">We'll email you a 6-digit code to confirm it's yours.</p>
 
             <div class="mb-3">
-              <label for="suPhone" class="form-label">Mobile number</label>
+              <label for="suEmail" class="form-label">Gmail</label>
               <div class="input-wrapper position-relative">
-                <svg class="input-icon position-absolute" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
-                <span class="su-prefix" aria-hidden="true">+63</span>
-                <input type="tel" id="suPhone" name="phone" class="form-control su-phone" inputmode="numeric"
-                       autocomplete="tel-national" maxlength="20" placeholder="9XX XXX XXXX" aria-describedby="suPhoneHelp" required>
+                <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
+                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="yourname@gmail.com" aria-describedby="suEmailHelp" required>
               </div>
-              <div class="su-help" id="suPhoneHelp">Philippine mobile numbers only, for example 917 123 4567.</div>
+              <div class="su-help" id="suEmailHelp">Gmail addresses only, for example yourname@gmail.com.</div>
             </div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suSendBtn">Send Verification Code</button>
@@ -101,7 +99,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
           <!-- ============ STEP 2: OTP ============ -->
           <section class="su-step" data-step="2" aria-labelledby="suTitle2">
             <h2 class="su-title" id="suTitle2">Enter the 6-digit code</h2>
-            <p class="reset-desc su-desc">Sent to <strong id="suMasked">+63 9XX XXX XXXX</strong>.</p>
+            <p class="reset-desc su-desc">Sent to <strong id="suMasked">yo••••@gmail.com</strong>. Check your inbox and spam folder.</p>
 
             <div class="mb-2">
               <label class="form-label" id="suOtpLabel">Verification code</label>
@@ -123,14 +121,14 @@ if (empty($_SESSION["signup_csrf_token"])) {
 
             <div class="su-links">
               <button type="button" class="su-link" id="suResendBtn" disabled>Resend code</button>
-              <button type="button" class="su-link" id="suChangePhone">Change Phone Number</button>
+              <button type="button" class="su-link" id="suChangeEmail">Change Email</button>
             </div>
           </section>
 
           <!-- ============ STEP 3: name ============ -->
           <section class="su-step" data-step="3" aria-labelledby="suTitle3">
             <h2 class="su-title" id="suTitle3">What's your name?</h2>
-            <p class="reset-desc su-desc">Your phone number is verified. Use the name you'd like on quotations and bookings.</p>
+            <p class="reset-desc su-desc">Your email is verified. Use the name you'd like on quotations and bookings.</p>
 
             <div class="mb-4">
               <label for="suFullName" class="form-label">Name</label>
@@ -150,11 +148,14 @@ if (empty($_SESSION["signup_csrf_token"])) {
             <p class="reset-desc su-desc">You'll use these to log in next time.</p>
 
             <div class="mb-3">
-              <label for="suEmail" class="form-label">Gmail</label>
+              <label for="suPhone" class="form-label">Mobile number</label>
               <div class="input-wrapper position-relative">
-                <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
-                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="yourname@gmail.com" required>
+                <svg class="input-icon position-absolute" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>
+                <span class="su-prefix" aria-hidden="true">+63</span>
+                <input type="tel" id="suPhone" name="phone" class="form-control su-phone" inputmode="numeric"
+                       autocomplete="tel-national" maxlength="20" placeholder="9XX XXX XXXX" aria-describedby="suPhoneHelp" required>
               </div>
+              <div class="su-help" id="suPhoneHelp">Philippine mobile numbers only, for example 917 123 4567.</div>
             </div>
 
             <div class="mb-3">
