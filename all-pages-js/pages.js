@@ -5844,6 +5844,25 @@ function crmInitMenuManagement(page) {
   // the list on screen: the active menu, or the archive while "View Archive" is open
   const current = () => (state.view === 'archive' ? state.archived : state.items);
 
+  // The "Back to Menu" link and the archive subtitle normally come from manager-admin-menu-management.html.
+  // If that file was not updated, create them here so the page still works (no "Cannot set properties of null").
+  (function ensureArchiveChrome() {
+    const title = page.querySelector('#mmTitle');
+    if (!title) return;
+    if (!page.querySelector('#mmBackBtn')) {
+      const back = document.createElement('button');
+      back.type = 'button'; back.id = 'mmBackBtn'; back.className = 'iq-back mm-back-link'; back.hidden = true;
+      back.innerHTML = '<i class="bi bi-arrow-left" aria-hidden="true"></i><span>Back to Menu</span>';
+      title.parentNode.insertBefore(back, title);
+    }
+    if (!page.querySelector('#mmSubtitle')) {
+      const sub = document.createElement('p');
+      sub.id = 'mmSubtitle'; sub.className = 'mm-page-sub'; sub.hidden = true;
+      sub.textContent = 'View and restore previously archived menu items.';
+      title.insertAdjacentElement('afterend', sub);
+    }
+  })();
+
   const el = (tag, cls, text) => {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
@@ -5926,6 +5945,7 @@ function crmInitMenuManagement(page) {
   }
 
   function render() {
+    syncChrome();
     ['all', 'Lechon', 'Bilao', 'Viands'].forEach((c) => {
       const n = c === 'all' ? current().length : current().filter((i) => i.category === c).length;
       const badge = page.querySelector('[data-count="' + c + '"]');
@@ -5995,6 +6015,7 @@ function crmInitMenuManagement(page) {
       const data = await call('list');
       state.items = Array.isArray(data.items) ? data.items : [];
       state.csrf = data.csrf_token || '';
+      if (state.view !== 'active') return;   // the person already switched to the archive: do not paint the menu over it
       render();
     } catch (error) {
       console.error('[Menu] load failed:', error);
@@ -6013,6 +6034,7 @@ function crmInitMenuManagement(page) {
       const data = await call('archived');
       state.archived = Array.isArray(data.items) ? data.items : [];
       if (data.csrf_token) state.csrf = data.csrf_token;
+      if (state.view !== 'archive') return;   // the person already went back to the menu
       render();
     } catch (error) {
       console.error('[Menu] archive load failed:', error);
@@ -6021,19 +6043,23 @@ function crmInitMenuManagement(page) {
     }
   }
 
+  // Everything that differs between the menu and the archive is decided here from state.view (and re-applied on every render),
+  // so the header, buttons, search box and list can never disagree with each other.
+  function syncChrome() {
+    const archive = state.view === 'archive';
+    page.dataset.mmView = archive ? 'archive' : 'active';   // CSS hides "View Archive" + "Add Menu Item" while this is "archive"
+    const set = (id, fn) => { const n = $(id); if (n) fn(n); };
+    set('mmTitle', (n) => { n.textContent = archive ? 'Archived Menu' : 'Menu'; });
+    set('mmBackBtn', (n) => { n.hidden = !archive; });
+    set('mmSubtitle', (n) => { n.hidden = !archive; });
+    set('mmSearch', (n) => { n.placeholder = archive ? 'Search archived items...' : 'Search Lechon, Bilao, or Viands...'; });
+  }
+
   function setView(view) {
     state.view = view; state.cat = 'all'; state.q = ''; $('mmSearch').value = '';
-    const archive = view === 'archive';
-    $('mmTitle').textContent = archive ? 'Archived Menu' : 'Menu';
-    const addBtn = $('mmAddBtn');
-    if (archive) addBtn.style.setProperty('display', 'none', 'important'); else addBtn.style.removeProperty('display');
-    // archive view: "Back to Menu" link sits top-left above the title; the right-side View Archive button is hidden
-    $('mmBackBtn').hidden = !archive;
-    $('mmSubtitle').hidden = !archive;
-    const toggle = $('mmArchiveBtn');
-    if (archive) toggle.style.setProperty('display', 'none', 'important'); else toggle.style.removeProperty('display');
-    $('mmSearch').placeholder = archive ? 'Search archived items...' : 'Search Lechon, Bilao, or Viands...';
-    if (archive) loadArchive(); else load();   // going back reloads the menu, so restored items show up
+    syncChrome();
+    $('mmGrid').textContent = '';   // never leave the other view's cards on screen while loading
+    if (view === 'archive') loadArchive(); else load();   // going back reloads the menu, so restored items show up
   }
 
   // ---------- view ----------
@@ -6386,7 +6412,7 @@ function crmInitMenuManagement(page) {
   // ---------- page events ----------
   $('mmAddBtn').addEventListener('click', () => { resetForm(null); modal('mmFormModal').show(); });
   $('mmArchiveBtn').addEventListener('click', () => setView(state.view === 'archive' ? 'active' : 'archive'));
-  $('mmBackBtn').addEventListener('click', () => setView('active'));
+  if ($('mmBackBtn')) $('mmBackBtn').addEventListener('click', () => setView('active'));
   $('mmTabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.mm-tab');
     if (tab) { state.cat = tab.dataset.cat; render(); }
@@ -8696,8 +8722,8 @@ if (!window.__crmDropdownAutoScrollBound) {
       var validHint = document.createElement("div");
       validHint.style.cssText = "font-size:12px;opacity:.75;margin-top:6px;";
       validHint.textContent = vr.rush
-        ? "The event is very close, so the deadline must be before the event date. Latest date you can choose: " + (longDate(vr.max) || vr.max) + "."
-        : "Filled in automatically: the deposit is due " + QUOTE_DEPOSIT_DAYS_BEFORE_EVENT + " days before the event (" + (longDate(vr.max) || vr.max) + "). You can choose an earlier date, but not a later one.";
+        ? "Event is very close: the deadline must be before the event date. Latest: " + (longDate(vr.max) || vr.max) + "."
+        : "Auto-filled: deposit is due " + QUOTE_DEPOSIT_DAYS_BEFORE_EVENT + " days before the event (" + (longDate(vr.max) || vr.max) + "). Earlier is fine, later is not.";
       validWrap.appendChild(validHint);
     }
     /* Valid-until TIME (8:00 AM - 8:00 PM). Required when the date is today; for a later date it defaults to 8:00 PM. */
@@ -8715,7 +8741,7 @@ if (!window.__crmDropdownAutoScrollBound) {
       var host = validWrap || validEl.parentNode;
       var wrap = document.createElement("div");
       timeWrap = wrap;
-      wrap.style.marginTop = "12px";
+      if (!validWrap) wrap.style.marginTop = "12px";
       var lab = document.createElement("label");
       var firstLabel = host.querySelector("label");
       lab.className = firstLabel ? firstLabel.className : "modal-input-label";
@@ -8733,11 +8759,11 @@ if (!window.__crmDropdownAutoScrollBound) {
       validTimeEl.value = useBaseDeadline && base.valid_until_time && String(base.valid_until_time).slice(0, 5) !== "23:59" ? String(base.valid_until_time).slice(0, 5) : "";   // empty = 11:59 PM of that day
       var tHint = document.createElement("div");
       tHint.style.cssText = "font-size:12px;opacity:.75;margin-top:6px;";
-      tHint.textContent = "The customer must accept the quotation before this date and time (8:00 AM to 11:00 PM). Required when the date is today (at least 1 hour from now, on the hour or half hour). For a later date, leave it empty and the deadline is 11:59 PM of that day.";
+      tHint.textContent = "8:00 AM to 11:00 PM, on the hour or half hour. Today: at least 1 hour from now. Later date: leave empty for 11:59 PM. Invalid times adjust automatically.";
       wrap.appendChild(lab);
       wrap.appendChild(validTimeEl);
       wrap.appendChild(tHint);
-      host.appendChild(wrap);
+      if (validWrap) validWrap.insertAdjacentElement("afterend", wrap); else host.appendChild(wrap);   // own column next to "Valid until"
     })();
     var clampValid = function () {
       if (vr.max && validEl.value > vr.max) validEl.value = vr.max;
@@ -8749,24 +8775,44 @@ if (!window.__crmDropdownAutoScrollBound) {
     var syncValidTime = function () {
       if (!validTimeEl) return;
       var showTime = rushEvent;   // only a rush event has a deadline time; otherwise the deadline is 11:59 PM of the chosen date (also when it is today)
-      if (timeWrap) timeWrap.style.display = showTime ? "" : "none";
       var isToday = validEl.value === ymd(new Date());
       validTimeEl.required = isToday && rushEvent;   // rush event + today: a time is required; otherwise empty = 11:59 PM of that day
+      /* the row has only the fields that apply: Valid until | Deposit | Discount (3 equal columns), plus "Valid until time" (4 columns) for a rush event */
+      if (timeWrap) timeWrap.style.display = showTime ? "" : "none";
+      var termsGrid = timeWrap && timeWrap.parentNode;
+      if (termsGrid && termsGrid.classList) termsGrid.classList.toggle("has-time", !!showTime);
+      validTimeEl.disabled = false;
       if (!showTime) { validTimeEl.value = ""; delete validTimeEl.dataset.auto; return; }
       var min = crmQuoteMinTime(validEl.value);
+      /* auto-adjust 1: today has no valid time left (needs 1 hour from now and 11:00 PM at the latest) -> move to the next allowed day */
+      if (isToday && min > CRM_QUOTE_TIME_MAX) {
+        var nd = new Date(validEl.value + "T00:00:00"); nd.setDate(nd.getDate() + 1);
+        var next = ymd(nd);
+        if (!vr.max || next <= vr.max) { validEl.value = next; validTimeEl.value = ""; delete validTimeEl.dataset.auto; syncValidTime(); return; }
+      }
       validTimeEl.min = min;
       if (isToday) {
         if (!validTimeEl.value) { validTimeEl.value = min; validTimeEl.dataset.auto = min; }
       } else if (validTimeEl.dataset.auto && validTimeEl.value === validTimeEl.dataset.auto) {
         validTimeEl.value = ""; delete validTimeEl.dataset.auto;   // filled in for "today": a later date goes back to empty
       }
-      if (validTimeEl.value && validTimeEl.value < min) validTimeEl.value = min;
+      /* auto-adjust 2: a typed time that is not allowed is moved to the nearest allowed one (on the hour / half hour, inside the allowed hours, 1 hour from now for today) */
+      if (validTimeEl.value) {
+        var mins = +validTimeEl.value.slice(0, 2) * 60 + +validTimeEl.value.slice(3, 5);
+        mins = Math.ceil(mins / CRM_QUOTE_STEP_MIN) * CRM_QUOTE_STEP_MIN;
+        var snapped = String(Math.floor(mins / 60)).padStart(2, "0") + ":" + String(mins % 60).padStart(2, "0");
+        if (snapped < min) snapped = min;
+        if (snapped > CRM_QUOTE_TIME_MAX) snapped = CRM_QUOTE_TIME_MAX;
+        if (snapped !== validTimeEl.value) validTimeEl.value = snapped;
+      }
     };
     validEl.addEventListener("change", syncValidTime);
     validEl.addEventListener("input", syncValidTime);
     if (validTimeEl) {
       validTimeEl.addEventListener("focus", syncValidTime);       // the clock keeps moving while the form is open
       validTimeEl.addEventListener("mousedown", syncValidTime);
+      validTimeEl.addEventListener("change", syncValidTime);      // snap an invalid time as soon as it is picked
+      validTimeEl.addEventListener("blur", syncValidTime);
     }
     syncValidTime();
     rateEl.value = base && base.deposit_rate ? base.deposit_rate : 20;
@@ -9338,7 +9384,7 @@ if (!window.__crmDropdownAutoScrollBound) {
       if (!validEl.value || validEl.value < ymd(new Date())) return "Choose a valid-until date that is today or later.";
       if (validEl.value < vr.min) return "It is too late to set a deadline for today (the time must be at least 1 hour from now and no later than 11:00 PM). Choose " + (longDate(vr.min) || vr.min) + " or later.";
       if (vr.max && validEl.value > vr.max) return "The valid-until date cannot be after " + (longDate(vr.max) || vr.max) + ", the last day to pay the deposit before the event.";
-      var timeProblem = crmQuoteDeadlineProblem(validEl.value, validTimeEl ? validTimeEl.value : "", "quotation deadline", rushEvent);
+      var timeProblem = crmQuoteDeadlineProblem(validEl.value, validTimeEl && !validTimeEl.disabled ? validTimeEl.value : "", "quotation deadline", rushEvent);
       if (timeProblem) return timeProblem;
       if (!(t.rate >= 1 && t.rate <= 100)) return "The deposit percentage must be between 1 and 100.";
       if (t.disc > t.sub + t.extra) return "The discount cannot be more than the order total.";
@@ -9362,7 +9408,7 @@ if (!window.__crmDropdownAutoScrollBound) {
       });
       var validLong = longDate(validEl.value) || validEl.value;
       out("valid-out", validLong);
-      if (validEl.value) { validLong += ", " + (validTimeEl && validTimeEl.value ? (crmTimeText(validTimeEl.value) || validTimeEl.value) : "11:59 PM"); out("valid-out", validLong); }
+      if (validEl.value) { validLong += ", " + (validTimeEl && !validTimeEl.disabled && validTimeEl.value ? (crmTimeText(validTimeEl.value) || validTimeEl.value) : "11:59 PM"); out("valid-out", validLong); }
       out("terms-line", "Quotation Valid Until: " + validLong + "  \u00B7  Deposit Requirement: " + t.rate + "% upon acceptance");
       out("terms-text", "This quotation is valid until the date stated above. Issuing or sending a quotation does not reserve the event date; event scheduling is confirmed only upon customer acceptance and deposit verification.");
       var msg = notesEl.value.trim();
@@ -9401,7 +9447,7 @@ if (!window.__crmDropdownAutoScrollBound) {
           return { menu_item_id: r.menu_item_id || "", name: r.name || "", category: r.category || "", tier: r.tier || "", pax: r.pax || "",
             description: r.menu_item_id ? (r.name + (r.tier ? " - " + r.tier : "")) : (r.description || r.name || ""), quantity: r.quantity, unit_price: r.unit_price };
         })),
-        valid_until: validEl.value, valid_until_time: validTimeEl ? validTimeEl.value : "", deposit_rate: t.rate, discount: t.disc, extra_charge: t.extra, notes: notesEl.value.trim()
+        valid_until: validEl.value, valid_until_time: validTimeEl && !validTimeEl.disabled ? validTimeEl.value : "", deposit_rate: t.rate, discount: t.disc, extra_charge: t.extra, notes: notesEl.value.trim()
       };
     }
     function busy(on) { state.busy = on; qa("[data-qp=save-draft],[data-qp=send],[data-qp=back-edit]").forEach(function (b) { b.disabled = on; }); }
