@@ -8,9 +8,12 @@ final class EmailQueueWorker
     }
 
     /** Process one queued email. A transport callback is available for isolated smoke tests. */
-    public function processOne(?int $notificationId = null, ?callable $transport = null): bool
+    public function processOne(?int $notificationId = null, ?callable $transport = null, ?int $afterNotificationId = null): bool
     {
         if (($this->config['enabled'] ?? false) !== true) return false;
+        if ($afterNotificationId !== null && $afterNotificationId < 1) {
+            throw new InvalidArgumentException('Notification cutoff ID must be positive.');
+        }
         $key = $this->config['queue_encryption_key'] ?? null;
         if (!is_string($key) || strlen($key) !== 32) {
             throw new RuntimeException('Email queue encryption key is not configured.');
@@ -37,6 +40,10 @@ final class EmailQueueWorker
             if ($notificationId !== null) {
                 $sql .= ' AND notification_id = ?';
                 $params[] = $notificationId;
+            }
+            if ($afterNotificationId !== null) {
+                $sql .= ' AND notification_id > ?';
+                $params[] = $afterNotificationId;
             }
             $sql .= ' ORDER BY created_at, notification_id LIMIT 1 FOR UPDATE SKIP LOCKED';
             $statement = $this->db->prepare($sql);

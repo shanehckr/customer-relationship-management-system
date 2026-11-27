@@ -176,6 +176,7 @@ final class EmailService
         if (trim((string) ($identity['password'] ?? '')) === '') {
             throw new EmailSenderUnavailableException('SMTP credentials are unavailable for the selected sender.');
         }
+        $identityName = trim((string) ($identity['name'] ?? ''));
         $username = trim((string) ($identity['username'] ?? ''));
         if ($username === '' || strcasecmp($username, (string) $identity['email']) !== 0) {
             throw new RuntimeException('SMTP authentication must use the selected Gmail identity account.');
@@ -183,7 +184,7 @@ final class EmailService
         return [
             'key' => $requested,
             'email' => (string) $identity['email'],
-            'name' => (string) ($identity['name'] ?? 'Catering CRM'),
+            'name' => $identityName !== '' ? $identityName : "Espinosilla's Kainan",
             'username' => $username,
             'password' => (string) ($identity['password'] ?? ''),
             'reply_to' => $replyTo !== '' ? $replyTo : (string) $identity['email'],

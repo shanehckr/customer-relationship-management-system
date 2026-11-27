@@ -22,6 +22,7 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
 define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
+require_once __DIR__ . '/includes/password-policy.php';
 
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
@@ -128,16 +129,21 @@ function sendCodeEmail(string $to, string $name, string $code): void
     require_once $lib;   // defines gmailHttp(), gmailAccessToken(), mimeHeader() and the MAIL_* / GMAIL_* settings
 
     $h = fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, "UTF-8");
-    $subject = "Your verification code: " . $code;
+    $subject = "Espinosilla's Kainan: Confirm your email address";
     $plain = "Hi " . $name . ",\n\nYour code to confirm your new email address is " . $code
-           . ". It expires in 10 minutes.\n\nIf you did not ask for this, you can ignore this email.\n\n" . MAIL_FROM_NAME;
-    $html = '<div style="font-family:Arial,sans-serif;max-width:480px;margin:auto;color:#222;">'
-          . '<h2 style="color:#2e7d32;">Confirm your new email</h2>'
-          . '<p>Hi ' . $h($name) . ',</p>'
-          . '<p>Use this code to confirm your new email address:</p>'
-          . '<p style="font-size:30px;letter-spacing:6px;font-weight:700;margin:16px 0;">' . $h($code) . '</p>'
-          . '<p>It expires in 10 minutes. If you did not ask for this, you can ignore this email.</p>'
-          . '<p style="color:#888;font-size:12px;">' . $h(MAIL_FROM_NAME) . '</p></div>';
+           . ". It expires in 10 minutes.\n\nIf you did not ask for this, you can ignore this email.\n\n" . "Espinosilla's Kainan";
+    $html = '<div style="margin:0;padding:24px 12px;background:#f3f5f4;font-family:Arial,Helvetica,sans-serif;color:#202724">'
+          . '<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #edf0ee;border-radius:6px;text-align:center">'
+          . '<div style="padding:20px 28px 12px;font-size:13px;font-weight:700;color:#156042">Espinosilla\'s Kainan</div>'
+          . '<div style="padding:8px 28px 28px">'
+          . '<h2 style="margin:8px 0 14px;font-size:22px;line-height:1.3;color:#202724">Confirm your new email address</h2>'
+          . '<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hi ' . $h($name) . ',</p>'
+          . '<p style="margin:0 0 18px;font-size:15px;line-height:1.6">Use this code to confirm your new email address:</p>'
+          . '<div style="display:inline-block;margin:0 auto 18px;padding:16px 20px;background:#f0f7f3;border:1px solid #dce8e1;border-radius:8px;color:#156042;font-size:30px;font-weight:700;letter-spacing:6px">' . $h($code) . '</div>'
+          . '<p style="margin:0 0 8px;font-size:14px;line-height:1.6">It expires in 10 minutes.</p>'
+          . '<p style="margin:0;font-size:14px;line-height:1.6">If you did not ask for this, you can ignore this email.</p>'
+          . '</div><div style="padding:14px 28px;border-top:1px solid #edf0ee;color:#7a837f;font-size:12px">Espinosilla\'s Kainan</div>'
+          . '</div></div>';
 
     $clean = static fn(string $s) => str_replace(["\r", "\n", "<", ">", '"'], "", $s);
     $boundary = "b_" . bin2hex(random_bytes(12));
@@ -311,8 +317,12 @@ if ($action === "change_password") {
     if ($current === "" || !password_verify($current, (string) $u["password_hash"])) {
         respond(422, ["success" => false, "field" => "current_password", "message" => "Your current password is not correct."]);
     }
-    if (strlen($new) < 8 || strlen($new) > 72 || !preg_match('/[A-Z]/', $new) || !preg_match('/[a-z]/', $new) || !preg_match('/\d/', $new)) {
-        respond(422, ["success" => false, "field" => "new_password", "message" => "The new password does not meet the requirements."]);
+    if ($new === "") {
+        respond(422, ["success" => false, "field" => "new_password", "message" => "Password is required."]);
+    }
+    $passwordError = passwordPolicyError($new);
+    if ($passwordError !== null) {
+        respond(422, ["success" => false, "field" => "new_password", "message" => $passwordError]);
     }
     if ($new === $current) {
         respond(422, ["success" => false, "field" => "new_password", "message" => "The new password must be different from your current password."]);

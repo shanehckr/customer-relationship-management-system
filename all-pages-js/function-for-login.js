@@ -2,8 +2,86 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   const formContent = document.querySelector(".login-panel .form-content");
+  const loginForm = document.getElementById("loginForm");
+  const identifierInput = document.getElementById("email");
   const togglePasswordBtn = document.getElementById("togglePassword");
   const passwordInput = document.getElementById("password");
+
+  if (loginForm && identifierInput && passwordInput) {
+    const identifierError = document.getElementById("loginIdentifierError");
+    const passwordError = document.getElementById("loginPasswordError");
+    const credentialMessage = "Invalid username/email or password.";
+
+    function setInlineError(input, error, message) {
+      error.textContent = message;
+      input.classList.add("is-invalid");
+      input.setAttribute("aria-invalid", "true");
+    }
+
+    function clearInlineError(input, error) {
+      error.textContent = "";
+      input.classList.remove("is-invalid");
+      input.removeAttribute("aria-invalid");
+    }
+
+    function validateIdentifier() {
+      if (!identifierInput.value.trim()) {
+        setInlineError(identifierInput, identifierError, "Enter your username or email.");
+        return false;
+      }
+      clearInlineError(identifierInput, identifierError);
+      return true;
+    }
+
+    function validatePassword() {
+      if (!passwordInput.value) {
+        setInlineError(passwordInput, passwordError, "Enter your password.");
+        return false;
+      }
+      clearInlineError(passwordInput, passwordError);
+      return true;
+    }
+
+    identifierInput.addEventListener("blur", () => {
+      if (passwordError.textContent === credentialMessage) return;
+      validateIdentifier();
+    });
+    passwordInput.addEventListener("blur", () => {
+      if (passwordError.textContent === credentialMessage) return;
+      validatePassword();
+    });
+
+    [identifierInput, passwordInput].forEach((input) => {
+      input.addEventListener("input", () => {
+        if (passwordError.textContent === credentialMessage) {
+          clearInlineError(identifierInput, identifierError);
+          clearInlineError(passwordInput, passwordError);
+        } else if (input === identifierInput && input.value.trim()) {
+          clearInlineError(identifierInput, identifierError);
+        } else if (input === passwordInput && input.value) {
+          clearInlineError(passwordInput, passwordError);
+        }
+      });
+    });
+
+    loginForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const identifierValid = validateIdentifier();
+      const passwordValid = validatePassword();
+      if (!identifierValid) {
+        identifierInput.focus();
+        return;
+      }
+      if (!passwordValid) {
+        passwordInput.focus();
+        return;
+      }
+      loginForm.submit();
+    });
+
+    const firstInvalid = loginForm.querySelector(".is-invalid");
+    if (firstInvalid) firstInvalid.focus();
+  }
 
   // Toggle password visibility when the eye button is clicked.
   if (togglePasswordBtn && passwordInput) {

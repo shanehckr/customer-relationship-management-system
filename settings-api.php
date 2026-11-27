@@ -8,6 +8,7 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
 define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
+require_once __DIR__ . '/includes/password-policy.php';
 
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
@@ -206,10 +207,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
         ]);
     }
 
-    if (mb_strlen($password, "UTF-8") < 12 || strlen($password) > 72) {
+    $passwordError = passwordPolicyError($password);
+    if ($passwordError !== null) {
         respond(400, [
             "success" => false,
-            "message" => "Password must be at least 12 characters and no more than 72 bytes."
+            "message" => $passwordError
         ]);
     }
 

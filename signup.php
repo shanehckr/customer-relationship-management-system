@@ -56,6 +56,8 @@ if (empty($_SESSION["signup_csrf_token"])) {
     <section class="login-panel d-flex flex-column justify-content-center">
       <div class="form-content w-100">
 
+        <button type="button" class="su-link signup-back" id="suBack" aria-label="Back to login">&larr; Back to login</button>
+
         <h1 class="fw-bold mb-3">
           <span class="log-word">Sign</span>
           <span class="in-word">up</span>
@@ -81,12 +83,12 @@ if (empty($_SESSION["signup_csrf_token"])) {
             <p class="reset-desc su-desc">We'll email you a 6-digit code to confirm it's yours.</p>
 
             <div class="mb-3">
-              <label for="suEmail" class="form-label">Gmail</label>
+              <label for="suEmail" class="form-label">Email address</label>
               <div class="input-wrapper position-relative">
                 <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
-                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="yourname@gmail.com" aria-describedby="suEmailHelp" required>
+                <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="name@example.com" aria-describedby="suEmailError" required>
               </div>
-              <div class="su-help" id="suEmailHelp">Gmail addresses only, for example yourname@gmail.com.</div>
+              <div class="su-field-error" id="suEmailError" data-su-error-for="email" aria-live="polite"></div>
             </div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suSendBtn">Send Verification Code</button>
@@ -99,7 +101,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
           <!-- ============ STEP 2: OTP ============ -->
           <section class="su-step" data-step="2" aria-labelledby="suTitle2">
             <h2 class="su-title" id="suTitle2">Enter the 6-digit code</h2>
-            <p class="reset-desc su-desc">Sent to <strong id="suMasked">yo••••@gmail.com</strong>. Check your inbox and spam folder.</p>
+            <p class="reset-desc su-desc">Sent to <strong id="suMasked">na••••@example.com</strong>. Check your inbox and spam folder.</p>
 
             <div class="mb-2">
               <label class="form-label" id="suOtpLabel">Verification code</label>
@@ -111,6 +113,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <input class="otp-input" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 5">
                 <input class="otp-input" type="text" inputmode="numeric" maxlength="1" aria-label="Digit 6">
               </div>
+              <div class="su-field-error" data-su-error-for="otp" aria-live="polite"></div>
             </div>
 
             <p class="su-timer" role="timer">
@@ -136,10 +139,11 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <svg class="input-icon position-absolute" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c.8-3.6 3.6-5.5 7.5-5.5s6.7 1.9 7.5 5.5"/></svg>
                 <input type="text" id="suFullName" name="full_name" class="form-control" autocomplete="name" maxlength="100" placeholder="Enter your name" required>
               </div>
+              <div class="su-field-error" data-su-error-for="full_name" aria-live="polite"></div>
             </div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suContinueBtn">Continue</button>
-            <button type="button" class="btn btn-su-secondary rounded-pill w-100 fw-semibold mt-2" data-back="1">Back</button>
+            <button type="button" class="btn btn-su-secondary rounded-pill w-100 fw-semibold mt-2" data-back="2">Back</button>
           </section>
 
           <!-- ============ STEP 4: credentials ============ -->
@@ -155,7 +159,8 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <input type="tel" id="suPhone" name="phone" class="form-control su-phone" inputmode="numeric"
                        autocomplete="tel-national" maxlength="20" placeholder="9XX XXX XXXX" aria-describedby="suPhoneHelp" required>
               </div>
-              <div class="su-help" id="suPhoneHelp">Philippine mobile numbers only, for example 917 123 4567.</div>
+              <div class="su-help" id="suPhoneHelp">Enter a Philippine mobile number (e.g., 917 123 4567).</div>
+              <div class="su-field-error" data-su-error-for="phone" aria-live="polite"></div>
             </div>
 
             <div class="mb-3">
@@ -164,7 +169,8 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <svg class="input-icon position-absolute" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20.5c.8-3.6 3.6-5.5 7.5-5.5s6.7 1.9 7.5 5.5"/></svg>
                 <input type="text" id="suUsername" name="username" class="form-control" autocomplete="username" maxlength="30" placeholder="Choose a username" aria-describedby="suUserHelp" required>
               </div>
-              <div class="su-help" id="suUserHelp">4 to 30 characters: letters, numbers, dot or underscore.</div>
+              <div class="su-help" id="suUserHelp">4–30 characters. Use letters, numbers, periods, or underscores.</div>
+              <div class="su-field-error" data-su-error-for="username" aria-live="polite"></div>
             </div>
 
             <div class="mb-3">
@@ -177,7 +183,14 @@ if (empty($_SESSION["signup_csrf_token"])) {
                   <img src="icons/eye-open.svg" class="eye-open-icon" alt="">
                 </button>
               </div>
-              <div class="su-help" id="suPassHelp">At least 8 characters, with a letter and a number.</div>
+              <div class="su-help" id="suPassHelp">Use at least 12 characters with uppercase and lowercase letters, a number, and a special character.</div>
+              <div class="su-strength d-none" id="suStrength" aria-live="polite">
+                <div class="su-strength-track">
+                  <div class="su-strength-bar" id="suStrengthBar" role="progressbar" aria-labelledby="suStrengthLabel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></div>
+                </div>
+                <span class="su-strength-label" id="suStrengthLabel"></span>
+              </div>
+              <div class="su-field-error" data-su-error-for="password" aria-live="polite"></div>
             </div>
 
             <div class="mb-3">
@@ -190,12 +203,14 @@ if (empty($_SESSION["signup_csrf_token"])) {
                   <img src="icons/eye-open.svg" class="eye-open-icon" alt="">
                 </button>
               </div>
+              <div class="su-field-error" data-su-error-for="confirm_password" aria-live="polite"></div>
             </div>
 
             <label class="su-terms" for="suTerms">
               <input type="checkbox" id="suTerms" class="su-check" name="terms" value="1">
               <span>I agree to the <a href="terms.php" target="_blank" rel="noopener">Terms and Privacy Policy</a>.</span>
             </label>
+            <div class="su-field-error su-terms-error" data-su-error-for="terms" aria-live="polite"></div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suCreateBtn">Create Account</button>
             <button type="button" class="btn btn-su-secondary rounded-pill w-100 fw-semibold mt-2" data-back="3">Back</button>

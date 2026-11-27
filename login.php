@@ -22,6 +22,10 @@ session_start();
 require_once __DIR__ . "/config/database.php";
 
 $errorMessage = "";
+$identifier = "";
+$identifierError = "";
+$passwordError = "";
+$credentialError = "";
 
 // Shown after a successful sign-up (signup-api.php redirects here with ?registered=1).
 $successMessage = (($_GET["registered"] ?? "") === "1")
@@ -43,6 +47,8 @@ if (empty($_SESSION["login_csrf_token"])) {
 
 // Handle submitted login forms.
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    $postedIdentifier = $_POST["identifier"] ?? "";
+    $identifier = is_string($postedIdentifier) ? trim($postedIdentifier) : "";
     $submittedToken = $_POST["csrf_token"] ?? "";
     $sessionToken = $_SESSION["login_csrf_token"] ?? "";
 
@@ -57,16 +63,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         unset($_SESSION["login_csrf_token"]);
         $_SESSION["login_csrf_token"] = bin2hex(random_bytes(32));
     } else {
-        $identifier = trim($_POST["identifier"] ?? "");
         $password = $_POST["password"] ?? "";
 
-        if (
-            !is_string($identifier) ||
-            !is_string($password) ||
-            $identifier === "" ||
-            $password === ""
-        ) {
-            $errorMessage = "Enter your username or email and password.";
+        if (!is_string($password) || $password === "" || $identifier === "") {
+            if ($identifier === "") $identifierError = "Enter your username or email.";
+            if (!is_string($password) || $password === "") $passwordError = "Enter your password.";
         } else {
             try {
                 // Use a prepared statement for the login lookup.
@@ -122,7 +123,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         $failure->execute();
                         $failure->close();
                     }
-                    $errorMessage = "Invalid username/email or password.";
+                    $credentialError = "Invalid username/email or password.";
                     $successMessage = "";
                 } else {
                     $success = $conn->prepare("UPDATE users SET failed_login_attempts = 0, locked_until = NULL, last_login_at = NOW() WHERE user_id = ?");
@@ -209,7 +210,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
           <span class="in-word">in</span>
         </h1>
 
-        <form action="login.php" method="POST" class="d-flex flex-column">
+        <form id="loginForm" action="login.php" method="POST" class="d-flex flex-column" novalidate>
           <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION["login_csrf_token"] ?? "", ENT_QUOTES, "UTF-8") ?>">
 
           <?php if ($successMessage !== "") : ?>
@@ -229,8 +230,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <label for="email" class="form-label">Username</label>
             <div class="input-wrapper position-relative">
               <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="Email Icon">
-              <input type="text" id="email" name="identifier" class="form-control" autocomplete="username" required placeholder="Enter your username or email">
+              <input type="text" id="email" name="identifier" class="form-control<?= ($identifierError !== "" || $credentialError !== "") ? " is-invalid" : "" ?>" autocomplete="username" required placeholder="Enter your username or email" value="<?= htmlspecialchars($identifier, ENT_QUOTES, "UTF-8") ?>" aria-describedby="loginIdentifierError" <?= ($identifierError !== "" || $credentialError !== "") ? 'aria-invalid="true"' : "" ?>>
             </div>
+            <div class="su-field-error" id="loginIdentifierError" aria-live="polite"><?= htmlspecialchars($identifierError, ENT_QUOTES, "UTF-8") ?></div>
           </div>
 
 
@@ -238,7 +240,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <label for="password" class="form-label">Password</label>
             <div class="password-wrapper position-relative">
               <img src="icons/password-icon.svg" class="input-icon position-absolute" alt="Password Icon">
-              <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" required placeholder="Enter your password">
+              <input type="password" id="password" name="password" class="form-control<?= ($passwordError !== "" || $credentialError !== "") ? " is-invalid" : "" ?>" autocomplete="current-password" required placeholder="Enter your password" aria-describedby="loginPasswordError" <?= ($passwordError !== "" || $credentialError !== "") ? 'aria-invalid="true"' : "" ?>>
 
 
               <button type="button" class="toggle-password position-absolute border-0 bg-transparent" id="togglePassword" aria-label="Toggle password visibility">
@@ -246,6 +248,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                 <img src="icons/eye-open.svg" class="eye-open-icon" alt="Hide Password">
               </button>
             </div>
+            <div class="su-field-error" id="loginPasswordError" aria-live="polite"><?= htmlspecialchars($passwordError !== "" ? $passwordError : $credentialError, ENT_QUOTES, "UTF-8") ?></div>
           </div>
 
 

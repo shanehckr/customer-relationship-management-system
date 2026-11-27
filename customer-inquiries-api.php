@@ -395,7 +395,7 @@ if ($action === 'quotation_respond') {
             [
                 'heading' => 'Deposit Payment Required',
                 'greeting' => $recipient['name'],
-                'message' => 'You accepted the quotation. Acceptance does not confirm a booking. Pay the verified 20% deposit to reserve the event date.',
+                'message' => 'You accepted the quotation, but your booking is not confirmed yet. Pay the required 20% deposit to reserve the event date. We will confirm your booking after the payment is verified.',
                 'amount' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
                 'rows' => [
                     'Inquiry or quotation reference' => quoteRef($iid),

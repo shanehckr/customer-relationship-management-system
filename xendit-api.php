@@ -51,7 +51,7 @@ function xenEarlier(string $a, string $b): string {
 }
 
 /* ------------------------- Xendit helpers ------------------------- */
-function xenRequest(string $method, string $path, ?array $body = null): array {
+function xenRequest(string $method, string $path, ?array $body = null, bool $returnTransportError = false): array {
     $ch = curl_init('https://api.xendit.co' . $path);
     curl_setopt_array($ch, [
         CURLOPT_CUSTOMREQUEST  => $method,
@@ -64,6 +64,7 @@ function xenRequest(string $method, string $path, ?array $body = null): array {
     $res = curl_exec($ch);
     if ($res === false) {
         $err = curl_error($ch); curl_close($ch);
+        if ($returnTransportError) return [-1, ['message' => 'Could not reach Xendit.']];
         // "SSL certificate problem" on XAMPP/Windows: set curl.cainfo in php.ini to a cacert.pem file
         fail('Could not reach Xendit: ' . $err, 502);
     }
@@ -97,9 +98,21 @@ function xenPaymentFrom(array $invoice): array {
 
 /** Asks Xendit about a pending row; books it if it has been paid. Returns the (possibly updated) payment row. */
 function xenVerify(AppDatabase $db, array $row): array {
-    if ($row['status'] !== 'pending' || empty($row['invoice_id'])) return $row;
-    [$code, $json] = xenRequest('GET', '/v2/invoices/' . rawurlencode($row['invoice_id']));
-    if ($code === 200 && xenIsPaid($json)) finalizePayment($db, (int)$row['id'], xenPaymentFrom($json));
+    if ($row['status'] !== 'pending') return $row;
+    $verified = xenditResolvePaymentInvoice($row);
+    if ($verified['invoice_id'] !== '' && empty($row['invoice_id'])) {
+        $db->prepare("UPDATE xendit_payments SET invoice_id = ? WHERE id = ? AND status = 'pending' AND invoice_id IS NULL")
+           ->execute([$verified['invoice_id'], $row['id']]);
+        $row['invoice_id'] = $verified['invoice_id'];
+    }
+    if ($verified['outcome'] === 'paid' && $verified['invoice_id'] !== '') {
+        $invoice = xenditInvoiceRead('/v2/invoices/' . rawurlencode($verified['invoice_id']));
+        if ($invoice['ok'] && xenIsPaid($invoice['data'])) finalizePayment($db, (int)$row['id'], xenPaymentFrom($invoice['data']));
+    } elseif (in_array($verified['outcome'], ['unpaid_terminal', 'not_found'], true)) {
+        $status = $verified['outcome'] === 'not_found' ? 'failed' : strtolower($verified['status']);
+        $db->prepare("UPDATE xendit_payments SET status = ? WHERE id = ? AND status = 'pending'")
+           ->execute([$status, $row['id']]);
+    }
     $st = $db->prepare('SELECT * FROM xendit_payments WHERE id = ?');
     $st->execute([$row['id']]);
     return $st->fetch();
@@ -117,12 +130,18 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
     $bookingRef = null;
     $mail       = null;     // filled when a booking is created; the email is sent AFTER the database commit
 
-    $db->beginTransaction();
+    $lookup = $db->prepare('SELECT inquiry_id FROM xendit_payments WHERE id = ? LIMIT 1');
+    $lookup->execute([$payRowId]);
+    $inquiryId = (int)$lookup->fetchColumn();
+    if ($inquiryId <= 0) return;
+    if (!deadlineInquiryLock($db, $inquiryId, true, 5)) throw new RuntimeException('Could not acquire the payment inquiry lock.');
+
     try {
+        $db->beginTransaction();
         $st = $db->prepare('SELECT * FROM xendit_payments WHERE id = ? FOR UPDATE');
         $st->execute([$payRowId]);
         $row = $st->fetch();
-        if (!$row || $row['status'] !== 'pending') { $db->commit(); return; }          // already handled
+        if (!$row || $row['status'] !== 'pending') { $db->commit(); deadlineInquiryLock($db, $inquiryId, false); return; } // already handled
         $iid = (int)$row['inquiry_id'];
 
         $ls = $db->prepare("SELECT * FROM leads WHERE `$LEAD_PK` = ? FOR UPDATE");
@@ -155,6 +174,7 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
             $say('We received your payment of ' . quotePeso($paid) . ' (Ref. ' . $payId . '), but it could not be matched to an open quotation. '
                . 'Our team will review it and contact you about a refund or the next step.');
             $db->commit();
+            deadlineInquiryLock($db, $inquiryId, false);
             return;
         }
 
@@ -247,8 +267,10 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
         $db->commit();
     } catch (Throwable $e) {
         if ($db->inTransaction()) $db->rollBack();
+        deadlineInquiryLock($db, $inquiryId, false);
         throw $e;
     }
+    deadlineInquiryLock($db, $inquiryId, false);
 
     // Payment and booking are saved. Now email the customer. This runs only once per payment, because the
     // 'already handled' check above returns early on every later call (return page, webhook, status polling).
@@ -279,9 +301,10 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
             }
             if (!filter_var($mail['to_email'], FILTER_VALIDATE_EMAIL)) {
                 error_log('Payment email skipped for ' . $mail['booking_ref'] . ': no valid customer email (got "' . $mail['to_email'] . '")');
-            } else {
-                sendPaymentEmail($mail);
+            } elseif (sendPaymentEmail($mail)) {
                 error_log('Payment email queued for booking ' . $mail['booking_ref']);
+            } else {
+                error_log('Payment email was not queued for booking ' . $mail['booking_ref'] . '.');
             }
         } catch (Throwable $e) {
             error_log('Payment email failed for ' . $mail['booking_ref'] . ': ' . $e->getMessage());
@@ -343,8 +366,11 @@ function emailBalancePayment(AppDatabase $db, array $mail, int $customerId, int 
             error_log('Balance payment email skipped for ' . $ref . ': no valid customer email (got "' . $mail['to_email'] . '")');
             return;
         }
-        sendPaymentEmail($mail);
-        error_log('Balance payment email queued for booking ' . $ref);
+        if (sendPaymentEmail($mail)) {
+            error_log('Balance payment email queued for booking ' . $ref);
+        } else {
+            error_log('Balance payment email was not queued for booking ' . $ref . '.');
+        }
     } catch (Throwable $e) {
         error_log('Balance payment email failed for ' . ($mail['booking_ref'] ?? '?') . ': ' . $e->getMessage());
     }
@@ -529,10 +555,23 @@ if ($action === 'create_checkout') {
 
     // reuse a checkout page that is still open, so the customer cannot pay twice by accident
     // (an invoice is "still open" until its saved expiry; older rows without one fall back to created_at + the old fixed duration)
+    if (!deadlineInquiryLock($db, $iid, true, 5)) fail('Payment is being updated. Please try again in a moment.', 409);
+    $state = $db->prepare("SELECT q.status,q.version,l.stage FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id WHERE q.quotation_id = ? AND q.inquiry_id = ? LIMIT 1");
+    $state->execute([(int)$q['quotation_id'], $iid]);
+    $current = $state->fetch();
+    if (!$current || $current['version'] != $q['version'] || !in_array($current['status'], ['Sent', 'Accepted'], true)
+        || in_array($current['stage'], ['Declined', 'Completed', 'Confirmed'], true)) {
+        deadlineInquiryLock($db, $iid, false);
+        fail('This quotation is no longer open for payment.', 409);
+    }
+    $bk = $db->prepare('SELECT booking_ref FROM bookings WHERE inquiry_id = ?');
+    $bk->execute([$iid]);
+    if ($bk->fetch()) { deadlineInquiryLock($db, $iid, false); fail('This inquiry already has a booking. The deposit was paid.', 409); }
     $old = $db->prepare("SELECT * FROM xendit_payments WHERE quotation_id = ? AND status = 'pending' AND checkout_url IS NOT NULL
                          AND amount = ? AND COALESCE(invoice_expires_at, DATE_ADD(created_at, INTERVAL " . (int)XENDIT_INVOICE_SECONDS . " SECOND)) > ? ORDER BY id DESC LIMIT 1");
     $old->execute([$q['quotation_id'], $amount, date('Y-m-d H:i:s')]);
     if ($o = $old->fetch()) {
+        deadlineInquiryLock($db, $iid, false);
         $o = xenVerify($db, $o);                                // maybe it was already paid
         if ($o['status'] === 'pending') out(['success' => true, 'checkout_url' => $o['checkout_url']]);
         fail('This deposit was already paid.', 409);
@@ -551,6 +590,7 @@ if ($action === 'create_checkout') {
     }
     if ($dueAt !== '' && $dueAt <= date('Y-m-d H:i:s')) {
         $db->prepare('DELETE FROM xendit_payments WHERE id = ?')->execute([$rowId]);
+        deadlineInquiryLock($db, $iid, false);
         fail('The deadline to pay this deposit (' . deadlineLabel(substr($dueAt, 0, 10), substr($dueAt, 11, 5)) . ') has passed. Please ask the catering team for a new quotation.', 409);
     }
     $invoiceSeconds = xenSecondsUntil($dueAt);
@@ -572,14 +612,16 @@ if ($action === 'create_checkout') {
         $body['payer_email'] = $q['customer_email'];
         $body['customer']    = ['given_names' => $q['customer_name'] ?: 'Customer', 'email' => $q['customer_email']];
     }
-    [$code, $json] = xenRequest('POST', '/v2/invoices', $body);
+    [$code, $json] = xenRequest('POST', '/v2/invoices', $body, true);
     $url = (string)($json['invoice_url'] ?? '');
     if ($code >= 300 || $url === '' || empty($json['id'])) {
         $db->prepare('DELETE FROM xendit_payments WHERE id = ?')->execute([$rowId]);
         $why = $json['message'] ?? ($json['error_code'] ?? 'could not start the payment');
+        deadlineInquiryLock($db, $iid, false);
         fail('Xendit error: ' . $why . ' (HTTP ' . $code . ')', 502);
     }
     $db->prepare('UPDATE xendit_payments SET invoice_id = ?, checkout_url = ?, invoice_expires_at = ? WHERE id = ?')->execute([$json['id'], $url, date('Y-m-d H:i:s', time() + $invoiceSeconds), $rowId]);
+    deadlineInquiryLock($db, $iid, false);
     out(['success' => true, 'checkout_url' => $url]);
 }
 

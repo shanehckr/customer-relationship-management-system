@@ -16,7 +16,7 @@ function mailPeso(float $amount): string
     return 'PHP ' . number_format($amount, 2);
 }
 
-function sendPaymentEmail(array $data): void
+function sendPaymentEmail(array $data): bool
 {
     global $db;
     if (!$db instanceof AppDatabase) {
@@ -25,7 +25,7 @@ function sendPaymentEmail(array $data): void
     $service = EmailService::fromApplicationConfig($db);
     $config = $service->configuration();
     // Preserve the previous MAIL_ENABLED=false behavior until SMTP is configured and enabled.
-    if (($config['enabled'] ?? false) !== true) return;
+    if (($config['enabled'] ?? false) !== true) return false;
 
     $reference = trim((string) ($data['reference'] ?? ''));
     $type = ($data['type'] ?? '') === 'balance' ? 'balance' : 'deposit';
@@ -51,7 +51,7 @@ function sendPaymentEmail(array $data): void
         'Remaining balance' => 'PHP ' . number_format(max(0, $remaining), 2),
     ];
     require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
-    EmailNotificationService::queue(
+    return EmailNotificationService::queue(
         $db,
         (int) ($data['customer_id'] ?? 0),
         (string) ($data['to_email'] ?? ''),
@@ -72,5 +72,5 @@ function sendPaymentEmail(array $data): void
         $dedupe,
         'booking',
         (int) ($data['booking_id'] ?? 0)
-    );
+    ) !== null;
 }

@@ -2,9 +2,9 @@
 declare(strict_types=1);
 
 $escape = static fn(mixed $value): string => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-$heading = trim((string) ($data['heading'] ?? 'Catering CRM notification')) ?: 'Catering CRM notification';
+$heading = trim((string) ($data['heading'] ?? "Espinosilla's Kainan update")) ?: "Espinosilla's Kainan update";
 $greeting = trim((string) ($data['greeting'] ?? 'Customer')) ?: 'Customer';
-$message = trim((string) ($data['message'] ?? '')) ?: 'There is an update regarding your Catering CRM activity.';
+$message = trim((string) ($data['message'] ?? '')) ?: "There is an update regarding your Espinosilla's Kainan account.";
 $rows = is_array($data['rows'] ?? null) ? $data['rows'] : [];
 $amount = trim((string) ($data['amount'] ?? ''));
 $buttonText = trim((string) ($data['button_text'] ?? ''));
@@ -19,7 +19,7 @@ foreach ($rows as $label => $value) {
     if ($label === '' || $value === '') continue;
     $rowHtml .= '<tr>'
         . '<td style="padding:9px 12px;color:#5f6964;border-bottom:1px solid #e6ece8;font-size:14px">' . $escape($label) . '</td>'
-        . '<td style="padding:9px 12px;color:#202724;border-bottom:1px solid #e6ece8;font-size:14px;font-weight:600;text-align:right">' . $escape($value) . '</td>'
+        . '<td style="padding:9px 12px;color:#202724;border-bottom:1px solid #e6ece8;font-size:14px;font-weight:600;text-align:right;word-break:break-word">' . $escape($value) . '</td>'
         . '</tr>';
     $text .= $label . ': ' . $value . "\n";
 }
@@ -39,8 +39,8 @@ $html = '<div style="margin:0;padding:24px 12px;background:#f3f5f4;font-family:A
     . $amountHtml
     . ($rowHtml !== '' ? '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:16px 0">' . $rowHtml . '</table>' : '')
     . $buttonHtml
-    . '</div><div style="padding:14px 28px;border-top:1px solid #edf0ee;text-align:center;color:#7a837f;font-size:12px">Espinosilla\'s Kainan Catering CRM</div>'
+    . '</div><div style="padding:14px 28px;border-top:1px solid #edf0ee;text-align:center;color:#7a837f;font-size:12px">Espinosilla\'s Kainan</div>'
     . '</div></div>';
 
-$text .= "\nEspinosilla's Kainan Catering CRM";
+$text .= "\nEspinosilla's Kainan";
 return ['html' => $html, 'text' => $text, 'subject' => $subject];

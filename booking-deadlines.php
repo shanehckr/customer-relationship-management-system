@@ -29,6 +29,7 @@ require_once __DIR__ . '/bookings-schema.php';
 require_once __DIR__ . '/quotations-schema.php';
 require_once __DIR__ . '/payments-schema.php';
 require_once __DIR__ . '/notifications-helper.php';
+require_once __DIR__ . '/xendit-invoice-verification.php';
 
 const CUSTOMER_MIN_DAYS_BEFORE_EVENT          = 3;
 const CUSTOMER_SUBMIT_CUTOFF_HOUR             = 21;   // 9:00 PM: an inquiry sent at or after this hour cannot use the 3-day date (staff close at 11:00 PM)
@@ -162,6 +163,51 @@ function deadlineRelease(AppDatabase $db, string $kind, int $refId, int $stage):
     $db->prepare('DELETE FROM deadline_reminders WHERE kind = ? AND ref_id = ? AND stage = ?')->execute([$kind, $refId, $stage]);
 }
 
+/** Shared nonblocking lock for the CLI worker and page-load fallback. */
+function deadlineJobLock(AppDatabase $db, bool $acquire): bool {
+    $st = $db->prepare($acquire ? "SELECT GET_LOCK('espinosilla.booking-deadlines', 0)" : "SELECT RELEASE_LOCK('espinosilla.booking-deadlines')");
+    $st->execute();
+    return (int)$st->fetchColumn() === 1;
+}
+
+/** Serializes closing an inquiry with checkout creation and verified Xendit callbacks for that inquiry. */
+function deadlineInquiryLock(AppDatabase $db, int $inquiryId, bool $acquire, int $timeout = 0): bool {
+    if ($inquiryId <= 0) return false;
+    $name = 'espinosilla.inquiry.' . $inquiryId;
+    $st = $db->prepare($acquire ? 'SELECT GET_LOCK(?, ?)' : 'SELECT RELEASE_LOCK(?)');
+    $st->execute($acquire ? [$name, $timeout] : [$name]);
+    return (int)$st->fetchColumn() === 1;
+}
+
+/** Pure closure gate: a pending Xendit row is safe only after an authoritative terminal-unpaid result. */
+function deadlineXenditClosureGate(array $paymentRows, array $scannedIds, array $outcomes): array {
+    $updates = [];
+    foreach ($paymentRows as $row) {
+        $id = (int)$row['id'];
+        $status = strtolower((string)$row['status']);
+        if (in_array($status, ['expired', 'failed', 'canceled', 'cancelled', 'voided'], true)) continue;
+        $verified = $outcomes[$id] ?? null;
+        if ($status !== 'pending' || !$verified || !array_key_exists($id, $scannedIds)
+            || $scannedIds[$id] !== (string)($row['invoice_id'] ?? '')) return ['safe' => false, 'updates' => []];
+        if (in_array($verified['outcome'], ['unpaid_terminal', 'not_found'], true)) {
+            $updates[$id] = [
+                'status' => $verified['outcome'] === 'not_found' ? 'failed' : strtolower($verified['status']),
+                'invoice_id' => (string)($verified['invoice_id'] ?? ''),
+            ];
+        } else {
+            return ['safe' => false, 'updates' => []];
+        }
+    }
+    return ['safe' => true, 'updates' => $updates];
+}
+
+/** Rechecked under row locks immediately before closing, so a paid booking never gets withdrawn. */
+function deadlineClosureStateEligible(?string $leadStage, ?string $quoteStatus, bool $hasBooking): bool {
+    return !$hasBooking && $leadStage !== null && $quoteStatus !== null
+        && in_array($quoteStatus, ['Sent', 'Accepted'], true)
+        && !in_array($leadStage, ['Declined', 'Completed', 'Confirmed'], true);
+}
+
 /** Posts a message in the customer's chat under the staff member's name. Returns false when the inquiry has no chat yet. */
 function deadlineSay(AppDatabase $db, string $crm, int $inquiryId, string $from, string $text, ?int $paymentRequestId = null): bool {
     if ($inquiryId <= 0) return false;
@@ -184,7 +230,7 @@ function deadlineSay(AppDatabase $db, string $crm, int $inquiryId, string $from,
 /* ============================== 1) DEPOSIT deadline ============================== */
 function processDepositDeadlines(AppDatabase $db, string $crm): array {
     global $DB_CATERING;
-    $res = ['reminded' => 0, 'closed' => 0];
+    $res = ['reminded' => 0, 'closed' => 0, 'deferred_payment' => 0, 'errors' => 0];
     $pk = quoteLeadPk($db);
     try { ensureColumn($db, $DB_CATERING ?? '', 'leads', 'decline_reason', 'TEXT NULL'); } catch (Throwable $e) { /* column already there */ }
         $rows = $db->prepare("SELECT q.*, qv.valid_until, qv.valid_until_time, qv.deposit_rate, qv.deposit_amount,
@@ -217,46 +263,97 @@ function processDepositDeadlines(AppDatabase $db, string $crm): array {
         $customerId = (int)$q['l_customer_id'];
         $staffIds = !empty($q['l_staff_id']) ? [(int)$q['l_staff_id']] : [];
 
-        if (date('Y-m-d H:i:s') > $remindEnd) {   // deadline passed (exact time): close the inquiry
-            $db->beginTransaction();
+        if (date('Y-m-d H:i:s') >= $remindEnd) {   // deadline passed (exact time): close the inquiry
+            // Verify outstanding Xendit attempts before locking records for the state change. Never infer failure from age.
+            $paymentScan = $db->prepare('SELECT id,inquiry_id,quotation_id,status,invoice_id,created_at FROM xendit_payments WHERE inquiry_id = ? ORDER BY id');
+            $paymentScan->execute([$iid]);
+            $paymentOutcomes = [];
+            $paymentScannedIds = [];
+            foreach ($paymentScan->fetchAll() as $paymentRow) {
+                if ($paymentRow['status'] === 'pending') {
+                    $paymentId = (int)$paymentRow['id'];
+                    $paymentScannedIds[$paymentId] = (string)($paymentRow['invoice_id'] ?? '');
+                    $paymentOutcomes[$paymentId] = xenditResolvePaymentInvoice($paymentRow);
+                }
+            }
+            if (!deadlineInquiryLock($db, $iid, true, 0)) { $res['deferred_payment']++; continue; }
             try {
-                $chk = $db->prepare('SELECT 1 FROM bookings WHERE inquiry_id = ? LIMIT 1');
+                $db->beginTransaction();
+                // Lock Xendit state first, matching finalizePayment()'s payment -> lead -> quotation order.
+                $pay = $db->prepare("SELECT id,status,invoice_id FROM xendit_payments WHERE inquiry_id = ? ORDER BY id FOR UPDATE");
+                $pay->execute([$iid]);
+                $paymentRows = $pay->fetchAll();
+                $paymentGate = deadlineXenditClosureGate($paymentRows, $paymentScannedIds, $paymentOutcomes);
+                if (!$paymentGate['safe']) {
+                    $db->rollBack();
+                    deadlineInquiryLock($db, $iid, false);
+                    $res['deferred_payment']++;
+                    continue;
+                }
+                foreach ($paymentGate['updates'] as $paymentId => $update) {
+                    if ($update['invoice_id'] !== '') {
+                        $db->prepare("UPDATE xendit_payments SET invoice_id = ? WHERE id = ? AND status = 'pending' AND invoice_id IS NULL")
+                           ->execute([$update['invoice_id'], $paymentId]);
+                    }
+                    $db->prepare("UPDATE xendit_payments SET status = ? WHERE id = ? AND status = 'pending'")
+                       ->execute([$update['status'], $paymentId]);
+                }
+                $leadLock = $db->prepare("SELECT stage FROM leads WHERE `$pk` = ? FOR UPDATE");
+                $leadLock->execute([$iid]);
+                $currentLead = $leadLock->fetch();
+                $quoteLock = $db->prepare('SELECT status FROM quotations WHERE quotation_id = ? FOR UPDATE');
+                $quoteLock->execute([(int)$q['quotation_id']]);
+                $currentQuote = $quoteLock->fetch();
+                $chk = $db->prepare('SELECT 1 FROM bookings WHERE inquiry_id = ? LIMIT 1 FOR UPDATE');
                 $chk->execute([$iid]);
-                if ($chk->fetch()) { $db->rollBack(); continue; }   // the deposit was paid a moment ago
+                $hasBooking = (bool)$chk->fetch();
+                if (!deadlineClosureStateEligible($currentLead['stage'] ?? null, $currentQuote['status'] ?? null, $hasBooking)) {
+                    $db->rollBack();
+                    deadlineInquiryLock($db, $iid, false);
+                    continue;
+                }
                 $why = 'The deposit was not paid by ' . $dueText . ', so the inquiry was closed automatically.';
                 $db->prepare("UPDATE quotations SET status = 'Withdrawn', responded_at = COALESCE(responded_at, ?) WHERE quotation_id = ?")->execute([date('Y-m-d H:i:s'), $q['quotation_id']]);
                 syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
                 $db->prepare("UPDATE leads SET stage = 'Declined', decline_reason = ? WHERE `$pk` = ?")->execute([$why, $iid]);
                 deadlineSay($db, $crm, $iid, $from, 'Hello! We did not receive the ' . $money . ' deposit for **' . $event . '** by ' . $dueText
                     . ', so we had to release the date and close this inquiry. If you still need catering, you are welcome to send a new inquiry and we will gladly help.');
+                notifySend($db, ['type' => 'lead', 'kind' => 'inquiry', 'ref' => $ref,
+                    'title' => 'Inquiry closed: deposit not paid',
+                    'message' => $event . ' (' . $ref . ') was closed because the deposit was not paid by ' . $dueText . '.',
+                    'user_ids' => $staffIds,
+                    'customer' => ['title' => 'Inquiry closed', 'message' => 'Your inquiry for ' . $event . ' was closed because the deposit was not paid by ' . $dueText . '.'],
+                    '_throw_on_failure' => true]);
                 $db->commit();
             } catch (Throwable $e) {
                 if ($db->inTransaction()) $db->rollBack();
-                error_log('booking-deadlines: could not close inquiry ' . $iid . ': ' . $e->getMessage());
+                deadlineInquiryLock($db, $iid, false);
+                $res['errors']++;
+                error_log('booking-deadlines: could not close inquiry ' . $iid . ': ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
                 continue;
             }
-            notifySend($db, ['type' => 'lead', 'kind' => 'inquiry', 'ref' => $ref,
-                'title' => 'Inquiry closed: deposit not paid',
-                'message' => $event . ' (' . $ref . ') was closed because the deposit was not paid by ' . $dueText . '.',
-                'user_ids' => $staffIds,
-                'customer' => ['title' => 'Inquiry closed', 'message' => 'Your inquiry for ' . $event . ' was closed because the deposit was not paid by ' . $dueText . '.']]);
+            deadlineInquiryLock($db, $iid, false);
             $res['closed']++;
             continue;
         }
         $stage = deadlineReminderStage($q['sent_at'] ?: ($q['prepared_at'] ?? null), $remindEnd);
-        if ($stage === null || !deadlineClaim($db, 'dep2', (int)$q['quotation_id'], $stage)) continue;
+        if ($stage === null) continue;
+        $db->beginTransaction();
         try {
+            if (!deadlineClaim($db, 'dep2', (int)$q['quotation_id'], $stage)) { $db->rollBack(); continue; }
             $step = $q['status'] === 'Accepted' ? 'Please pay the' : 'Please accept the quotation and pay the';
             deadlineSay($db, $crm, $iid, $from, 'Hi! A friendly reminder for **' . $event . '**: ' . $step . ' **' . $money . '** deposit by **' . $dueText . '**' . deadlineWhenParen($stage, $left, $remindEnd)
                 . ' to reserve your event date. If the deposit is not paid by then, the inquiry is closed automatically and the date is released. '
                 . 'Open your inquiry and tap Pay deposit, or message me here if you have questions.');
             notifySend($db, ['type' => 'lead', 'kind' => 'inquiry', 'ref' => $ref, 'title' => 'Deposit due ' . deadlineWhenStage($stage, $left, $remindEnd),
                 'message' => 'Please pay the ' . $money . ' deposit for ' . $event . ' by ' . $dueText . '.',
-                'user_ids' => [$customerId], 'include_admins' => false]);
+                'user_ids' => [$customerId], 'include_admins' => false, '_throw_on_failure' => true]);
+            $db->commit();
             $res['reminded']++;
         } catch (Throwable $e) {
-            deadlineRelease($db, 'dep2', (int)$q['quotation_id'], $stage);   // try again next run
-            error_log('booking-deadlines: deposit reminder failed for inquiry ' . $iid . ': ' . $e->getMessage());
+            if ($db->inTransaction()) $db->rollBack(); // claim and message roll back together; retry next run
+            $res['errors']++;
+            error_log('booking-deadlines: deposit reminder failed for inquiry ' . $iid . ': ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
         }
     }
     return $res;
@@ -429,7 +526,14 @@ function processEventReminders(AppDatabase $db, string $crm): array {
 
 /** Runs all steps. Never throws. */
 function runBookingDeadlines(AppDatabase $db, string $crm = ''): array {
-    $out = ['deposit' => null, 'balance' => null, 'event_reminders' => null];
+    $out = ['deposit' => null, 'balance' => null, 'event_reminders' => null, 'skipped' => false, 'errors' => 0];
+    try {
+        if (!deadlineJobLock($db, true)) { $out['skipped'] = true; return $out; }
+    } catch (Throwable $e) {
+        $out['errors']++;
+        error_log('booking-deadlines: lock failed: ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
+        return $out;
+    }
     try {
         ensureBookingsSchema($db);
         ensureQuotationsSchema($db);
@@ -438,7 +542,9 @@ function runBookingDeadlines(AppDatabase $db, string $crm = ''): array {
         $out['deposit'] = processDepositDeadlines($db, $crm);
         $out['balance'] = processBalanceDeadlines($db, $crm);
         $out['event_reminders'] = processEventReminders($db, $crm);
-    } catch (Throwable $e) { error_log('booking-deadlines: run failed: ' . $e->getMessage()); }
+        $out['errors'] += (int)($out['deposit']['errors'] ?? 0);
+    } catch (Throwable $e) { $out['errors']++; error_log('booking-deadlines: run failed: ' . get_class($e) . ' (' . (int)$e->getCode() . ')'); }
+    finally { try { deadlineJobLock($db, false); } catch (Throwable $e) { $out['errors']++; error_log('booking-deadlines: lock release failed'); } }
     return $out;
 }
 

@@ -540,6 +540,23 @@ CREATE TABLE password_reset_tokens (
  INDEX idx_reset_user_expiry (user_id,expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE signup_email_otps (
+ signup_otp_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ session_hash CHAR(64) NOT NULL,
+ email VARCHAR(255) NOT NULL,
+ otp_hash VARCHAR(255) NOT NULL,
+ expires_at DATETIME NOT NULL,
+ resend_available_at DATETIME NOT NULL,
+ attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+ send_count SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+ verified_at DATETIME NULL,
+ used_at DATETIME NULL,
+ invalidated_at DATETIME NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_signup_otp_session_created (session_hash, created_at),
+ INDEX idx_signup_otp_email_created (email, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- APPLICATION COMPATIBILITY / FEATURE TABLES
 -- These preserve behavior currently used by PHP while application queries are
 -- migrated to the normalized entities above. They are provisioned here, not at

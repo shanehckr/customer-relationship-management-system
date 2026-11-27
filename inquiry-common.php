@@ -19,8 +19,10 @@ date_default_timezone_set('Asia/Manila');
 ini_set('display_errors', '0');
 error_reporting(E_ALL);
 ob_start();
-header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-store');
+if (PHP_SAPI !== 'cli') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+}
 
 function out(array $p, int $status = 200): void {
     if (ob_get_length()) ob_clean();
@@ -29,9 +31,13 @@ function out(array $p, int $status = 200): void {
     exit;
 }
 function fail(string $m, int $status = 400): void { out(['success' => false, 'message' => $m], $status); }
-set_exception_handler(function ($e) { fail('Server error: ' . $e->getMessage(), 500); });
+if (PHP_SAPI === 'cli') {
+    set_exception_handler(function ($e) { error_log('CLI request failed: ' . get_class($e) . ' (' . (int)$e->getCode() . ')'); exit(1); });
+} else {
+    set_exception_handler(function ($e) { fail('Server error: ' . $e->getMessage(), 500); });
+}
 
-if (session_status() === PHP_SESSION_NONE) session_start();
+if (PHP_SAPI !== 'cli' && session_status() === PHP_SESSION_NONE) session_start();
 
 require_once __DIR__ . '/config/database.php';
 
