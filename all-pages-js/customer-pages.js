@@ -1,3 +1,9 @@
+/* The saved value for the on-site service may still be "Buffet with setup" (older records); customers always see "On-site Catering". */
+function crmCustomerArrangementLabel(value) {
+  var s = String(value == null ? "" : value).trim();
+  return /^buffet(\s+(with\s+)?set-?\s?up|\s+service)?$/i.test(s) ? "On-site Catering" : s;
+}
+
 /* ---------- Session guard: when any API answers "session expired" (401), go to the login page ---------- */
 (function () {
   if (window.__crmSessionGuard || typeof window.fetch !== "function") return;
@@ -1385,10 +1391,20 @@
     tag.textContent = labels[phase];
     return tag;
   }
+  /* Event time in minutes ("11:15 AM", "11:15", "14:30:00"); no time = end of the day, so timed bookings come first. */
+  function bookingMinutes(r) {
+    var m = /^\s*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap]m)?\s*$/i.exec(listText(r, ["event_time", "time"]));
+    if (!m) return 1440;
+    var h = +m[1], min = +(m[2] || 0), ap = (m[3] || "").toLowerCase();
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    return h > 23 || min > 59 ? 1440 : h * 60 + min;
+  }
   function sortBookings(rows) {
-    return rows.map(function (r, i) { return { r: r, i: i, k: bookingPhase(r), d: bookingDay(r) || "9999-99-99" }; }).sort(function (a, b) {
+    return rows.map(function (r, i) { return { r: r, i: i, k: bookingPhase(r), d: bookingDay(r) || "9999-99-99", t: bookingMinutes(r) }; }).sort(function (a, b) {
       if (a.k !== b.k) return a.k - b.k;
       if (a.d !== b.d) return a.k === 1 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // finished: most recent first; others: earliest first
+      if (a.t !== b.t) return a.k === 1 ? b.t - a.t : a.t - b.t;                          // same day: upcoming earliest time first, finished latest first
       return a.i - b.i;
     }).map(function (x) { return x.r; });
   }
@@ -1706,11 +1722,24 @@
       var guestsOn = showsGuests(record);
       setText("cbGuests", guestsOn ? first(record, ["expected_guests", "guest_count", "guests", "number_of_guests", "pax"]) + " guests" : "");
       setRowHidden("cbGuests", "cbVenue", !guestsOn);
-      var arrangement = asText(first(record, ["arrangement", "service_arrangement"]));
+      var arrangement = crmCustomerArrangementLabel(asText(first(record, ["arrangement", "service_arrangement"])));
       setText("cbArrangement", arrangement);
       var venueLabel = page.querySelector("#cbVenueLabel");
       if (venueLabel) venueLabel.textContent = /pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue/Address");
-      setText("cbVenue", first(record, ["venue", "venue_name", "address"]));
+      /* Full address: the booking only sends the street in "venue"; barangay / city / province come in arrangement_details
+         (same data My Inquiries shows in its own rows), so join them like the staff booking view does. */
+      var addrDetails = record.arrangement_details || record.delivery_details;
+      if (typeof addrDetails === "string") { try { addrDetails = JSON.parse(addrDetails); } catch (_) { addrDetails = null; } }
+      if (!addrDetails || typeof addrDetails !== "object" || Array.isArray(addrDetails)) addrDetails = {};
+      var street = asText(first(record, ["venue", "venue_name", "address"]));
+      var addrParts = [street];
+      if (!/pick-?up/i.test(arrangement)) {
+        ["barangay", "city", "province"].forEach(function (key) {
+          var part = asText(addrDetails[key]) || asText(record[key]);
+          if (part && street.toLowerCase().indexOf(part.toLowerCase()) === -1) addrParts.push(part);
+        });
+      }
+      setText("cbVenue", addrParts.filter(Boolean).join(", "));
       setText("cbSchedule", schedule);
       setText("cbPackage", first(record, ["package_name", "package"]));
       setText("cbRequests", first(record, ["special_requests", "notes", "dietary_requirements"]));
@@ -1843,6 +1872,9 @@
         host.id = "cbPayRequest";
         anchor.insertAdjacentElement("afterend", host);
       }
+      /* Inside the Full Payment Status card the request goes LAST: percent -> bar -> paid / total -> request + Pay Now */
+      var payCard = host.closest(".cb-full-payment");
+      if (payCard && host.parentNode !== payCard) payCard.appendChild(host);
       host.replaceChildren();
       var req = record && record.payment_request;
       if (!req || req.status !== "Pending") { host.hidden = true; return; }
@@ -2309,11 +2341,13 @@
        1 In Progress (incl. In Discussion, Quotation Preparation)
        2 Quotation Sent (incl. Negotiation)
        -- these three keep the server order (newest submitted first) --
-       3 other upcoming inquiries, earliest event first
+       3 other upcoming inquiries (Submitted, Quotation Accepted, ...), earliest event first
        4 date passed (most recent first)
-       5 declined / cancelled */
+       5 Converted to Booking, earliest event first
+       6 declined / cancelled */
   function inquiryGroup(r) {
-    if (inquiryPhase(r) === 2) return 5;                                   // declined / cancelled always last
+    if (inquiryPhase(r) === 2) return 6;                                   // declined / cancelled always last
+    if (r && r.booking) return 5;                                          // "Converted to Booking" comes after every active inquiry
     var s = listText(r, ["stage", "status", "inquiry_status"]).toLowerCase();
     if (/new inquiry/.test(s)) return 0;
     if (/in progress|in discussion|quotation prep/.test(s)) return 1;
@@ -2324,7 +2358,7 @@
     return rows.map(function (r, i) { return { r: r, i: i, k: inquiryGroup(r), d: inquiryDay(r) || "9999-99-99" }; }).sort(function (a, b) {
       if (a.k !== b.k) return a.k - b.k;
       if (a.k <= 2) return a.i - b.i;                                       // first three groups: server order
-      if (a.d !== b.d) return a.k === 4 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // date passed: most recent first; others: earliest first
+      if (a.d !== b.d) return a.k === 4 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // date passed: most recent first; others: earliest first (converted + declined too)
       return a.i - b.i;
     }).map(function (x) { return x.r; });
   }
@@ -2566,7 +2600,7 @@
       if (!detailsPanel) return;
       var detailsContent = page.querySelector("#ciDetailsContent") || detailsPanel;
       empty(detailsContent);
-      var arrangement = asText(firstValue(record, ["arrangement", "service_arrangement"]));
+      var arrangement = crmCustomerArrangementLabel(asText(firstValue(record, ["arrangement", "service_arrangement"])));
       var hasPax = /buffet|set-?up|on-?site/i.test(arrangement);
       if (/declin/i.test(asText(firstValue(record, ["status", "stage"])))) {
         var why = asText(record.decline_reason);
@@ -4252,10 +4286,13 @@
     "customer pickup": "Customer Pickup",
     "pickup": "Customer Pickup",
     "delivery": "Delivery",
-    "buffet with setup": "Buffet set-up",
-    "buffet set-up": "Buffet set-up",
-    "buffet service": "Buffet set-up",
-    "buffet setup": "Buffet set-up"
+    "buffet with setup": "On-site Catering",
+    "buffet set-up": "On-site Catering",
+    "buffet service": "On-site Catering",
+    "buffet setup": "On-site Catering",
+    "on-site catering": "On-site Catering",
+    "onsite catering": "On-site Catering",
+    "on-site": "On-site Catering"
   };
 
   function firstValue(object, keys) {

@@ -9,12 +9,12 @@
        ?action=conversation_messages&conversation_id=ID -> { success, conversation, messages: [...] }
        ?action=list_tickets -> { success, tickets: [...], viewer_role }
        ?action=ticket_messages&ticket_id=ID -> { success, ticket, messages: [...] } -->
-<div class="iq-page iq-page--sales csi-page mi-page" id="managerInboxPage" data-api="manager-admin-inbox-api.php">
+<div class="iq-page iq-page--sales csi-page mi-page" id="managerInboxPage" data-api="manager-admin-inbox-api.php" style="padding-left:0!important;padding-right:0!important">
 
-  <!-- Same heading block as the Sales Staff / Customer inbox, so the title sits in the same position -->
-  <div class="mb-4">
-    <h2 class="fw-bold text-uppercase mb-1">INBOX</h2>
-  </div>
+  <!-- Same heading block as the Customer Service inbox, so the title and the gap under it match -->
+  <header class="crm-inbox-page-heading">
+    <h2>Inbox</h2>
+  </header>
 
   <!-- Tabs -->
   <div class="mi-top">

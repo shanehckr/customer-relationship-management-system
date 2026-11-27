@@ -71,6 +71,8 @@ function crmApplyRoleToSidebar() {
 
 // True when the sidebar shows icons only (collapsed, or a phone-size screen).
 function crmSidebarIsCompact() {
+  // The phone drawer shows full labels, so it is not "compact" while it is open.
+  if (document.documentElement.classList.contains("crm-drawer-open")) return false;
   const sidebar = document.getElementById("crmSidebar");
   return !!(sidebar && sidebar.classList.contains("collapsed")) ||
     document.documentElement.classList.contains("sidebar-is-collapsed") ||
@@ -578,4 +580,41 @@ container.innerHTML = doc.body.innerHTML;
     }
     repaint();
   });
+})();
+
+// ---- Phone drawer: the burger opens the full sidebar (with labels) over the page ----
+// Reuses the existing #burgerToggle and #crmSidebar. On a phone the burger no longer
+// collapses/expands the desktop sidebar, so the saved desktop preference is not touched.
+(function () {
+  const root = document.documentElement;
+  const phone = window.matchMedia("(max-width: 768px)");
+
+  function setDrawer(open) {
+    root.classList.toggle("crm-drawer-open", open);
+    const burger = document.getElementById("burgerToggle");
+    if (burger) burger.setAttribute("aria-expanded", open ? "true" : "false");
+    if (typeof crmSyncNavGroups === "function") crmSyncNavGroups();   // inline list in the drawer, flyout in the rail
+    if (window.crmRefreshInboxDot) window.crmRefreshInboxDot();       // re-place the unread dot
+  }
+
+  // Capture phase: runs before the other burger handlers, so they are skipped on a phone.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#burgerToggle") && phone.matches) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setDrawer(!root.classList.contains("crm-drawer-open"));
+      return;
+    }
+    if (!root.classList.contains("crm-drawer-open")) return;
+    const insideSidebar = e.target.closest("#crmSidebar");
+    const isPageLink = e.target.closest("#crmSidebar .nav-link:not(.nav-group-toggle)");
+    if (!insideSidebar || isPageLink) setDrawer(false);   // backdrop tap or page chosen
+  }, true);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && root.classList.contains("crm-drawer-open")) setDrawer(false);
+  });
+
+  // Rotating to a wider screen: drop the drawer state.
+  phone.addEventListener("change", () => { if (!phone.matches) setDrawer(false); });
 })();

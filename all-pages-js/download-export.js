@@ -892,13 +892,29 @@ function crmPdfSection(d, logo) {
       '<div class="brand"><img src="' + e(logo) + '" alt=""><h1>' + e(CRM_BUSINESS_NAME) + '</h1></div>' +
       '<h2>' + e(d.title) + '</h2>' +
       '<p class="period">' + e(crmPeriodLabel(d)) + ': <b>' + e(d.range) + '</b></p>' +
-      '<div class="stats">' + d.stats.map(s => '<div class="st"><span>' + e(s[0]) + '</span><b>' + e(s[1]) + '</b></div>').join('') + '</div>' +
+      crmPdfStatsHTML(d.stats) +
       crmPdfPerfHTML(d, false) +
       '<div class="charts">' + chartsHTML + '</div>' +
       crmPdfPerfHTML(d, true) +
       tableHTML +
     '</div></td></tr></tbody>' +
     '</table>';
+}
+
+// Summary cards: balanced rows (max 4 per row, e.g. 5 cards = 3 + 2) and every card stretches
+// so each row fills the full width (12-column grid, a card spans 12 / cards-in-its-row).
+function crmPdfStatsHTML(stats) {
+  const e = crmEscape, n = stats.length;
+  const rowCount = Math.max(1, Math.ceil(n / 4));
+  const spans = [];
+  let left = n;
+  for (let r = 0; r < rowCount; r++) {
+    const size = Math.ceil(left / (rowCount - r));
+    for (let k = 0; k < size; k++) spans.push(12 / size);
+    left -= size;
+  }
+  return '<div class="stats" style="grid-template-columns:repeat(12,1fr)">' + stats.map((s, i) =>
+    '<div class="st" style="grid-column:span ' + spans[i] + '"><span>' + e(s[0]) + '</span><b>' + e(s[1]) + '</b></div>').join('') + '</div>';
 }
 
 // Load the PDF layout from its CSS file and insert only the generated footer text.
@@ -914,7 +930,7 @@ async function crmDownloadReportPDF() {
   const list = crmAllReports(), e = crmEscape;
   const logo = new URL(CRM_LOGO, document.baseURI).href;
   const first = list[0];
-  // most summary cards on any tab (max 4 per row) so every tab uses the same card width
+  // each tab sizes its own summary cards (max 4 per row) so they always fill the full width
   const maxStats = Math.max(1, ...list.map(d => d.stats.length));
 
   // ONE footer line for the whole document (the time is the moment of the download)
