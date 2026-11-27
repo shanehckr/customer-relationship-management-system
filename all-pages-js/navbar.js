@@ -218,8 +218,20 @@ document.addEventListener("DOMContentLoaded", () => {
   // Set allowed pages before applying the page guard.
   crmApplyRoleToSidebar();
 
-  // Restore the last page, or open this role's dashboard.
-  const activePage = localStorage.getItem("activePage") || "dashboard";
+  // Email links may request an existing customer page. Resolve only known customer pages here.
+  const emailParams = new URLSearchParams(window.location.search);
+  const emailPage = emailParams.get("crm_page");
+  const customerEmailPages = new Set(["customer-home.html", "customer-inquiries.html", "customer-bookings.html", "customer-inbox.html"]);
+  const requestedCustomerPage = CRM_ROLE === "customer" && customerEmailPages.has(emailPage) ? emailPage : "";
+  if (requestedCustomerPage === "customer-bookings.html") {
+    const bookingId = emailParams.get("booking_id") || "";
+    if (/^[1-9][0-9]*$/.test(bookingId)) {
+      try { sessionStorage.setItem("crmOpenBookingId", bookingId); } catch (error) { /* booking list remains available */ }
+    }
+  }
+
+  // Restore the last page, or open this role's dashboard, unless an email requested a customer page.
+  const activePage = requestedCustomerPage || localStorage.getItem("activePage") || "dashboard";
   loadPage(activePage);
 });
 

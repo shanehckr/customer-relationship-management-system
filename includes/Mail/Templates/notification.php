@@ -18,8 +18,8 @@ foreach ($rows as $label => $value) {
     $value = trim((string) $value);
     if ($label === '' || $value === '') continue;
     $rowHtml .= '<tr>'
-        . '<td style="padding:9px 12px;color:#5f6964;border-bottom:1px solid #e6ece8;font-size:14px">' . $escape($label) . '</td>'
-        . '<td style="padding:9px 12px;color:#202724;border-bottom:1px solid #e6ece8;font-size:14px;font-weight:600;text-align:right;word-break:break-word">' . $escape($value) . '</td>'
+        . '<td style="width:42%;padding:9px 12px;color:#5f6964;border-bottom:1px solid #e6ece8;font-size:14px;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word">' . $escape($label) . '</td>'
+        . '<td style="width:58%;padding:9px 12px;color:#202724;border-bottom:1px solid #e6ece8;font-size:14px;font-weight:600;text-align:right;vertical-align:top;overflow-wrap:anywhere;word-break:break-word">' . $escape($value) . '</td>'
         . '</tr>';
     $text .= $label . ': ' . $value . "\n";
 }
@@ -37,7 +37,7 @@ $html = '<div style="margin:0;padding:24px 12px;background:#f3f5f4;font-family:A
     . '<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hi ' . $escape($greeting) . ',</p>'
     . '<p style="margin:0 0 10px;font-size:15px;line-height:1.6">' . nl2br($escape($message)) . '</p>'
     . $amountHtml
-    . ($rowHtml !== '' ? '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:16px 0">' . $rowHtml . '</table>' : '')
+    . ($rowHtml !== '' ? '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:16px 0">' . $rowHtml . '</table>' : '')
     . $buttonHtml
     . '</div><div style="padding:14px 28px;border-top:1px solid #edf0ee;text-align:center;color:#7a837f;font-size:12px">Espinosilla\'s Kainan</div>'
     . '</div></div>';

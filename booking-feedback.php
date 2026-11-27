@@ -125,7 +125,7 @@ function completeFinishedBookings(AppDatabase $db, string $crm = ''): void {
                         'Status' => 'Completed',
                     ],
                     'button_text' => 'View My Bookings',
-                    'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-bookings.html',
+                    'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', (int) $bookingId),
                 ],
                 'booking_completed:' . (int) $bookingId,
                 'booking',

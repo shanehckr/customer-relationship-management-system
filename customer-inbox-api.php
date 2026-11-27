@@ -332,7 +332,7 @@ switch ($action) {
                     'Initial status' => 'Open',
                 ],
                 'button_text' => 'View My Concerns',
-                'button_url' => rtrim(EmailNotificationService::baseUrl($db), '/') . '/customer-inbox.html',
+                'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-inbox.html'),
             ],
             'support_ticket_received:' . $ticketId,
             'ticket',

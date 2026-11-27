@@ -36,8 +36,8 @@ $table = '';
 $text = "Hi {$name},\n\n{$introText}\n\n";
 foreach ($rows as $label => $value) {
     if (trim((string) $value) === '') continue;
-    $table .= '<tr><td style="padding:8px 12px;color:#666;border-bottom:1px solid #eee">' . $escape($label)
-        . '</td><td style="padding:8px 12px;font-weight:600;border-bottom:1px solid #eee">' . $escape($value) . '</td></tr>';
+    $table .= '<tr><td style="width:42%;padding:8px 12px;color:#666;border-bottom:1px solid #eee;text-align:left;vertical-align:top;overflow-wrap:anywhere;word-break:break-word">' . $escape($label)
+        . '</td><td style="width:58%;padding:8px 12px;font-weight:600;border-bottom:1px solid #eee;text-align:right;vertical-align:top;overflow-wrap:anywhere;word-break:break-word">' . $escape($value) . '</td></tr>';
     $text .= $label . ': ' . $value . "\n";
 }
 $text .= "\nThank you for choosing Espinosilla's Kainan Catering.";
@@ -48,7 +48,7 @@ $html = '<div style="margin:0;padding:24px 12px;background:#f3f5f4;font-family:A
     . '<h1 style="margin:8px 0 14px;font-size:22px;line-height:1.3;color:#202724">Payment received</h1>'
     . '<p style="margin:0 0 14px;font-size:15px;line-height:1.6">Hi ' . $escape($name) . ',</p>'
     . '<p style="margin:0 0 10px;font-size:15px;line-height:1.6">' . $introHtml . '</p>'
-    . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;margin:16px 0;text-align:left">' . $table . '</table>'
+    . '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="width:100%;table-layout:fixed;border-collapse:collapse;margin:16px 0;text-align:left">' . $table . '</table>'
     . '<p style="margin:0;font-size:14px;line-height:1.6">If you have questions, reply to this email or message us through your Espinosilla\'s Kainan account.</p>'
     . '</div><div style="padding:14px 28px;border-top:1px solid #edf0ee;text-align:center;color:#7a837f;font-size:12px">Espinosilla\'s Kainan</div>'
     . '</div></div>';

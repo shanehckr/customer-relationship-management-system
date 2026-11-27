@@ -88,11 +88,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
                 <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="name@example.com" aria-describedby="suEmailError" required>
               </div>
-<<<<<<< HEAD
               <div class="su-field-error" id="suEmailError" data-su-error-for="email" aria-live="polite"></div>
-=======
-             
->>>>>>> origin/feat/frontend-development
             </div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suSendBtn">Send Verification Code</button>

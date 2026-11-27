@@ -33,6 +33,13 @@ function sendPaymentEmail(array $data): bool
     $uniquePart = $reference !== '' ? $reference : $bookingRef . ':' . sha1(json_encode($data) ?: '');
     $dedupe = 'payment-email:' . $type . ':' . substr(hash('sha256', $uniquePart), 0, 48);
     $isBalance = $type === 'balance';
+    require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
+    $recipient = EmailNotificationService::customerRecipient(
+        $db,
+        (int) ($data['customer_id'] ?? 0),
+        (string) ($data['to_email'] ?? ''),
+        (string) ($data['to_name'] ?? '')
+    );
     $remaining = (float) ($data['balance'] ?? 0);
     $heading = $isBalance ? 'Balance Payment Received' : 'Booking Confirmed';
     $subject = $isBalance
@@ -50,24 +57,23 @@ function sendPaymentEmail(array $data): bool
         'Balance payment' => $isBalance ? 'PHP ' . number_format((float) ($data['paid'] ?? 0), 2) : '',
         'Remaining balance' => 'PHP ' . number_format(max(0, $remaining), 2),
     ];
-    require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
     return EmailNotificationService::queue(
         $db,
         (int) ($data['customer_id'] ?? 0),
-        (string) ($data['to_email'] ?? ''),
-        (string) ($data['to_name'] ?? ''),
+        $recipient['email'],
+        $recipient['name'],
         $isBalance ? 'payment_balance_received' : 'payment_deposit_booking_confirmed',
         $subject,
         [
             'heading' => $heading,
-            'greeting' => (string) ($data['to_name'] ?? 'Customer'),
+            'greeting' => $recipient['name'],
             'message' => $isBalance
                 ? 'We verified your remaining balance payment.'
                 : 'We verified your 20% deposit and successfully confirmed your booking.',
             'amount' => 'PHP ' . number_format((float) ($data['paid'] ?? 0), 2),
             'rows' => $rows,
             'button_text' => 'View My Bookings',
-            'button_url' => rtrim((string) ($config['base_url'] ?? ''), '/') . '/customer-home.html',
+            'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', (int) ($data['booking_id'] ?? 0)),
         ],
         $dedupe,
         'booking',

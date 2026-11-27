@@ -89,4 +89,18 @@ final class EmailNotificationService
             return 'http://localhost/customer-relationship-management-system/';
         }
     }
+
+    /** Existing authenticated application entry point; customer sub-pages are loaded inside this shell. */
+    public static function customerAppUrl(AppDatabase $db, string $page, int $bookingId = 0): string
+    {
+        $customerPages = ['customer-home.html', 'customer-inquiries.html', 'customer-bookings.html', 'customer-inbox.html'];
+        if (!in_array($page, $customerPages, true)) {
+            $page = 'customer-home.html';
+        }
+        $query = ['crm_page' => $page];
+        if ($page === 'customer-bookings.html' && $bookingId > 0) {
+            $query['booking_id'] = $bookingId;
+        }
+        return rtrim(self::baseUrl($db), '/') . '/index.php?' . http_build_query($query);
+    }
 }
