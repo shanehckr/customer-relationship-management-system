@@ -9446,9 +9446,13 @@ html.light-mode .av-d-cat { color: #166044; }
 .av-d-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 22px; }
 .av-d-btn { height: 38px; padding: 0 18px; font-size: 13px; font-weight: 700; white-space: nowrap; }
 /* Secondary buttons in the inquiry action row (Preview Quotation ...): green outline so they stand out from the card */
-.av-d-actions .csi-outline-btn { border-color: var(--accent-green) !important; }
-html.light-mode .av-d-actions .csi-outline-btn { border-color: #166044 !important; }
-.av-d-actions .csi-outline-btn:hover:not(:disabled) { background-color: rgba(34, 197, 94, 0.12) !important; }
+.av-d-actions .csi-outline-btn,
+.qp-doc-actions .csi-outline-btn { background-color: transparent !important; border-color: var(--accent-green) !important; transition: background-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out, transform 0.1s; }
+html.light-mode .av-d-actions .csi-outline-btn,
+html.light-mode .qp-doc-actions .csi-outline-btn { border-color: #166044 !important; }
+.av-d-actions .csi-outline-btn:hover:not(:disabled),
+.qp-doc-actions .csi-outline-btn:hover:not(:disabled) { background-color: rgba(34, 197, 94, 0.12) !important; }
+.qp-doc-actions .csi-outline-btn:active:not(:disabled), .qp-doc-actions .modal-btn-save:active { transform: scale(0.98); }
 .av-d-btn-warn { border: 1px solid #fcd34d; background: #fef3c7; color: #b45309; border-radius: 12px; }
 .av-d-btn-warn:hover { background: #fde68a; color: #92400e; }
 html.dark-mode .av-d-btn-warn { border-color: rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
@@ -9906,11 +9910,14 @@ html.dark-mode .card.sd-stat .stat-number.is-teal { color: #2dd4bf !important; }
   transition: background-color 0.15s, border-color 0.15s, color 0.15s; }
 #mmArchiveBtn:hover, #mmArchiveBtn:focus-visible, #mmArchiveBtn:active { background-color: var(--card-bg) !important; border-color: var(--accent-green) !important; color: var(--text-main) !important; box-shadow: none !important; }
 
+/* Archive view: the right-side buttons are not needed (Back to Menu is the link above the title; nothing to add) */
+.mm-page[data-mm-view="archive"] #mmArchiveBtn,
+.mm-page[data-mm-view="archive"] #mmAddBtn { display: none !important; }
+.mm-page[data-mm-view="archive"] .mm-head-actions { display: none !important; }
 /* Archive view: text-style back link above the title + subtitle */
-.mm-back-link { display: inline-flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 4px 0; border: 0; background: transparent; color: var(--text-muted); font-size: 14px; font-weight: 600; cursor: pointer; transition: color 0.15s; }
+.mm-back-link { margin: 0 0 12px; }   /* look comes from the shared .iq-back (green) */
 .mm-back-link[hidden] { display: none; }
-.mm-back-link:hover, .mm-back-link:focus-visible { color: var(--accent-green); outline: none; }
-.mm-back-link i { font-size: 15px; transition: transform 0.15s; }
+.mm-back-link i { font-size: 16px; transition: transform 0.15s; }
 .mm-back-link:hover i { transform: translateX(-3px); }
 .mm-page-sub { margin: 6px 0 0; color: var(--text-muted); font-size: 14px; }
 
@@ -10128,6 +10135,13 @@ body.crm-image-viewer-open { overflow: hidden; }
 .qp-hint { margin: 0 0 14px; color: var(--text-muted); font-size: 13px; }
 .qp-state, .qp-empty { margin: 8px 0; padding: 14px 18px; border: 1px dashed var(--border-color); border-radius: 12px; color: var(--text-muted); font-size: 14px; text-align: center; }
 .av-d-grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+/* C. Quotation Terms: Valid until | Valid until time | Deposit % | Discount on one row (time column only shows for rush events) */
+.av-d-grid.qp-grid-4 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px 20px; align-items: start; }   /* 3 equal columns fill the row */
+.av-d-grid.qp-grid-4.has-time { grid-template-columns: repeat(4, minmax(0, 1fr)); }   /* rush event: the time column joins */
+.qp-grid-4 > div > div[style*="font-size:12px"] { line-height: 1.4; }
+.qp-grid-4 input[type="time"]:disabled { opacity: 0.55; cursor: not-allowed; }
+@media (max-width: 1100px) { .av-d-grid.qp-grid-4, .av-d-grid.qp-grid-4.has-time { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 575px) { .av-d-grid.qp-grid-4, .av-d-grid.qp-grid-4.has-time { grid-template-columns: minmax(0, 1fr); } }
 .qp-span-2 { grid-column: span 2; }
 .qp-info { padding: 12px 14px; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(148, 163, 184, 0.08); }
 .qp-tabs { display: flex; gap: 6px; padding: 5px; margin-bottom: 16px; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(148, 163, 184, 0.08); }
@@ -10174,8 +10188,9 @@ body.crm-image-viewer-open { overflow: hidden; }
 .qp-doc-name { display: block; margin-bottom: 6px !important; color: var(--accent-green) !important; font-size: 24px; font-weight: 800 !important; }
 .qp-doc-h { margin: 24px 28px 10px; color: var(--text-muted); font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 .qp-doc-box { padding: 16px 18px; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(148, 163, 184, 0.08); }
+/* one column, top to bottom: Charges summary, then Terms - both full width so there is no empty gap */
 .qp-doc-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-bottom: 8px; }
-.qp-doc-sumwrap { width: 100%; max-width: 480px; margin-left: auto; }
+.qp-doc-sumwrap { width: 100%; max-width: none; margin-left: 0; }
 .qp-doc-split .qp-doc-h { margin-left: 0; margin-right: 0; }
 .qp-doc-split > div { display: flex; flex-direction: column; }
 .qp-terms { padding: 16px 18px; border: 1px solid var(--border-color); border-radius: 12px; background: rgba(148, 163, 184, 0.08); font-size: 13px; }
@@ -10185,16 +10200,18 @@ body.crm-image-viewer-open { overflow: hidden; }
 .qp-sum { margin: 0; padding: 16px 18px; border: 1px solid rgba(43, 182, 115, 0.4); border-radius: 12px; background: rgba(43, 182, 115, 0.08); }
 .qp-sum div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 13px; }
 .qp-sum dt, .qp-sum dd { margin: 0; font-weight: 600; }
-.qp-sum-total { margin: 8px 0; padding: 10px 0 !important; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+.qp-sum-total { align-items: center; margin: 8px 0; padding: 10px 0 !important; border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
 .qp-sum-total dt { font-size: 15px; font-weight: 800; }
-.qp-sum-total dd { color: var(--accent-green); font-size: 22px; font-weight: 800; }
+.qp-sum-total dd { color: var(--accent-green); font-size: 22px; font-weight: 800; line-height: 1.2; }
 .qp-doc-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; padding: 18px 28px; background: rgba(148, 163, 184, 0.08); border-top: 1px solid var(--border-color); margin-top: 24px; }
 .qp-grow { flex: 1; }
+.qp-doc-actions .csi-outline-btn { height: 44px; font-size: 15px; }
 .qp-doc-actions .modal-btn-save, .qp-footer .modal-btn-save { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px !important; padding: 0 18px; font-size: 15px !important; }
 @media (max-width: 767px) {
   .av-d-grid-3, .qp-doc-split, .qp-picker-row { grid-template-columns: 1fr; }
-  .qp-doc-sumwrap { max-width: none; }
-  .qp-span-2 { grid-column: auto; }
+  .qp-doc-actions .qp-grow { display: none; }
+  .qp-doc-actions .btn { flex: 1 1 100%; width: 100%; }
+    .qp-span-2 { grid-column: auto; }
   .qp-steps { flex-direction: column; }
   .qp-step { flex: 0 0 auto; max-width: none; }
   .qp-doc-refs, .qp-doc-refs div { text-align: left; justify-content: flex-start; }

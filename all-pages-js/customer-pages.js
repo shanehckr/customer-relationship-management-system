@@ -1831,6 +1831,7 @@ function crmCustomerArrangementLabel(value) {
       if (bar) bar.style.width = percent + "%";
       if (progress) progress.setAttribute("aria-valuenow", String(percent));
       renderPayRequest(record);
+      renderAwaitingBalance(record, { paid: paid, total: total, percent: percent, hasPendingRequest: hasPendingRequest, owesAfterEvent: owesAfterEvent });
 
       var historyCard = page.querySelector("#cbPaymentHistoryCard");
       var historyList = page.querySelector("#cbPaymentHistory");
@@ -1895,12 +1896,46 @@ function crmCustomerArrangementLabel(value) {
       if (req.pay_url) {
         var pay = document.createElement("button");
         pay.type = "button";
-        pay.className = "ci-btn-primary";
+        pay.className = "btn modal-btn-save cb-pay-now"; // shared green button (same look as Save / Send / View Details)
         pay.textContent = "Pay Now";
         pay.addEventListener("click", function () { window.location.href = req.pay_url; });
         banner.append(pay);
       }
       host.append(banner);
+    }
+
+    /* "Awaiting Balance Payment Request": deposit is paid, the sales staff has NOT sent the Request Full Payment yet.
+       A second card (same .cb-payment-banner + .cb-payment-icon classes) is placed right under the status banner (Partially Paid).
+       It disappears when a payment request is pending (the Pay Now banner takes over), when paid in full, or when nothing is paid yet. */
+    function renderAwaitingBalance(record, info) {
+      var old = page.querySelector("#cbAwaitBalance");
+      if (old) old.remove();
+      if (!record) return;
+      if (!info || !(info.paid > 0) || info.percent >= 100 || info.hasPendingRequest || info.owesAfterEvent) return;
+      if (/cancel|declin|reject/i.test(asText(first(record, ["status", "booking_status"])))) return;
+      var statusBanner = page.querySelector("#cbPaymentBannerTitle");
+      statusBanner = statusBanner && statusBanner.closest(".cb-payment-banner");
+      if (!statusBanner) return;
+      var card = document.createElement("div");
+      card.id = "cbAwaitBalance";
+      card.className = "cb-payment-banner cb-await-banner";
+      card.setAttribute("role", "status");
+      var icon = document.createElement("span");
+      icon.className = "cb-payment-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = '<i class="bi bi-info-circle"></i>';
+      var body = document.createElement("div");
+      body.className = "cb-await-body";
+      var title = document.createElement("strong");
+      title.textContent = "Awaiting Balance Payment Request";
+      var text = document.createElement("p");
+      text.textContent = "Your " + Math.round(info.percent) + "% deposit has been verified. Our catering team will send your remaining balance payment request and deadline once they are ready. Please wait for the payment instructions before proceeding.";
+      var hint = document.createElement("p");
+      hint.className = "cb-await-hint";
+      hint.textContent = "You\u2019ll be notified when the balance payment request becomes available.";
+      body.append(title, text, hint);
+      card.append(icon, body);
+      statusBanner.insertAdjacentElement("afterend", card);
     }
 
     /* Xendit sends the customer back here after a "Request Full Payment": ?pay=balance_success|balance_cancelled|balance_pending|balance_review|balance_error (&msg=...) */
