@@ -4,14 +4,6 @@
      Each inquiry uses the same fields as the Manager Inquiries page, plus "event_location".
      Same layout/position as sales-inquiries.html (iq-page--sales gives the same page inset).
      The search box, Event Date, Service Arrangement and Sort all work in the browser. -->
-<style>
-  /* Sort sits in the filter row: same size as the other filters (42px / 14px) */
-  .av-filter-row .av-sort { flex: 0 0 200px; width: 200px; position: relative; min-width: 0; }
-  .av-filter-row .av-sort .custom-dropdown-toggle { height: 42px !important; font-size: 14px !important; font-weight: 500 !important; }
-  @media (max-width: 991.98px) {
-    .av-filter-row .av-sort { flex: 1 1 0; width: auto; }
-  }
-</style>
 <div class="iq-page av-page iq-page--sales" id="salesAvailablePage" data-api="sales-available.php?action=available">
 
   <!-- List -->

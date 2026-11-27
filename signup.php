@@ -86,7 +86,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
                 <img src="icons/email-icon.svg" class="input-icon position-absolute" alt="">
                 <input type="email" id="suEmail" name="email" class="form-control" autocomplete="email" maxlength="150" placeholder="yourname@gmail.com" aria-describedby="suEmailHelp" required>
               </div>
-              <div class="su-help" id="suEmailHelp">Gmail addresses only, for example yourname@gmail.com.</div>
+             
             </div>
 
             <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold" id="suSendBtn">Send Verification Code</button>

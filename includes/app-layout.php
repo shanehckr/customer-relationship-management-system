@@ -109,10 +109,7 @@
         <aside class="crm-sidebar" id="crmSidebar">
             <div class="sidebar-header d-flex align-items-center justify-content-between px-3">
                 <div class="brand-group">
-                    <h1 class="brand-title m-0 fw-bold">CRM</h1>
-                    <span class="brand-subtitle">
-                        <?= htmlspecialchars($_SESSION["role_name"], ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8") ?>
-                    </span>
+                    <h1 class="brand-title m-0 fw-bold">ESPINOSILLA'S<br>KAINAN</h1>
                 </div>
                 <button class="btn p-0 border-0 burger-toggle-btn" id="burgerToggle"
                     aria-label="Toggle Sidebar Navigation">
@@ -174,7 +171,7 @@
                             <ul class="nav-submenu-list">
                                 <li class="nav-item" data-role="sales staff">
                                     <a href="#" onclick="loadPage('sales-available.html', this); return false;"
-                                        class="nav-link nav-sublink"><span class="nav-sub-text">Available</span></a>
+                                        class="nav-link nav-sublink"><span class="nav-sub-text">Available Inquiries</span></a>
                                 </li>
                                 <li class="nav-item" data-role="sales staff">
                                     <a href="#" onclick="loadPage('sales-inquiries.html', this); return false;"
@@ -291,8 +288,10 @@
                     
                     <button class="btn-icon position-relative border-0 bg-transparent p-0" id="notificationBell"
                         aria-label="Notifications">
-                        <i class="bi bi-bell fs-5"></i>
-                        <span class="notification-badge" id="notificationDot"></span>
+                        <span class="bell-icon-wrap position-relative d-inline-flex">
+                            <i class="bi bi-bell fs-5"></i>
+                            <span class="notification-badge" id="notificationDot"></span>
+                        </span>
                     </button>
 
                     

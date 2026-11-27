@@ -197,7 +197,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
         <p class="welcome-label fw-semibold text-uppercase">Welcome to</p>
         <h2 class="fw-bold">Customer Management System</h2>
         <div class="accent rounded-pill"></div>
-        <p class="description">Manage customers, streamline processes, grow together.</p>
+        <p class="description">Connecting our team and customers, all in one place.</p>
       </div>
     </section>
 

@@ -139,10 +139,14 @@ body {
 }
 
 .brand-title {
-  font-size: 20px;
+  font-size: 17px;
+  letter-spacing: 0.02em;
   color: var(--text-main) !important;
-  line-height: 1;
+  line-height: 1.15;
 }
+
+/* brand fills the space left of the burger button, vertically centered */
+.brand-group { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; }
 
 .brand-subtitle {
   font-size: 12px;
@@ -304,7 +308,7 @@ html.sidebar-is-collapsed .crm-sidebar .sidebar-header {
   background-color: var(--active-pill-bg) !important;
   width: 40px;
   height: 40px;
-  border-radius: 12px !important;
+  border-radius: 50% !important;
   border: none;
   display: flex;
   align-items: center;
@@ -707,4 +711,194 @@ html.sidebar-is-collapsed .crm-sidebar .nav-submenu .nav-sublink {
     max-width: 100% !important;
     margin-right: 0 !important;
   }
+}
+
+/* ==========================================================================
+   FIX 1: icon-only sidebar (collapsed + phone) - the group toggle kept its
+   ^ arrow and 100% width, which stretched the green pill (Catering Operations).
+   ========================================================================== */
+.crm-sidebar.collapsed .sidebar-nav .nav-group-toggle .nav-chevron,
+html.sidebar-is-collapsed .crm-sidebar .sidebar-nav .nav-group-toggle .nav-chevron {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  html:not(.crm-drawer-open) .sidebar-nav .nav-group-toggle .nav-chevron { display: none !important; }
+  html:not(.crm-drawer-open) .sidebar-nav .nav-group-toggle {
+    width: 44px;
+    padding: 0 !important;
+    margin: 0 auto;
+  }
+
+  /* ======================================================================
+     FIX 2: burger on phones. The rail keeps only the burger on top; tapping
+     it opens the full sidebar as a drawer over the page (page does not move).
+     ====================================================================== */
+  .crm-sidebar .sidebar-header {
+    display: flex !important;
+    justify-content: center;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+  #burgerToggle.burger-toggle-btn { display: inline-flex !important; align-items: center; justify-content: center; }
+  html:not(.crm-drawer-open) .crm-sidebar .brand-group { display: none !important; }
+
+  .crm-sidebar { transition: width 0.2s ease, min-width 0.2s ease; }
+
+  html.crm-drawer-open .crm-sidebar {
+    width: 250px !important;
+    min-width: 250px !important;
+    flex: 0 0 250px;
+    margin-right: -180px;          /* still takes only 70px of layout, so the page does not shift */
+    z-index: 1045;
+    box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35);
+  }
+
+  html.crm-drawer-open body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1040;
+  }
+
+  html.crm-drawer-open .crm-sidebar .sidebar-header { justify-content: space-between; padding: 0 16px !important; }
+  html.crm-drawer-open .crm-sidebar .brand-group { display: flex !important; opacity: 1 !important; width: auto !important; }
+  html.crm-drawer-open .crm-sidebar .brand-title,
+  html.crm-drawer-open .crm-sidebar .brand-subtitle { display: block !important; opacity: 1 !important; width: auto !important; }
+
+  html.crm-drawer-open .crm-sidebar .sidebar-nav { overflow-y: auto !important; }
+  html.crm-drawer-open .sidebar-nav .nav-text { display: inline !important; opacity: 1 !important; width: auto !important; }
+  html.crm-drawer-open .sidebar-nav .nav-link {
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 9px 12px !important;
+    justify-content: flex-start !important;
+  }
+
+  /* dropdown group: slides open under the toggle again instead of a flyout */
+  html.crm-drawer-open .crm-sidebar .sidebar-nav .nav-group-toggle .nav-chevron { display: inline-block !important; }
+  html.crm-drawer-open .crm-sidebar .nav-submenu {
+    position: static;
+    display: grid;
+    min-width: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    grid-template-rows: 0fr;
+    visibility: hidden;
+    opacity: 1;
+    transition: grid-template-rows 0.25s ease, visibility 0s linear 0.25s;
+  }
+  html.crm-drawer-open .crm-sidebar .nav-group.open > .nav-submenu {
+    grid-template-rows: 1fr;
+    visibility: visible;
+    margin-top: 4px !important;
+    transition: grid-template-rows 0.25s ease, visibility 0s;
+  }
+  html.crm-drawer-open .crm-sidebar .nav-submenu-list {
+    margin: 0 0 0 24px;
+    padding: 0 0 0 10px;
+    border-left: 1px solid var(--border-color);
+    overflow: hidden;
+  }
+}
+/* ==========================================================================
+   FIX 3: icon-only rail (collapsed + phone) - the green MOVES with your click.
+   - Click the Catering icon  -> it turns green, the Dashboard (or other) pill loses its green
+     while the flyout is open (same behaviour as clicking any other icon).
+   - Close the flyout without choosing -> the green goes back to the current page.
+   ========================================================================== */
+/* the group is green while its flyout is open, or when it holds the current page */
+.crm-sidebar.collapsed .nav-group.open > .nav-group-toggle,
+.crm-sidebar.collapsed .nav-group.has-active > .nav-group-toggle,
+html.sidebar-is-collapsed .crm-sidebar .nav-group.open > .nav-group-toggle,
+html.sidebar-is-collapsed .crm-sidebar .nav-group.has-active > .nav-group-toggle {
+  background-color: var(--active-pill-bg) !important;
+  color: #ffffff !important;
+}
+.crm-sidebar.collapsed .nav-group.open > .nav-group-toggle .sidebar-icon,
+.crm-sidebar.collapsed .nav-group.has-active > .nav-group-toggle .sidebar-icon,
+html.sidebar-is-collapsed .crm-sidebar .nav-group.open > .nav-group-toggle .sidebar-icon,
+html.sidebar-is-collapsed .crm-sidebar .nav-group.has-active > .nav-group-toggle .sidebar-icon {
+  filter: brightness(0) invert(1) !important;
+}
+
+/* while a flyout is open, other icons that are only "current page" lose their green */
+.crm-sidebar.collapsed .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle),
+html.sidebar-is-collapsed .crm-sidebar .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) {
+  background-color: transparent !important;
+  color: var(--text-main) !important;
+}
+html.dark-mode .crm-sidebar.collapsed .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon,
+html.dark-mode.sidebar-is-collapsed .crm-sidebar .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon { filter: brightness(0) invert(1) !important; }
+html.light-mode .crm-sidebar.collapsed .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon,
+html.light-mode.sidebar-is-collapsed .crm-sidebar .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon { filter: none !important; }
+
+@media (max-width: 768px) {
+  html:not(.crm-drawer-open) .nav-group.open > .nav-group-toggle,
+  html:not(.crm-drawer-open) .nav-group.has-active > .nav-group-toggle {
+    background-color: var(--active-pill-bg) !important;
+    color: #ffffff !important;
+  }
+  html:not(.crm-drawer-open) .nav-group.open > .nav-group-toggle .sidebar-icon,
+  html:not(.crm-drawer-open) .nav-group.has-active > .nav-group-toggle .sidebar-icon { filter: brightness(0) invert(1) !important; }
+
+  html:not(.crm-drawer-open) .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) {
+    background-color: transparent !important;
+    color: var(--text-main) !important;
+  }
+  html.dark-mode:not(.crm-drawer-open) .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon { filter: brightness(0) invert(1) !important; }
+  html.light-mode:not(.crm-drawer-open) .sidebar-nav:has(.nav-group.open) .nav-link.active:not(.nav-sublink):not(:hover):not(.nav-group-toggle) .sidebar-icon { filter: none !important; }
+}
+
+/* Header actions: theme, bell and avatar are the same 40px size, so they are evenly spaced.
+   The avatar is a circle. */
+.top-navbar-actions { gap: 8px !important; }
+.top-navbar-actions .theme-toggle-header,
+.top-navbar-actions .btn-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50% !important;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+.top-navbar-actions .theme-toggle-header:hover,
+.top-navbar-actions .btn-icon:hover { background-color: rgba(43, 182, 115, 0.14) !important; }
+/* the icons sit 9px inside their 40px slots, the avatar fills its slot: 9px extra here makes the visible gaps equal */
+.top-navbar-actions .user-avatar-btn { flex: 0 0 40px; margin-left: 9px; }
+
+/* same icon size for the sun/moon and the bell */
+.top-navbar-actions .theme-toggle-header img { width: 22px; height: 22px; }
+.top-navbar-actions .btn-icon .bi-bell { font-size: 22px !important; line-height: 1; }
+
+/* compact badge on the bell's corner ("9+" is a small pill, a plain dot stays a dot) */
+.bell-icon-wrap .notification-badge {
+  top: -6px !important;
+  right: -9px !important;
+  left: auto !important;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px !important;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--panel-bg);
+}
+.bell-icon-wrap .notification-badge:empty {
+  top: -2px !important;
+  right: -2px !important;
+  min-width: 9px;
+  width: 9px;
+  height: 9px;
+  padding: 0;
 }

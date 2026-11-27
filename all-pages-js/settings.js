@@ -247,12 +247,130 @@
     });
     const form = settingsRoot.querySelector("#create-account-form");
     if (form) form.reset();
+    clearFieldErrors(form);
 
     const message = settingsRoot.querySelector("#create-account-message");
     if (message) {
       message.textContent = "";
       message.classList.add("d-none");
     }
+  }
+
+  // Email check: format, placeholder/fake domains, and common typos.
+  const FAKE_EMAIL_DOMAINS = [
+    "example.com", "example.org", "example.net",
+    "test.com", "domain.com", "sample.com", "yourdomain.com", "email.com"
+  ];
+  const EMAIL_TYPO_FIXES = {
+    "gmial.com": "gmail.com", "gmai.com": "gmail.com", "gamil.com": "gmail.com",
+    "gmail.con": "gmail.com", "gmail.co": "gmail.com",
+    "yaho.com": "yahoo.com", "yahoo.con": "yahoo.com",
+    "hotmial.com": "hotmail.com", "hotmail.con": "hotmail.com",
+    "outlok.com": "outlook.com", "outlook.con": "outlook.com"
+  };
+
+  function getEmailProblem(value) {
+    const email = value.trim().toLowerCase();
+    if (!email) return "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      return "Enter a valid email address.";
+    }
+    const [name, domain] = email.split("@");
+    if (FAKE_EMAIL_DOMAINS.includes(domain) || /\.(test|invalid|localhost|example)$/.test(domain)) {
+      return "This looks like a placeholder email. Please use a real email address (e.g. gmail.com).";
+    }
+    if (EMAIL_TYPO_FIXES[domain]) {
+      return `Did you mean ${name}@${EMAIL_TYPO_FIXES[domain]}?`;
+    }
+    return "";
+  }
+
+  // ---- Inline field errors: replaces the browser's white pop-up bubble ----
+  // Uses the existing .cs-error text style and .is-invalid red border (see all-pages.css).
+  function getFieldErrorBox(field, create) {
+    const anchor = field.parentElement?.querySelector("[data-password-toggle]") ? field.parentElement : field;
+    let box = anchor.nextElementSibling;
+    if (box && box.hasAttribute("data-field-error")) return box;
+    if (!create) return null;
+    box = document.createElement("div");
+    box.className = "cs-error";
+    box.setAttribute("data-field-error", "");
+    box.setAttribute("role", "alert");
+    anchor.insertAdjacentElement("afterend", box);
+    return box;
+  }
+
+  function fieldErrorText(field) {
+    const v = field.validity;
+    if (v.customError) return field.validationMessage;
+    if (v.valueMissing) return "This field is required.";
+    if (v.tooShort) return `Use at least ${field.minLength} characters.`;
+    if (v.typeMismatch && field.type === "email") return "Enter a valid email address.";
+    return field.validationMessage;
+  }
+
+  function validateField(field) {
+    const valid = field.checkValidity();
+    const box = getFieldErrorBox(field, !valid);
+    if (box) box.textContent = valid ? "" : fieldErrorText(field);
+    field.classList.toggle("is-invalid", !valid);
+    return valid;
+  }
+
+  function clearFieldErrors(form) {
+    if (!form) return;
+    form.querySelectorAll("[data-field-error]").forEach((box) => { box.textContent = ""; });
+    form.querySelectorAll(".is-invalid").forEach((field) => field.classList.remove("is-invalid"));
+  }
+
+  // Email rule + "passwords must match" as custom validity, so they flow through the same inline display.
+  function setCustomChecks(form) {
+    const email = form.elements.email;
+    if (email) email.setCustomValidity(getEmailProblem(email.value));
+    const password = form.elements.password;
+    const confirmPassword = form.elements.confirm_password;
+    if (password && confirmPassword) {
+      confirmPassword.setCustomValidity(
+        confirmPassword.value && password.value !== confirmPassword.value ? "Passwords must match." : ""
+      );
+    }
+  }
+
+  function validateFormInline(form) {
+    setCustomChecks(form);
+    let firstInvalid = null;
+    form.querySelectorAll("input, textarea").forEach((field) => {
+      if (!field.willValidate || field.type === "hidden") return;
+      if (!validateField(field) && !firstInvalid) firstInvalid = field;
+    });
+    if (firstInvalid) firstInvalid.focus();
+    return !firstInvalid;
+  }
+
+  function bindInlineValidation(form) {
+    if (!form || form.dataset.inlineValidation === "1") return;
+    form.dataset.inlineValidation = "1";
+    form.setAttribute("novalidate", "");
+
+    // Typing clears (or updates) a field's error as soon as it becomes valid.
+    form.addEventListener("input", (event) => {
+      const field = event.target;
+      if (!(field instanceof HTMLInputElement)) return;
+      setCustomChecks(form);
+      if (field.classList.contains("is-invalid")) validateField(field);
+      if (field.name === "password" && form.elements.confirm_password?.classList.contains("is-invalid")) {
+        validateField(form.elements.confirm_password);
+      }
+    });
+
+    // Leaving the email box checks it right away.
+    form.addEventListener("focusout", (event) => {
+      const field = event.target;
+      if (field === form.elements.email && field.value.trim()) {
+        setCustomChecks(form);
+        validateField(field);
+      }
+    });
   }
 
   function fillAccountDetails(settingsRoot, row) {
@@ -785,6 +903,8 @@
         password.value === confirmPassword.value ? "" : "Passwords must match."
       );
 
+      // Inline errors under each field (no browser pop-up). reportValidity stays as a fallback for the role dropdown.
+      if (!validateFormInline(form)) return;
       if (!form.reportValidity()) return;
 
       if (!settingsRoot.dataset.csrfToken) {
@@ -814,8 +934,11 @@
         }
 
         form.reset();
-        message.className = "alert alert-success";
-        showFormMessage(message, data.message || "Account created successfully.");
+        // Created: close the "Create New Account" window by itself and confirm with the shared toast
+        // (the inline message would vanish with the window). Closing from code skips the "Discard changes?" prompt.
+        const createModal = settingsRoot.querySelector("#addAccountModal");
+        if (createModal && window.bootstrap?.Modal) window.bootstrap.Modal.getOrCreateInstance(createModal).hide();
+        showPageNotice(settingsRoot, data.message || "Account created successfully.", "success");
         await loadSettingsUsers(settingsRoot);
       } catch (error) {
         console.error("Settings account creation failed:", error);
@@ -893,6 +1016,8 @@
         if (!addAccountModal.dataset.snapshot) clearPasswordFields(settingsRoot);
       });
     }
+
+    bindInlineValidation(settingsRoot.querySelector("#create-account-form"));
 
     settingsRoot.querySelectorAll("#addAccountModal [data-password-toggle]").forEach((button) => {
       button.setAttribute("aria-label", "Show password");
