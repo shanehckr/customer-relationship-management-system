@@ -568,7 +568,7 @@ function crmCustomerArrangementLabel(value) {
         var arr = $("iwArrangement");
         var pickup = isPickup();
         var delivery = isDelivery();
-        var onsite = isBuffet();
+        var onsite = isOnsiteCatering();
 
         if (!name.value.trim()) { setError("iwEventName", "iwErrEventName", "Enter a name for your event."); bad(name); }
         else setError("iwEventName", "iwErrEventName", "");
@@ -678,12 +678,12 @@ function crmCustomerArrangementLabel(value) {
     function isDelivery() {
       return /deliver/i.test($("iwArrangement").value);
     }
-    function isBuffet() {
+    function isOnsiteCatering() {
       return /buffet/i.test($("iwArrangement").value);
     }
 
     var paxField = null;
-    (function buildBuffetFields() {
+    (function buildOnsiteCateringFields() {
       var venue = $("iwVenue");
       var venueErr = $("iwErrVenue");
       var venueField = venue.closest(".iw-field") || venue.parentElement;
@@ -766,7 +766,7 @@ function crmCustomerArrangementLabel(value) {
       var selected = Boolean(arrangement);
       var pickup = isPickup();
       var delivery = isDelivery();
-      var onsite = isBuffet();
+      var onsite = isOnsiteCatering();
       var venue = $("iwVenue");
       var venueField = $("iwVenueField");
       var eventTime = $("iwEventTime");
@@ -849,7 +849,7 @@ function crmCustomerArrangementLabel(value) {
         instructions: $("iwDeliveryInstructions").value.trim()
       } : isPickup() ? {
         pickup_notes: $("iwPickupNotes").value.trim()
-      } : isBuffet() ? {
+      } : isOnsiteCatering() ? {
         barangay: $("iwOnsiteBarangay").value.trim(),
         city: $("iwOnsiteCity").value.trim(),
         province: $("iwOnsiteProvince").value.trim(),
@@ -866,7 +866,7 @@ function crmCustomerArrangementLabel(value) {
         arrangement: $("iwArrangement").value,
         arrangement_details: arrangementDetails,
         delivery_details: isDelivery() ? arrangementDetails : null,
-        pax: isBuffet() ? $("iwPax").value.trim() : "",
+        pax: isOnsiteCatering() ? $("iwPax").value.trim() : "",
         notes: els.notes.value.trim()
       };
     }
@@ -1681,7 +1681,7 @@ function crmCustomerArrangementLabel(value) {
       });
     }
 
-    /* Guests (pax) only applies to Buffet with Set-up, and only when a pax number exists. */
+    /* Guests (pax) only applies to On-site Catering, and only when a pax number exists. */
     function showsGuests(record) {
       var arr = asText(first(record, ["arrangement", "service_arrangement", "service_type"]));
       var n = parseInt(asText(first(record, ["expected_guests", "guest_count", "guests", "number_of_guests", "pax"])), 10);
@@ -4482,7 +4482,7 @@ function crmCustomerArrangementLabel(value) {
     text(page, prefix + "Status", booking ? (status || "Confirmed") : status);
     text(page, prefix + "Date", formatDate(date));
     if (booking) {
-      // Guests only for Buffet with Set-up that has a pax number; otherwise the whole row is removed.
+      // Guests only for On-site Catering that has a pax number; otherwise the whole row is removed.
       var guestsOn = /buffet|set-?up|on-?site/i.test(String(service || "")) && parseInt(guests, 10) > 0;
       text(page, prefix + "Guests", guestsOn ? guestCount(guests) : "");
       var gNode = page.querySelector("#" + prefix + "Guests");

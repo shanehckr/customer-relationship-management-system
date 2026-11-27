@@ -690,7 +690,7 @@ const DASH_PAGES = { inbox: "inbox", calendar: "admin-manager-sales-calendar.htm
 
 const DASH_BOOKING_COLORS = [["Confirmed", CRM_PALETTE.green], ["Preparing", CRM_PALETTE.blue], ["Ready for Pickup", CRM_PALETTE.teal], ["Out for Delivery", CRM_PALETTE.amber], ["On the Way", CRM_PALETTE.purple], ["Setting Up", CRM_PALETTE.teal], ["Completed", CRM_PALETTE.slate]];
 // The 3 booking services shown in the Admin "Bookings by Service" donut (bright colours so every dot is visible in dark and light mode)
-const DASH_SERVICE_COLORS = [["Customer Pickup", CRM_PALETTE.amber], ["Food Delivery", CRM_PALETTE.green], ["Buffet with Setup", CRM_PALETTE.blue]];
+const DASH_SERVICE_COLORS = [["Customer Pickup", CRM_PALETTE.amber], ["Food Delivery", CRM_PALETTE.green], ["On-site Catering", CRM_PALETTE.blue]];
 const DASH_BOOKING_CLASS = { confirmed: "stage-qualified", preparing: "stage-proposal", "ready for pickup": "stage-negotiation", "out for delivery": "stage-negotiation", "on the way": "stage-negotiation", "setting up": "stage-negotiation", completed: "stage-won", cancelled: "stage-loss" };
 const DASH_SUB = {
   admin: (n) => "Welcome back" + (n ? ", " + n.split(" ")[0] : "") + ". Here is what is happening across the business today.",
@@ -998,7 +998,7 @@ function crmInquiryDate(value) {
   });
 }
 
-// PAX / guest count only applies to Buffet with Setup (on-site). Pickup and Delivery have no PAX.
+// PAX / guest count only applies to On-site Catering. Pickup and Delivery have no PAX.
 // The saved value for the on-site service is still "Buffet with setup" in older records; everywhere it is SHOWN it reads "On-site Catering".
 function crmArrangementLabel(value) {
   const s = String(value == null ? "" : value).trim();
@@ -2053,7 +2053,7 @@ function crmBookingFlowKey(arrangement) {
   const a = String(arrangement || "").toLowerCase().replace(/[_-]/g, " ");
   if (/pick/.test(a)) return "pickup";
   if (/deliver/.test(a)) return "delivery";
-  return "onsite";   // Buffet with Setup / on_site_catering
+  return "onsite";   // On-site Catering / on_site_catering
 }
 function crmBookingFlow(arrangement) { return CRM_BOOKING_FLOWS[crmBookingFlowKey(arrangement)]; }
 /* "ready_for_pickup" / "READY FOR PICKUP" -> "Ready for Pickup"; legacy "In Progress" -> "Preparing". */
@@ -4464,7 +4464,7 @@ function crmInitCalendar(root) {
 
     set("#calDetailGuests", ev.guests ? ev.guests + " Guests" : "");
     const guestsRow = root.querySelector("#calDetailGuestsRow");
-    if (guestsRow) guestsRow.hidden = !ev.hasPax; /* PAX only exists on Buffet with Setup */
+    if (guestsRow) guestsRow.hidden = !ev.hasPax; /* PAX only exists on On-site Catering */
 
     const statusEl = root.querySelector("#calDetailStatus");
     if (statusEl) {
@@ -8537,13 +8537,13 @@ if (!window.__crmDropdownAutoScrollBound) {
    quotation-page.js - Sales Staff > Inquiries > View Details > Prepare Quotation
    Full-page 2-step editor: 1 Fill Out, 2 Review & Confirm (customer-facing preview).
 
-   Same quotation for Buffet with Setup, Customer Pickup and Delivery.
+   Same quotation for On-site Catering, Customer Pickup and Delivery.
    - The dishes the customer chose on the inquiry are already in the "Selected Food Items" table.
    - "Edit Items" turns on edit mode. PAX label is preserved as stored in the menu (e.g. "20-25 PAX").
      The Portion field is pill buttons (one per tier) + an editable text input — no locked dropdown.
      Staff can remove items and add ANY item from the official menu via an image card picker.
    - Additional fee, filled in automatically (record.service_fee_default): Customer Pickup none,
-     Delivery 450, Buffet with Setup by the customer's PAX bracket. Staff can edit it.
+     Delivery 450, On-site Catering by the customer's PAX bracket. Staff can edit it.
 
    Markup lives in sales-inquiries.html (#avQuoteView + <template id="qpTemplate">); this file only
    fills the [data-qp-*] hooks with textContent, so no data is ever written into markup.
@@ -8801,7 +8801,7 @@ if (!window.__crmDropdownAutoScrollBound) {
     syncFeeReset();
 
     /* ---- Additional fee section: plain text normally, typed boxes after "Edit" (same idea as Edit Items) ----
-       Event guests (PAX) and the service-fee bracket only exist on Buffet with Setup.
+       Event guests (PAX) and the service-fee bracket only exist on On-site Catering.
        Typing a guest count fills the bracket and the fee; typing a bracket (e.g. 51-75) fills the fee;
        the fee itself can always be typed over. Brackets mirror BUFFET_FEE_BRACKETS in inquiry-common.php. */
     (function () {
