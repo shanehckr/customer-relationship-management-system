@@ -1,4 +1,3 @@
-// ==========================================================================
 // DownloadExport.js  -  "Export Excel" and "Download PDF" for EVERY Reports page
 //
 // Load order in the page shell (Navbar.html):
@@ -37,7 +36,6 @@
 //
 // Needs from pages.js: crmReportData, crmSum, crmSlug, crmEscape, crmChartHTML,
 //                      crmHChartHTML, CRM_REPORT_COLORS
-// ==========================================================================
 
 const CRM_BUSINESS_NAME = "Espinosilla's Kainan";
 const CRM_LOGO = 'icons/espinosillas-logo.svg';   // logo path, relative to Navbar.html
@@ -118,9 +116,7 @@ const crmPeriodLabel = d => {
   return 'Period (' + (d.dateLabel || (page && page.dataset.dateLabel) || CRM_DEFAULT_DATE_LABEL) + ')';
 };
 
-// ==========================================================================
 // CSV (fallback when ExcelJS is missing) - all tabs, one after the other
-// ==========================================================================
 function crmExportReportCSV() {
   const list = crmAllReports(), first = list[0];
   const q = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
@@ -162,9 +158,7 @@ function crmExportReportCSV() {
   crmSaveBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), crmFileName(crmPackName(list), 'csv'));
 }
 
-// ==========================================================================
 // EXCEL
-// ==========================================================================
 function crmLogoPNG(src, size) {
   return new Promise(resolve => {
     const img = new Image();
@@ -269,12 +263,10 @@ function crmHChartPNG(items, w, h) {
   return c.toDataURL('image/png');
 }
 
-// ==========================================================================
 // ADMIN / MANAGER REPORT CHARTS  (line / donut / meter / stack / plain bars)
 // The page draws these with pages.js (CRM_RP_RENDERERS). Here they are drawn again for the files:
 //   Excel : canvas -> PNG pictures      PDF : vector SVG / HTML (see crmPdfChartHTML)
 // Same colours, same shapes, same numbers as the page.
-// ==========================================================================
 const crmChartBox = c => (c && c.id ? document.getElementById(c.id) : null);
 const crmChartStyle = c => { const b = crmChartBox(c); return (b && b.getAttribute('data-chart-style')) || ''; };
 const crmIsSd = c => { const b = crmChartBox(c); return !!(b && b.closest('.sd-dashboard')); };
@@ -716,7 +708,6 @@ async function crmExportReportExcel() {
   crmSaveBlob(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), crmFileName(crmPackName(list), 'xlsx'));
 }
 
-// ==========================================================================
 // PDF  (opens the browser print window: choose "Save as PDF")
 //
 // Layout:
@@ -727,7 +718,6 @@ async function crmExportReportExcel() {
 //     White space comes from the spacer row + the side padding of the cells.
 //   - Footer on every page:  "Generated <date, time> · by <user>"  and  "Page X of Y".
 //     These two use the @page bottom margin boxes (Chrome / Edge; Firefox ignores them).
-// ==========================================================================
 // FIT ON ONE PAGE: a tab whose content is only slightly taller than one A4 page (and whose table is small)
 // is scaled down a little so it fits on ONE page. Bigger tabs flow to the next page as before.
 // A small table is never split: it moves to the next page whole, so a lone "Total" row is never left behind.
@@ -892,13 +882,29 @@ function crmPdfSection(d, logo) {
       '<div class="brand"><img src="' + e(logo) + '" alt=""><h1>' + e(CRM_BUSINESS_NAME) + '</h1></div>' +
       '<h2>' + e(d.title) + '</h2>' +
       '<p class="period">' + e(crmPeriodLabel(d)) + ': <b>' + e(d.range) + '</b></p>' +
-      '<div class="stats">' + d.stats.map(s => '<div class="st"><span>' + e(s[0]) + '</span><b>' + e(s[1]) + '</b></div>').join('') + '</div>' +
+      crmPdfStatsHTML(d.stats) +
       crmPdfPerfHTML(d, false) +
       '<div class="charts">' + chartsHTML + '</div>' +
       crmPdfPerfHTML(d, true) +
       tableHTML +
     '</div></td></tr></tbody>' +
     '</table>';
+}
+
+// Summary cards: balanced rows (max 4 per row, e.g. 5 cards = 3 + 2) and every card stretches
+// so each row fills the full width (12-column grid, a card spans 12 / cards-in-its-row).
+function crmPdfStatsHTML(stats) {
+  const e = crmEscape, n = stats.length;
+  const rowCount = Math.max(1, Math.ceil(n / 4));
+  const spans = [];
+  let left = n;
+  for (let r = 0; r < rowCount; r++) {
+    const size = Math.ceil(left / (rowCount - r));
+    for (let k = 0; k < size; k++) spans.push(12 / size);
+    left -= size;
+  }
+  return '<div class="stats" style="grid-template-columns:repeat(12,1fr)">' + stats.map((s, i) =>
+    '<div class="st" style="grid-column:span ' + spans[i] + '"><span>' + e(s[0]) + '</span><b>' + e(s[1]) + '</b></div>').join('') + '</div>';
 }
 
 // Load the PDF layout from its CSS file and insert only the generated footer text.
@@ -914,7 +920,7 @@ async function crmDownloadReportPDF() {
   const list = crmAllReports(), e = crmEscape;
   const logo = new URL(CRM_LOGO, document.baseURI).href;
   const first = list[0];
-  // most summary cards on any tab (max 4 per row) so every tab uses the same card width
+  // each tab sizes its own summary cards (max 4 per row) so they always fill the full width
   const maxStats = Math.max(1, ...list.map(d => d.stats.length));
 
   // ONE footer line for the whole document (the time is the moment of the download)
@@ -937,9 +943,7 @@ async function crmDownloadReportPDF() {
   crmPrintHTML(html, title);
 }
 
-// ==========================================================================
 // BUTTONS (work on every Reports page; the id of the Excel button is still "exportCsvBtn")
-// ==========================================================================
 if (!window.__crmDownloadExportBound) {
   window.__crmDownloadExportBound = true;
   document.addEventListener('click', function (e) {

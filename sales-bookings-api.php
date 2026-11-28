@@ -1,21 +1,5 @@
 <?php
-/**
- * sales-bookings-api.php - Bookings list + "Request Full Payment" (pages.js crmInitManagerBookings contract).
- *   GET  ?action=list             -> { success, bookings: [ {booking_ref, customer_name, event_title, event_date, event_time, location,
- *                                     arrangement, expected_guests, quotation_amount, amount_paid, remaining_balance, payment_status,
- *                                     assigned_staff, booking_status,
- *                                     payment_request, can_request_payment, default_due_date} ] }
- *   POST ?action=request_payment  booking_id, due_date (optional, YYYY-MM-DD), note (optional)
- *                                 -> asks the customer to pay the FULL remaining balance: saves a payment request, posts a chat message
- *                                    with a "Pay Now" card in the customer's inbox, and shows it in My Bookings > Payment.
- *   POST ?action=cancel_request   request_id   -> cancels a Pending request (e.g. to send a new one)
- *   POST ?action=update_progress  booking_id, status -> Sales Staff moves the food / service progress one step forward (see bookingProgress() in bookings-schema.php)
- * Admin / Manager see every booking; Sales Staff see only the bookings of inquiries they handle.
- * Payment requests are for SALES STAFF only: Admin / Manager get no payment_request, can_request_payment = false,
- * and request_payment / cancel_request answer 403 for them (so the Payment Request card is not shown on their Bookings page).
- * Needs payments-schema.php in the same folder.
- */
-// Shared session setup (30-minute timeout). bookings-api.php defines this first, so guard it.
+
 if (!defined('SESSION_API')) define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 
@@ -25,6 +9,7 @@ require __DIR__ . '/payments-schema.php';
 if (!function_exists('quoteDeadlineCheck')) require_once __DIR__ . '/quotations-schema.php';   // quoteDeadlineCheck(): the same date + time rules as the quotation "valid until"
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 require_once __DIR__ . '/booking-feedback.php';       // the customer's rating / comments / photos for each booking
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 try { completeFinishedBookings($db, $DB_CRM ?? ''); }   // Confirmed + past date + fully paid -> Completed, and the "please rate us" message
 catch (Throwable $e) { error_log('sales-bookings-api: completeFinishedBookings failed: ' . $e->getMessage()); }
 
@@ -95,7 +80,8 @@ if ($action === 'list') {
             'booking_ref' => $ref,
             'booking_label' => (trim((string)($b['event_title'] ?? '')) !== '' ? trim((string)$b['event_title']) . ' (' . $ref . ')' : $ref),
             'inquiry_id' => $b['inquiry_id'] !== null ? (int)$b['inquiry_id'] : null,
-            'customer_name' => $b['customer_name'], 'event_title' => $b['event_title'],
+            'customer_name' => trim((string)($b['customer_name'] ?? '')) !== '' ? $b['customer_name'] : ($lead['customer_name'] ?? ''),   // fall back to the inquiry's customer when the booking row has no name
+            'event_title' => $b['event_title'],
             'customer_phone' => $lead['customer_phone'] ?? '', 'customer_email' => $lead['customer_email'] ?? '',
             'customer_photo' => $lead['customer_photo'] ?? '',
             'event_date' => $b['event_date'], 'event_time' => $b['event_time'],
@@ -182,6 +168,63 @@ if ($action === 'request_payment') {
         if ($db->inTransaction()) $db->rollBack();
         throw $e;
     }
+    $nfEvent = trim((string)($b['event_title'] ?? '')) !== '' ? $b['event_title'] : 'your event';
+    $nfRef = $b['booking_ref'] ?: 'BK-' . str_pad((string)$b['booking_id'], 4, '0', STR_PAD_LEFT);
+    if ($key === 'ready_pickup' && arrangementCanonical((string) ($b['arrangement'] ?? '')) === 'pickup') {
+        $recipient = EmailNotificationService::customerRecipient($db, (int) $b['customer_id'], (string) ($b['customer_email'] ?? ''), (string) ($b['customer_name'] ?? ''));
+        EmailNotificationService::queue(
+            $db,
+            (int) $b['customer_id'],
+            $recipient['email'],
+            $recipient['name'],
+            'booking_ready_for_pickup',
+            'Ready for pickup - ' . $nfRef,
+            [
+                'heading' => 'Ready for Pickup',
+                'greeting' => $recipient['name'],
+                'message' => 'Your Customer Pickup booking is ready.',
+                'rows' => [
+                    'Booking reference' => $nfRef,
+                    'Event name' => $nfEvent,
+                    'Pickup date' => !empty($b['event_date']) ? date('F j, Y', strtotime((string) $b['event_date'])) : '',
+                    'Pickup time' => !empty($b['event_time']) ? date('g:i A', strtotime((string) $b['event_time'])) : '',
+                    'Pickup address' => (string) ($b['location'] ?? ''),
+                ],
+                'button_text' => 'View My Bookings',
+                'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', $bookingId),
+            ],
+            'booking_ready_pickup:' . $bookingId,
+            'booking',
+            $bookingId
+        );
+    }
+    if ($isLast && ($b['booking_status'] ?? '') === 'Confirmed') {
+        $recipient = EmailNotificationService::customerRecipient($db, (int) $b['customer_id'], (string) ($b['customer_email'] ?? ''), (string) ($b['customer_name'] ?? ''));
+        EmailNotificationService::queue(
+            $db,
+            (int) $b['customer_id'],
+            $recipient['email'],
+            $recipient['name'],
+            'booking_completed',
+            'Booking completed - ' . $nfRef,
+            [
+                'heading' => 'Booking Completed',
+                'greeting' => $recipient['name'],
+                'message' => 'Thank you for choosing Espinosilla\'s Kainan. We invite you to share feedback about your experience.',
+                'rows' => [
+                    'Booking reference' => $nfRef,
+                    'Event name' => $nfEvent,
+                    'Event date' => !empty($b['event_date']) ? date('F j, Y', strtotime((string) $b['event_date'])) : '',
+                    'Status' => 'Completed',
+                ],
+                'button_text' => 'View My Bookings',
+                'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', $bookingId),
+            ],
+            'booking_completed:' . $bookingId,
+            'booking',
+            $bookingId
+        );
+    }
     // Bell: the customer is asked to pay (+ Admin / Manager see it).
     $nfEvent = trim((string)($b['event_title'] ?? '')) !== '' ? $b['event_title'] : 'the event';
     $nfRef = $b['booking_ref'] ?: 'BK-' . str_pad((string)$b['booking_id'], 4, '0', STR_PAD_LEFT);
@@ -247,8 +290,6 @@ if ($action === 'update_progress') {
         throw $e;
     }
     // Bell: tell the customer (the last step also completes the booking, which then asks for feedback).
-    $nfEvent = trim((string)($b['event_title'] ?? '')) !== '' ? $b['event_title'] : 'your event';
-    $nfRef = $b['booking_ref'] ?: 'BK-' . str_pad((string)$b['booking_id'], 4, '0', STR_PAD_LEFT);
     // Inbox: the same update as a chat message under the assigned staff's name (the last step is skipped: the "Rate Now" message follows it).
     if ($def && !$isLast && !empty($b['inquiry_id'])) {
         try {

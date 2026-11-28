@@ -1,27 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * customers-api.php  -  Customers page backend (Admin + Manager, READ ONLY)
- *
- * There is no separate customers table: a customer is a row in `users` whose role is "Customer"
- * (same as leads.customer_id, bookings.customer_id and cib_tickets.customer_id all point to users.user_id).
- * So nothing new is created in the database.
- *
- *   GET ?action=list[&q=...][&registered=all|today|7d|30d|month|year]
- *        -> { success, total, customers: [ { customer_id, customer_code, full_name, email, phone,
- *                                            registered_at, registered_label } ] }
- *   GET ?action=detail&id=3
- *        -> { success, customer: {...}, counts: { inquiries, bookings, payments, tickets },
- *             linked_records, can_delete:false, deletion_note,
- *             inquiries: [...], bookings: [...], payments: [...], tickets: [...] }
- *
- * Linked records (inquiries + bookings + payments + tickets) are what block account deletion,
- * so this API has NO delete action at all.
- *
- * Put it in the SAME folder as tickets-api.php / settings-api.php (it uses config/database.php -> $conn).
- */
-
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
@@ -106,7 +85,7 @@ function custShape(array $u): array
     ];
 }
 
-/* ------------------------- 1. SESSION + ROLE ------------------------- */
+/* Session and role validation. */
 $sessionUserId = (int) ($_SESSION["user_id"] ?? 0);
 if ($sessionUserId < 1) {
     custFail(401, "Please log in to continue.");

@@ -1,22 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * dashboard-api.php  -  ONE endpoint for the four dashboards (Admin, Manager, Sales Staff, Customer Service).
- *
- *   GET dashboard-api.php  ->  { success, role, user_name, metrics{}, ...role payload }
- *
- * Built on YOUR real tables (same ones tickets-api.php / inquiry-common.php / bookings-schema.php use):
- *   users + roles (role_name)      leads (the inquiries)         bookings           quotations
- *   payment_requests               cib_conversations/cib_messages (sales chat)
- *   cib_tickets / cib_ticket_messages / cib_ticket_activity (support tickets)
- * Same connection + session pattern as tickets-api.php: config/database.php gives $conn (mysqli), $_SESSION['user_id'].
- * The role is read from the database (users -> roles), never from the URL or the browser.
- *
- * Each block is wrapped in dash_safe(): if one query fails, only that block comes back empty and the reason is listed
- * in "warnings" while DASH_DEBUG is true. Set DASH_DEBUG to false when you go live.
- */
-
 const DASH_DEBUG = true;
 const DASH_LARGE_EVENT_PAX = 50;                 // "Large Events" threshold for the Manager
 const DASH_OPEN_TICKET = "('Open','In Progress','Pending')";
@@ -38,7 +22,7 @@ function dash_out(array $payload, int $code = 200): never
     exit;
 }
 
-/* ---------------------------------------------------------------- tiny query helpers (mysqli, ? placeholders) */
+/* Small query helpers. */
 function dash_rows(string $sql, array $params = []): array
 {
     global $conn;
@@ -100,20 +84,24 @@ function dash_booking_services(): array
 }
 function dash_today(): string { return "'" . date('Y-m-d') . "'"; }
 
-/* ---------------------------------------------------------------- shared SQL pieces */
+/* Shared SQL fragments. */
 const REF_LEAD    = "COALESCE(NULLIF(l.inquiry_ref,''), CONCAT('INQ-', LPAD(l.lead_id, 4, '0')))";
 const REF_BOOKING = "COALESCE(NULLIF(b.booking_ref,''), CONCAT('BK-', LPAD(b.booking_id, 4, '0')))";
 const BOOKING_LIVE = "b.booking_status NOT IN ('Completed','Cancelled')";
-// Active inquiry = not finished (Declined / Confirmed leave the pipeline)
-const LEAD_ACTIVE = "l.stage NOT IN ('Declined','Confirmed')";
+// General active status is In Progress: terminal statuses and booking-confirmed inquiries leave the pipeline.
+const LEAD_ACTIVE = "l.stage NOT IN ('Declined','Cancelled') AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = l.lead_id)";
 
 function dash_stage_counts(?int $staffId = null): array
 {
-    // New Inquiry | In Progress (every other active stage: discussion, quotation, negotiation...) | Declined
-    $sql = "SELECT CASE WHEN l.stage = 'New Inquiry' THEN 'New Inquiry' WHEN l.stage = 'Declined' THEN 'Declined' ELSE 'In Progress' END AS label,
-                   COUNT(*) AS n
-            FROM leads l WHERE l.stage <> 'Confirmed'" . ($staffId ? " AND l.assigned_staff_id = ?" : "") . " GROUP BY label";
-    return dash_counts($sql, $staffId ? [$staffId] : [], ['New Inquiry', 'In Progress', 'Declined']);
+    // One row per lead. New Inquiry is an internal submission/assignment stage and maps to general In Progress.
+    $sql = "SELECT CASE
+                    WHEN l.stage = 'Cancelled' THEN 'Cancelled'
+                    WHEN l.stage = 'Declined' THEN 'Declined'
+                    WHEN EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = l.lead_id) THEN 'Confirmed'
+                    ELSE 'In Progress'
+                END AS label, COUNT(*) AS n
+            FROM leads l" . ($staffId ? " WHERE l.assigned_staff_id = ?" : "") . " GROUP BY label";
+    return dash_counts($sql, $staffId ? [$staffId] : [], ['In Progress', 'Confirmed', 'Declined', 'Cancelled']);
 }
 function dash_upcoming_bookings(int $limit, ?int $staffId = null): array
 {
@@ -184,7 +172,7 @@ function dash_activity(int $limit, ?int $staffId = null, bool $withTickets = fal
     return array_slice($all, 0, $limit);
 }
 
-/* ---------------------------------------------------------------- role builders */
+/* Role-specific builders. */
 function build_admin(): array
 {
     $open = DASH_OPEN_TICKET;
@@ -195,7 +183,7 @@ function build_admin(): array
         'upcoming_bookings'=> dash_safe('upcoming_bookings',fn() => dash_upcoming_count(), 0),
         'open_tickets'     => dash_safe('open_tickets',     fn() => dash_val("SELECT COUNT(*) FROM cib_tickets WHERE status IN $open"), 0),
     ];
-    $unassigned = dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry'"), 0);
+    $unassigned = dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = l.lead_id)"), 0);
     $unpaid     = dash_safe('unpaid', fn() => dash_val("SELECT COUNT(*) FROM bookings b WHERE b.payment_status IN ('Unpaid','Partial','Partially Paid') AND " . BOOKING_LIVE), 0);
 
     return [
@@ -219,7 +207,7 @@ function build_manager(): array
 {
     $m = [
         'active_inquiries'     => dash_safe('active_inquiries', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE " . LEAD_ACTIVE), 0),
-        'unassigned_inquiries' => dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry'"), 0),
+        'unassigned_inquiries' => dash_safe('unassigned', fn() => dash_val("SELECT COUNT(*) FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage = 'New Inquiry' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = l.lead_id)"), 0),
         'pending_quotations'   => dash_safe('pending_quotes', fn() => dash_pending_quotes(), 0),
         'upcoming_bookings'    => dash_safe('upcoming_bookings', fn() => dash_upcoming_count(), 0),
     ];
@@ -330,7 +318,7 @@ function build_cs(): array
     ];
 }
 
-/* ---------------------------------------------------------------- request */
+/* Request handling. */
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
     header('Allow: GET');
     dash_out(['success' => false, 'message' => 'Method not allowed.'], 405);

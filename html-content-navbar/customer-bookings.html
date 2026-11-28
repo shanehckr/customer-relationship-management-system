@@ -3,7 +3,7 @@
   <header class="cb-page-header">
     <div class="cb-heading-copy">
       <h2>My Bookings</h2>
-      <p class="cb-page-subtitle">Manage your confirmed catering events, monitor preparation progress, and review payment details.</p>
+  
     </div>
   </header>
 
@@ -36,7 +36,7 @@
 
     <main class="cb-main" id="cbMain">
       <button type="button" class="cb-back" id="cbBack" aria-label="Back to main menu">
-        <i class="bi bi-arrow-left" aria-hidden="true"></i> Back to main menu
+        <i class="bi bi-arrow-left" aria-hidden="true"></i>Back to main menu
       </button>
 
       <header class="cb-banner">
@@ -173,23 +173,28 @@
             <output id="cbCommentsCount" aria-live="polite">0 / 1,000</output>
           </div>
           <div class="cb-image-upload-field">
-            <label class="cb-comments-label" for="cbFeedbackImages">Photos <span>(optional)</span></label>
-            <p class="cb-help-text" id="cbFeedbackImagesHelp">Add up to 4 JPG, PNG, or WebP photos. Maximum 25 MB per photo.</p>
+            <div class="cb-image-upload-heading">
+              <div class="cb-comments-label" id="cbFeedbackAttachmentsLabel">Attachments <span>(optional)</span></div>
+              <output class="cb-image-count" id="cbFeedbackImagesCount" aria-live="polite">0 of 4 files selected</output>
+            </div>
+            <p class="cb-help-text" id="cbFeedbackImagesHelp">Add up to 4 JPG, PNG, WebP, MP4, or WebM files. Images up to 25 MB; videos up to 50 MB.</p>
             <input class="cb-image-input" type="file" id="cbFeedbackImages" name="feedback_images[]"
-                   accept="image/jpeg,image/png,image/webp" multiple
-                   aria-describedby="cbFeedbackImagesHelp cbFeedbackImagesMessage" disabled>
+                   accept="image/jpeg,image/png,image/webp,video/mp4,video/webm" multiple
+                   aria-labelledby="cbFeedbackAttachmentsLabel" aria-describedby="cbFeedbackImagesHelp cbFeedbackImagesMessage cbFeedbackImagesCount"
+                   tabindex="-1" aria-hidden="true" disabled>
             <output class="cb-image-message" id="cbFeedbackImagesMessage" role="status" aria-live="polite"></output>
-            <div class="cb-image-preview-list" id="cbFeedbackImagePreviews" aria-label="Selected photo previews"></div>
+            <div class="cb-image-preview-list fb-photos" id="cbFeedbackImagePreviews" aria-label="Selected attachment previews"></div>
           </div>
           <div class="cb-feedback-footer">
             <p class="cb-feedback-message" id="cbFeedbackMessage" role="status" aria-live="polite">
               Select a booking before submitting feedback.
             </p>
+            <p class="cb-privacy-note"><i class="bi bi-lock" aria-hidden="true"></i>
+              Your feedback is shared with our team to help us improve future events.</p>
             <button type="submit" class="cb-primary-button" id="cbFeedbackSubmit" disabled>Submit Feedback</button>
           </div>
         </form>
-        <p class="cb-privacy-note"><i class="bi bi-lock" aria-hidden="true"></i>
-          Your feedback is shared with our team to help us improve future events.</p>
+        <section class="cb-card cb-feedback-card cb-feedback-readonly" id="cbFeedbackReadOnly" hidden aria-live="polite"></section>
       </section>
     </main>
   </div>

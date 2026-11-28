@@ -68,6 +68,12 @@
   let activeRequests = 0;
 
   window.fetch = async function (...args) {
+    if (args[1] && args[1].suppressGlobalLoader) {
+      var fetchOptions = Object.assign({}, args[1]);
+      delete fetchOptions.suppressGlobalLoader;
+      args[1] = fetchOptions;
+      return originalFetch(...args);
+    }
     activeRequests++;
     const timer = setTimeout(() => {
       if (activeRequests > 0) window.CRMLoader.show();

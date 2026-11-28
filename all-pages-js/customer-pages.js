@@ -1,3 +1,19 @@
+/* The saved value for the on-site service may still be "Buffet with setup" (older records); customers always see "On-site Catering". */
+function crmCustomerArrangementLabel(value) {
+  var s = String(value == null ? "" : value).trim();
+  var key = s.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  var labels = {
+    "on site catering": "On Site Catering",
+    "onsite catering": "On Site Catering",
+    "food delivery": "Delivery",
+    "delivery": "Delivery",
+    "customer pickup": "Pickup",
+    "pickup": "Pickup"
+  };
+  if (labels[key]) return labels[key];
+  return /^buffet(\s+(with\s+)?set-?\s?up|\s+service)?$/i.test(s) ? "On-site Catering" : s;
+}
+
 /* ---------- Session guard: when any API answers "session expired" (401), go to the login page ---------- */
 (function () {
   if (window.__crmSessionGuard || typeof window.fetch !== "function") return;
@@ -50,13 +66,37 @@
     return d.getFullYear() + "-" + m + "-" + day;
   }
 
-  /* Earliest event date a customer can pick: today + 3 days (keep MIN_EVENT_LEAD_DAYS equal to CUSTOMER_MIN_DAYS_BEFORE_EVENT in booking-deadlines.php). */
-  var MIN_EVENT_LEAD_DAYS = 3;
-  /* 9:00 PM submission cutoff (keep equal to CUSTOMER_SUBMIT_CUTOFF_HOUR in booking-deadlines.php): from 9:00 PM the 3-day date is closed,
-     because Sales Staff would have under 2 hours (they close at 11:00 PM) to prepare and send the quotation. The earliest date becomes 4 days away. */
-  var SUBMIT_CUTOFF_HOUR = 21;
-  function afterSubmitCutoff() { return new Date().getHours() >= SUBMIT_CUTOFF_HOUR; }
-  function minEventLeadDays() { return MIN_EVENT_LEAD_DAYS + (afterSubmitCutoff() ? 1 : 0); }
+  /* Event date policy is loaded from booking-deadlines.php before the inquiry wizard opens. */
+  var MIN_EVENT_LEAD_DAYS = null;
+  /* The server supplies the submission cutoff used by the date hint and validation. */
+  var SUBMIT_CUTOFF_HOUR = null;
+  var bookingRulesPromise = null;
+  function afterSubmitCutoff() { return SUBMIT_CUTOFF_HOUR !== null && new Date().getHours() >= SUBMIT_CUTOFF_HOUR; }
+  function minEventLeadDays() { return (MIN_EVENT_LEAD_DAYS || 0) + (afterSubmitCutoff() ? 1 : 0); }
+  function cutoffLabel() {
+    if (SUBMIT_CUTOFF_HOUR === null) return "the submission cutoff";
+    var hour = SUBMIT_CUTOFF_HOUR % 12 || 12;
+    return hour + ":00 " + (SUBMIT_CUTOFF_HOUR >= 12 ? "PM" : "AM");
+  }
+  function loadBookingRules() {
+    if (!bookingRulesPromise) {
+      bookingRulesPromise = fetch(IW_API + "?action=booking_rules", {
+        method: "GET", credentials: "same-origin", headers: { Accept: "application/json" }, cache: "no-store"
+      }).then(readJson).then(function (res) {
+        var rules = res.json && res.json.booking_rules;
+        if (!res.ok || !res.json || !res.json.success || !rules
+          || !Number.isFinite(Number(rules.minimum_lead_days)) || !Number.isFinite(Number(rules.submit_cutoff_hour))) {
+          throw new Error((res.json && res.json.message) || "Unable to load booking date rules.");
+        }
+        MIN_EVENT_LEAD_DAYS = Number(rules.minimum_lead_days);
+        SUBMIT_CUTOFF_HOUR = Number(rules.submit_cutoff_hour);
+      }).catch(function (error) {
+        bookingRulesPromise = null;
+        throw error;
+      });
+    }
+    return bookingRulesPromise;
+  }
   function minEventISO() {
     var d = new Date();
     d.setDate(d.getDate() + minEventLeadDays());
@@ -69,7 +109,7 @@
   var EVENT_TIME_MIN = "08:00", EVENT_TIME_MAX = "20:00";
   function earliestDateMessage() {
     return afterSubmitCutoff()
-      ? "Inquiries sent at or after 9:00 PM need an event date at least " + minEventLeadDays() + " days from today (earliest: " + longDate(minEventISO()) + ")."
+      ? "Inquiries sent at or after " + cutoffLabel() + " need an event date at least " + minEventLeadDays() + " days from today (earliest: " + longDate(minEventISO()) + ")."
       : "Please choose a date at least " + MIN_EVENT_LEAD_DAYS + " days from today (earliest: " + longDate(minEventISO()) + ").";
   }
   function time12(hhmm) {
@@ -148,7 +188,7 @@
       panels: Array.prototype.slice.call(modal.querySelectorAll("[data-iw-step]"))
     };
 
-    var state = { step: 1, dirty: false, busy: false, bs: null };
+    var state = { step: 1, dirty: false, busy: false, opening: false, bs: null };
     var pickupLocation = "";
     var pickupLocationLoaded = false;
     var pickupLocationLoading = false;
@@ -343,7 +383,7 @@
       var minus = el("button", "iw-qty-btn", "−");
       minus.type = "button"; minus.setAttribute("aria-label", "Decrease quantity for " + it.name);
       var qv = document.createElement("input");
-      qv.type = "number"; qv.className = "iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.value = "1";
+      qv.type = "number"; qv.className = "iw-qty-val"; qv.min = "1"; qv.max = "20"; qv.defaultValue = "1"; qv.value = "1";
       qv.name = "qty_" + it.id; qv.setAttribute("aria-label", "Quantity for " + it.name);
       var plus = el("button", "iw-qty-btn", "+");
       plus.type = "button"; plus.setAttribute("aria-label", "Increase quantity for " + it.name);
@@ -562,7 +602,7 @@
         var arr = $("iwArrangement");
         var pickup = isPickup();
         var delivery = isDelivery();
-        var onsite = isBuffet();
+        var onsite = isOnsiteCatering();
 
         if (!name.value.trim()) { setError("iwEventName", "iwErrEventName", "Enter a name for your event."); bad(name); }
         else setError("iwEventName", "iwErrEventName", "");
@@ -672,12 +712,12 @@
     function isDelivery() {
       return /deliver/i.test($("iwArrangement").value);
     }
-    function isBuffet() {
+    function isOnsiteCatering() {
       return /buffet/i.test($("iwArrangement").value);
     }
 
     var paxField = null;
-    (function buildBuffetFields() {
+    (function buildOnsiteCateringFields() {
       var venue = $("iwVenue");
       var venueErr = $("iwErrVenue");
       var venueField = venue.closest(".iw-field") || venue.parentElement;
@@ -731,7 +771,7 @@
       var d = $("iwEventDate");
       d.min = minEventISO();
       d.title = "Events can be booked at least " + minEventLeadDays() + " days ahead (earliest: " + longDate(minEventISO()) + ")"
-        + (afterSubmitCutoff() ? ". Inquiries sent at or after 9:00 PM start one day later." : ". After 9:00 PM the earliest date moves one day later.");
+        + (afterSubmitCutoff() ? ". Inquiries sent at or after " + cutoffLabel() + " start one day later." : ". After " + cutoffLabel() + " the earliest date moves one day later.");
       // visible guide under the date field: what the grey days mean and the earliest date you can pick
       var note = $("iwDateRule");
       if (!note) {
@@ -744,7 +784,7 @@
       }
       note.textContent = "Earliest available date: " + longDate(minEventISO()) + ". We need at least " + MIN_EVENT_LEAD_DAYS
         + " days to prepare your quotation, so earlier dates are greyed out in the calendar."
-        + (afterSubmitCutoff() ? " It is after 9:00 PM, so the earliest date moved one day later." : " After 9:00 PM the earliest date moves one day later.");
+        + (afterSubmitCutoff() ? " It is after " + cutoffLabel() + ", so the earliest date moved one day later." : " After " + cutoffLabel() + " the earliest date moves one day later.");
     }
     function syncTimeLabel() {
       $("iwEventTime").title = "Event time (between 8:00 AM and 8:00 PM)";
@@ -760,7 +800,7 @@
       var selected = Boolean(arrangement);
       var pickup = isPickup();
       var delivery = isDelivery();
-      var onsite = isBuffet();
+      var onsite = isOnsiteCatering();
       var venue = $("iwVenue");
       var venueField = $("iwVenueField");
       var eventTime = $("iwEventTime");
@@ -843,7 +883,7 @@
         instructions: $("iwDeliveryInstructions").value.trim()
       } : isPickup() ? {
         pickup_notes: $("iwPickupNotes").value.trim()
-      } : isBuffet() ? {
+      } : isOnsiteCatering() ? {
         barangay: $("iwOnsiteBarangay").value.trim(),
         city: $("iwOnsiteCity").value.trim(),
         province: $("iwOnsiteProvince").value.trim(),
@@ -860,7 +900,7 @@
         arrangement: $("iwArrangement").value,
         arrangement_details: arrangementDetails,
         delivery_details: isDelivery() ? arrangementDetails : null,
-        pax: isBuffet() ? $("iwPax").value.trim() : "",
+        pax: isOnsiteCatering() ? $("iwPax").value.trim() : "",
         notes: els.notes.value.trim()
       };
     }
@@ -874,42 +914,40 @@
       var arrangementTitle = $("iwRvArrangementTitle");
       var arrangementList = $("iwRvArrangementDetails");
       var details = d.arrangement_details || {};
+      var readOnlyAddress = crmFormatReadOnlyAddress({ event_location: d.venue, arrangement_details: details }, d.arrangement);
       var arrangementRows = [];
       if (isPickup()) {
         arrangementTitle.textContent = "Pickup Information";
         arrangementRows = [
-          ["Pickup Location", d.venue || "\u2014"],
+          ["Pickup Location", readOnlyAddress.full || "\u2014"],
           ["Pickup Time", d.event_time ? time12(d.event_time) : "\u2014"]
         ];
-        if (details.pickup_notes) arrangementRows.push(["Pickup Notes", details.pickup_notes]);
+        readOnlyAddress.extras.forEach(function (row) { arrangementRows.push(row); });
       } else if (isDelivery()) {
         arrangementTitle.textContent = "Delivery Information";
         arrangementRows = [
-          ["Delivery Address", d.venue || "\u2014"],
-          ["Barangay", details.barangay || "\u2014"],
-          ["City / Municipality", details.city || "\u2014"],
-          ["Province", details.province || "\u2014"]
+          ["Delivery Address", readOnlyAddress.full || "\u2014"]
         ];
-        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
         arrangementRows.push(["Delivery Time", d.event_time ? time12(d.event_time) : "\u2014"]);
-        if (details.instructions) arrangementRows.push(["Delivery Instructions", details.instructions]);
+        readOnlyAddress.extras.forEach(function (row) { arrangementRows.push(row); });
       } else {
         arrangementTitle.textContent = "Venue Information";
         arrangementRows = [
-          ["Event Venue / Address", d.venue || "\u2014"],
-          ["Barangay", details.barangay || "\u2014"],
-          ["City / Municipality", details.city || "\u2014"],
-          ["Province", details.province || "\u2014"]
+          ["Event Venue / Address", readOnlyAddress.full || "\u2014"]
         ];
-        if (details.landmark) arrangementRows.push(["Nearest Landmark", details.landmark]);
+        var landmark = readOnlyAddress.extras.find(function (row) { return row[0] === "Nearest Landmark"; });
+        var setupNotes = readOnlyAddress.extras.find(function (row) { return row[0] === "Setup Notes"; });
+        if (landmark) arrangementRows.push(landmark);
         arrangementRows.push(["Event Time", d.event_time ? time12(d.event_time) : "\u2014"]);
         arrangementRows.push(["Number of Guests (pax)", d.pax || "\u2014"]);
-        if (details.setup_notes) arrangementRows.push(["Setup Notes", details.setup_notes]);
+        if (setupNotes) arrangementRows.push(setupNotes);
       }
+      arrangementList.className = "iw-review-event-grid";
       arrangementList.textContent = "";
       arrangementRows.forEach(function (row) {
         var field = el("div", "iw-review-detail");
-        if (/address|location|instructions|notes/i.test(row[0])) field.classList.add("iw-review-detail-wide");
+        if (isPickup() && row[0] === "Pickup Location") field.classList.add("iw-review-pickup-location");
+        else if (/address|location|instructions|notes|landmark/i.test(row[0])) field.classList.add("iw-review-detail-wide");
         field.appendChild(el("dt", "", row[0]));
         field.appendChild(el("dd", "", row[1]));
         arrangementList.appendChild(field);
@@ -930,7 +968,13 @@
           var row = el("tr");
           row.appendChild(el("th", "iw-review-item", line.item.name || line.input.value));
           row.lastChild.scope = "row";
-          row.appendChild(el("td", "", line.quantity + " \u00D7 " + (line.serving || line.item.category || "Serving")));
+          var servingCell = el("td", "iw-review-serving");
+          var servingName = line.tier ? String(line.tier.value || "").trim() : String(line.serving || "").trim();
+          var servingPax = line.tier ? String(line.tier.getAttribute("data-tier-pax") || "").trim() : "";
+          if (servingPax && servingPax.toLowerCase() === servingName.toLowerCase()) servingPax = "";
+          servingCell.appendChild(el("span", "iw-review-serving-main", line.quantity + " \u00D7 " + (servingName || line.item.category || "Serving")));
+          if (servingPax) servingCell.appendChild(el("span", "iw-review-serving-pax", servingPax));
+          row.appendChild(servingCell);
           row.appendChild(el("td", "iw-review-money", pesoDisplay(line.unitPrice)));
           row.appendChild(el("td", "iw-review-money", pesoDisplay(line.subtotal)));
           menuRows.appendChild(row);
@@ -1053,12 +1097,19 @@
     }
 
     function open() {
-      var bs = bsModal();
-      if (!bs) return;
-      resetForm();
-      loadPickupLocation();
-      loadMenu(false);
-      bs.show();
+      if (state.opening) return;
+      state.opening = true;
+      loadBookingRules().then(function () {
+        var bs = bsModal();
+        if (!bs) return;
+        resetForm();
+        loadPickupLocation();
+        loadMenu(false);
+        bs.show();
+      }).catch(function (error) {
+        console.error("Inquiry booking rules failed:", error);
+        if (window.crmToast) window.crmToast(error.message || "Unable to load booking date rules. Please try again.", "error");
+      }).finally(function () { state.opening = false; });
     }
 
     function requestClose() {
@@ -1207,7 +1258,9 @@
     // keep the opened list inside the scrolling form body
     modal.addEventListener("shown.bs.dropdown", function (e) {
       var menu = e.target.parentNode && e.target.parentNode.querySelector(".dropdown-menu");
-      if (menu && menu.scrollIntoView) menu.scrollIntoView({ block: "nearest" });
+      if (!menu) return;
+      var m = menu.getBoundingClientRect(), b = els.body.getBoundingClientRect();
+      if (m.bottom > b.bottom) els.body.scrollTop += (m.bottom - b.bottom) + 8;
     });
     form.addEventListener("submit", function (e) { e.preventDefault(); });
 
@@ -1227,7 +1280,15 @@
 
     els.notes.addEventListener("input", updateNotesCount);
 
-    $("iwArrangement").addEventListener("change", function () { syncArrangementFields(true); });
+    $("iwArrangement").addEventListener("change", function () {
+      syncArrangementFields(true);
+      var sec = [$("iwPickupSection"), $("iwDeliverySection"), $("iwOnsiteSection")]
+        .filter(function (s) { return s && !s.hidden; })[0];
+      if (sec) {
+        var top = sec.getBoundingClientRect().top - els.body.getBoundingClientRect().top;
+        els.body.scrollTop += top - 12;
+      }
+    });
     syncArrangementFields(false);
     (function wireEventDate() {
       var evDate = $("iwEventDate");
@@ -1369,10 +1430,20 @@
     tag.textContent = labels[phase];
     return tag;
   }
+  /* Event time in minutes ("11:15 AM", "11:15", "14:30:00"); no time = end of the day, so timed bookings come first. */
+  function bookingMinutes(r) {
+    var m = /^\s*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap]m)?\s*$/i.exec(listText(r, ["event_time", "time"]));
+    if (!m) return 1440;
+    var h = +m[1], min = +(m[2] || 0), ap = (m[3] || "").toLowerCase();
+    if (ap === "pm" && h < 12) h += 12;
+    if (ap === "am" && h === 12) h = 0;
+    return h > 23 || min > 59 ? 1440 : h * 60 + min;
+  }
   function sortBookings(rows) {
-    return rows.map(function (r, i) { return { r: r, i: i, k: bookingPhase(r), d: bookingDay(r) || "9999-99-99" }; }).sort(function (a, b) {
+    return rows.map(function (r, i) { return { r: r, i: i, k: bookingPhase(r), d: bookingDay(r) || "9999-99-99", t: bookingMinutes(r) }; }).sort(function (a, b) {
       if (a.k !== b.k) return a.k - b.k;
       if (a.d !== b.d) return a.k === 1 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // finished: most recent first; others: earliest first
+      if (a.t !== b.t) return a.k === 1 ? b.t - a.t : a.t - b.t;                          // same day: upcoming earliest time first, finished latest first
       return a.i - b.i;
     }).map(function (x) { return x.r; });
   }
@@ -1445,6 +1516,7 @@
     var status = page.querySelector("#cbBookingStatus");
     var stepper = page.querySelector("#cbStepper");
     var form = page.querySelector("#cbFeedbackForm");
+    var feedbackReadOnly = page.querySelector("#cbFeedbackReadOnly");
     var comments = page.querySelector("#cbComments");
     var commentsCount = page.querySelector("#cbCommentsCount");
     var bookingIdInput = page.querySelector("#cbFeedbackBookingId");
@@ -1454,14 +1526,16 @@
     var imageInput = page.querySelector("#cbFeedbackImages");
     var imagePreviews = page.querySelector("#cbFeedbackImagePreviews");
     var imageMessage = page.querySelector("#cbFeedbackImagesMessage");
+    var imageCount = page.querySelector("#cbFeedbackImagesCount");
     var submitButton = page.querySelector("#cbFeedbackSubmit");
     var feedbackMessage = page.querySelector("#cbFeedbackMessage");
     var records = [];
     var selectedImages = [];
     var imagePreviewUrls = [];
-    var MAX_FEEDBACK_IMAGES = 4;
+    var feedbackSubmitting = false;
+    var MAX_FEEDBACK_ATTACHMENTS = 4;
     var MAX_FEEDBACK_IMAGE_BYTES = 25 * 1024 * 1024;
-    var ALLOWED_FEEDBACK_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+    var MAX_FEEDBACK_VIDEO_BYTES = 50 * 1024 * 1024;
     if (!list || !listState) return;
     page.setAttribute("data-cb-ready", "1");
 
@@ -1510,27 +1584,87 @@
         imagePreviewUrls.push(url);
         var card = document.createElement("div");
         card.className = "cb-image-preview";
-        var image = document.createElement("img");
-        image.src = url;
-        image.alt = "Preview of " + file.name;
+        var ext = (file.name.split(".").pop() || "").toLowerCase();
+        var mime = file.type || ({ mp4: "video/mp4", webm: "video/webm" })[ext] || "";
+        if (mime === "video/mp4" || mime === "video/webm") {
+          var videoWrap = document.createElement("div");
+          videoWrap.className = "cb-image-preview-media cb-image-preview-video";
+          var video = document.createElement("video");
+          video.src = url;
+          video.controls = true;
+          video.muted = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          video.setAttribute("aria-label", "Preview of " + file.name);
+          var playIcon = document.createElement("i");
+          playIcon.className = "bi bi-play-circle-fill cb-image-preview-play";
+          playIcon.setAttribute("aria-hidden", "true");
+          video.addEventListener("play", function () { playIcon.hidden = true; });
+          video.addEventListener("pause", function () { playIcon.hidden = false; });
+          video.addEventListener("ended", function () { playIcon.hidden = false; });
+          videoWrap.append(video, playIcon);
+          card.appendChild(videoWrap);
+        } else {
+          var photoLink = document.createElement("a");
+          photoLink.className = "cb-image-preview-media";
+          photoLink.href = url;
+          photoLink.setAttribute("aria-label", "Enlarge " + file.name);
+          var image = document.createElement("img");
+          image.src = url;
+          image.alt = "Preview of " + file.name;
+          photoLink.appendChild(image);
+          card.appendChild(photoLink);
+        }
         var name = document.createElement("p");
         name.className = "cb-image-preview-name";
         name.textContent = file.name;
+        name.title = file.name;
+        var size = document.createElement("span");
+        size.className = "cb-image-preview-size";
+        size.textContent = formatFeedbackFileSize(file.size);
+        var details = document.createElement("div");
+        details.className = "cb-image-preview-details";
+        details.append(name, size);
         var remove = document.createElement("button");
         remove.type = "button";
         remove.className = "cb-image-remove";
+        remove.disabled = !imageInput || imageInput.disabled;
         remove.textContent = "×";
         remove.setAttribute("aria-label", "Remove " + file.name);
         remove.addEventListener("click", function () {
           selectedImages.splice(index, 1);
           renderImagePreviews();
-          showImageMessage(selectedImages.length ? selectedImages.length + " photo(s) selected." : "", selectedImages.length ? "success" : "");
+          showImageMessage("Attachment removed. " + selectedImages.length + " of 4 files selected.", "success");
         });
-        card.appendChild(image);
-        card.appendChild(name);
+        card.appendChild(details);
         card.appendChild(remove);
         imagePreviews.appendChild(card);
       });
+      if (selectedImages.length < MAX_FEEDBACK_ATTACHMENTS) {
+        var remaining = MAX_FEEDBACK_ATTACHMENTS - selectedImages.length;
+        var addTile = document.createElement("button");
+        addTile.type = "button";
+        addTile.className = "cb-image-add";
+        addTile.disabled = !imageInput || imageInput.disabled;
+        addTile.setAttribute("aria-label", "Add files. " + remaining + " attachment slots remaining.");
+        var plus = document.createElement("i");
+        plus.className = "bi bi-plus-lg";
+        plus.setAttribute("aria-hidden", "true");
+        var addLabel = document.createElement("span");
+        addLabel.textContent = "Add Files";
+        var remainingLabel = document.createElement("small");
+        remainingLabel.textContent = remaining + (remaining === 1 ? " slot remaining" : " slots remaining");
+        addTile.append(plus, addLabel, remainingLabel);
+        addTile.addEventListener("click", function () { if (imageInput && !imageInput.disabled) imageInput.click(); });
+        imagePreviews.appendChild(addTile);
+      }
+      if (imageCount) imageCount.textContent = selectedImages.length + " of " + MAX_FEEDBACK_ATTACHMENTS + " files selected";
+    }
+
+    function formatFeedbackFileSize(bytes) {
+      var size = Number(bytes) || 0;
+      if (size < 1024 * 1024) return Math.max(1, Math.round(size / 1024)) + " KB";
+      return (size / (1024 * 1024)).toFixed(size >= 10 * 1024 * 1024 ? 0 : 1) + " MB";
     }
 
     function clearFeedbackImages() {
@@ -1547,6 +1681,104 @@
         button.disabled = !enabled;
       });
       if (submitButton) submitButton.disabled = !enabled;
+      renderImagePreviews();
+    }
+
+    function setFeedbackReadOnly(feedback) {
+      if (!feedbackReadOnly || !form) return;
+      var rating = Math.max(0, Math.min(5, Math.round(Number(feedback && feedback.rating) || 0)));
+      if (!rating) {
+        feedbackReadOnly.hidden = true;
+        feedbackReadOnly.replaceChildren();
+        form.hidden = false;
+        return;
+      }
+      form.hidden = true;
+      feedbackReadOnly.hidden = false;
+      feedbackReadOnly.replaceChildren();
+      var heading = document.createElement("div");
+      heading.className = "cb-feedback-heading";
+      var indicator = document.createElement("span");
+      indicator.className = "cb-status cb-feedback-submitted-status";
+      indicator.textContent = "Submitted";
+      var title = document.createElement("h4");
+      title.textContent = "Thank you for your feedback!";
+      heading.append(indicator, title);
+      feedbackReadOnly.appendChild(heading);
+
+      var ratingLine = document.createElement("p");
+      ratingLine.className = "cb-feedback-readonly-rating";
+      var starText = document.createElement("span");
+      starText.className = "fb-stars";
+      starText.setAttribute("role", "img");
+      starText.setAttribute("aria-label", rating + " out of 5 stars");
+      starText.textContent = "★".repeat(rating) + "☆".repeat(5 - rating);
+      ratingLine.append(starText, document.createTextNode(" " + rating + " of 5"));
+      feedbackReadOnly.appendChild(ratingLine);
+
+      var commentsText = asText(feedback && feedback.comments).trim();
+      if (commentsText) {
+        var commentsLabel = document.createElement("strong");
+        commentsLabel.className = "cb-feedback-readonly-label";
+        commentsLabel.textContent = "Comments";
+        var commentsValue = document.createElement("p");
+        commentsValue.className = "cb-feedback-readonly-comments";
+        commentsValue.textContent = commentsText;
+        feedbackReadOnly.append(commentsLabel, commentsValue);
+      }
+
+      var attachments = Array.isArray(feedback && feedback.attachments) ? feedback.attachments : (Array.isArray(feedback && feedback.images) ? feedback.images : []);
+      attachments = attachments.filter(function (item) { return item && (item.url || item.file_path); });
+      if (attachments.length) {
+        var attachmentHeading = document.createElement("strong");
+        attachmentHeading.className = "cb-feedback-readonly-label";
+        attachmentHeading.textContent = "Attachments";
+        var attachmentList = document.createElement("div");
+        attachmentList.className = "cb-image-preview-list fb-photos cb-feedback-readonly-attachments";
+        attachments.forEach(function (attachment) {
+          var url = asText(attachment.url || attachment.file_path);
+          var name = asText(attachment.name || attachment.original_name) || "Feedback attachment";
+          var type = asText(attachment.media_type || attachment.mime_type).toLowerCase();
+          var isVideo = type.indexOf("video") >= 0 || /\.(mp4|webm)(?:$|\?)/i.test(url);
+          var card = document.createElement("div");
+          card.className = "cb-image-preview cb-feedback-attachment";
+          if (isVideo) {
+            var video = document.createElement("video");
+            video.src = url;
+            video.controls = true;
+            video.playsInline = true;
+            video.preload = "metadata";
+            video.setAttribute("aria-label", name);
+            card.appendChild(video);
+          } else {
+            var link = document.createElement("a");
+            link.href = url;
+            link.target = "_blank";
+            link.rel = "noopener";
+            var image = document.createElement("img");
+            image.src = url;
+            image.alt = name;
+            image.loading = "lazy";
+            link.appendChild(image);
+            card.appendChild(link);
+          }
+          var fileName = document.createElement("p");
+          fileName.className = "cb-image-preview-name";
+          fileName.textContent = name;
+          card.appendChild(fileName);
+          attachmentList.appendChild(card);
+        });
+        feedbackReadOnly.append(attachmentHeading, attachmentList);
+      }
+
+      var submitted = document.createElement("p");
+      submitted.className = "cb-feedback-readonly-submitted";
+      var when = feedback && (feedback.created_at || feedback.uploaded_at);
+      var date = when ? new Date(String(when).replace(" ", "T")) : null;
+      submitted.textContent = "Submitted " + (date && !Number.isNaN(date.getTime())
+        ? date.toLocaleString("en-PH", { dateStyle: "medium", timeStyle: "short" })
+        : "date unavailable");
+      feedbackReadOnly.appendChild(submitted);
     }
 
     /* The Feedback tab stays hidden until the booking is Completed (the rating opens after the event). */
@@ -1575,12 +1807,18 @@
     }
 
     function feedbackImageError(file) {
-      if (!ALLOWED_FEEDBACK_IMAGE_TYPES.includes(file.type)) {
-        return "Choose JPG, PNG, or WebP images only.";
-      }
-      if (file.size > MAX_FEEDBACK_IMAGE_BYTES) {
-        return file.name + " is larger than 25 MB.";
-      }
+      var ext = (file.name.split(".").pop() || "").toLowerCase();
+      var mime = file.type || ({ jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", mp4: "video/mp4", webm: "video/webm" })[ext] || "";
+      var isVideo = mime === "video/mp4" || mime === "video/webm";
+      if (file.size <= 0) return file.name + " is empty.";
+      if (!["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"].includes(mime)) return "Choose JPG, PNG, WebP, MP4, or WebM files only.";
+      var validExtension = mime === "image/jpeg" ? ["jpg", "jpeg"].includes(ext)
+        : mime === "image/png" ? ext === "png"
+          : mime === "image/webp" ? ext === "webp"
+            : mime === "video/mp4" ? ext === "mp4" : ext === "webm";
+      if (!validExtension) return file.name + " does not match its file type.";
+      if (!isVideo && file.size > MAX_FEEDBACK_IMAGE_BYTES) return file.name + " is larger than 25 MB.";
+      if (isVideo && file.size > MAX_FEEDBACK_VIDEO_BYTES) return file.name + " is larger than 50 MB.";
       return "";
     }
 
@@ -1649,7 +1887,7 @@
       });
     }
 
-    /* Guests (pax) only applies to Buffet with Set-up, and only when a pax number exists. */
+    /* Guests (pax) only applies to On-site Catering, and only when a pax number exists. */
     function showsGuests(record) {
       var arr = asText(first(record, ["arrangement", "service_arrangement", "service_type"]));
       var n = parseInt(asText(first(record, ["expected_guests", "guest_count", "guests", "number_of_guests", "pax"])), 10);
@@ -1690,11 +1928,13 @@
       var guestsOn = showsGuests(record);
       setText("cbGuests", guestsOn ? first(record, ["expected_guests", "guest_count", "guests", "number_of_guests", "pax"]) + " guests" : "");
       setRowHidden("cbGuests", "cbVenue", !guestsOn);
-      var arrangement = asText(first(record, ["arrangement", "service_arrangement"]));
+      var arrangement = crmCustomerArrangementLabel(asText(first(record, ["arrangement", "service_arrangement"])));
       setText("cbArrangement", arrangement);
       var venueLabel = page.querySelector("#cbVenueLabel");
       if (venueLabel) venueLabel.textContent = /pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue/Address");
-      setText("cbVenue", first(record, ["venue", "venue_name", "address"]));
+      /* Full address: the booking only sends the street in "venue"; barangay / city / province come in arrangement_details
+         (same data My Inquiries shows in its own rows), so join them like the staff booking view does. */
+      setText("cbVenue", crmFormatReadOnlyAddress(record, arrangement).full);
       setText("cbSchedule", schedule);
       setText("cbPackage", first(record, ["package_name", "package"]));
       setText("cbRequests", first(record, ["special_requests", "notes", "dietary_requirements"]));
@@ -1767,7 +2007,8 @@
       var total = amount(first(payment, ["total_amount", "booking_total", "total"]) ||
         first(record, ["total_amount", "booking_total", "quoted_total"]));
       var deposit = amount(first(payment, ["deposit_amount", "deposit"]) || first(record, ["deposit_amount"]));
-      if (!deposit && total) deposit = total * 0.2;
+      var quoteDepositRate = Number(record.quotation && record.quotation.deposit_rate);
+      if (!deposit && total && Number.isFinite(quoteDepositRate)) deposit = total * quoteDepositRate / 100;
       var paid = amount(first(payment, ["paid_amount", "amount_paid", "amount"]));
       if (!paid && verified) paid = deposit;
       var givenPercent = first(payment, ["percent_paid", "payment_percent"]);
@@ -1786,6 +2027,7 @@
       if (bar) bar.style.width = percent + "%";
       if (progress) progress.setAttribute("aria-valuenow", String(percent));
       renderPayRequest(record);
+      renderAwaitingBalance(record, { paid: paid, total: total, percent: percent, hasPendingRequest: hasPendingRequest, owesAfterEvent: owesAfterEvent });
 
       var historyCard = page.querySelector("#cbPaymentHistoryCard");
       var historyList = page.querySelector("#cbPaymentHistory");
@@ -1827,6 +2069,9 @@
         host.id = "cbPayRequest";
         anchor.insertAdjacentElement("afterend", host);
       }
+      /* Inside the Full Payment Status card the request goes LAST: percent -> bar -> paid / total -> request + Pay Now */
+      var payCard = host.closest(".cb-full-payment");
+      if (payCard && host.parentNode !== payCard) payCard.appendChild(host);
       host.replaceChildren();
       var req = record && record.payment_request;
       if (!req || req.status !== "Pending") { host.hidden = true; return; }
@@ -1847,12 +2092,46 @@
       if (req.pay_url) {
         var pay = document.createElement("button");
         pay.type = "button";
-        pay.className = "ci-btn-primary";
+        pay.className = "btn modal-btn-save cb-pay-now"; // shared green button (same look as Save / Send / View Details)
         pay.textContent = "Pay Now";
         pay.addEventListener("click", function () { window.location.href = req.pay_url; });
         banner.append(pay);
       }
       host.append(banner);
+    }
+
+    /* "Awaiting Balance Payment Request": deposit is paid, the sales staff has NOT sent the Request Full Payment yet.
+       A second card (same .cb-payment-banner + .cb-payment-icon classes) is placed right under the status banner (Partially Paid).
+       It disappears when a payment request is pending (the Pay Now banner takes over), when paid in full, or when nothing is paid yet. */
+    function renderAwaitingBalance(record, info) {
+      var old = page.querySelector("#cbAwaitBalance");
+      if (old) old.remove();
+      if (!record) return;
+      if (!info || !(info.paid > 0) || info.percent >= 100 || info.hasPendingRequest || info.owesAfterEvent) return;
+      if (/cancel|declin|reject/i.test(asText(first(record, ["status", "booking_status"])))) return;
+      var statusBanner = page.querySelector("#cbPaymentBannerTitle");
+      statusBanner = statusBanner && statusBanner.closest(".cb-payment-banner");
+      if (!statusBanner) return;
+      var card = document.createElement("div");
+      card.id = "cbAwaitBalance";
+      card.className = "cb-payment-banner cb-await-banner";
+      card.setAttribute("role", "status");
+      var icon = document.createElement("span");
+      icon.className = "cb-payment-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = '<i class="bi bi-info-circle"></i>';
+      var body = document.createElement("div");
+      body.className = "cb-await-body";
+      var title = document.createElement("strong");
+      title.textContent = "Awaiting Balance Payment Request";
+      var text = document.createElement("p");
+      text.textContent = "Your " + Math.round(info.percent) + "% deposit has been verified. Our catering team will send your remaining balance payment request and deadline once they are ready. Please wait for the payment instructions before proceeding.";
+      var hint = document.createElement("p");
+      hint.className = "cb-await-hint";
+      hint.textContent = "You\u2019ll be notified when the balance payment request becomes available.";
+      body.append(title, text, hint);
+      card.append(icon, body);
+      statusBanner.insertAdjacentElement("afterend", card);
     }
 
     /* Xendit sends the customer back here after a "Request Full Payment": ?pay=balance_success|balance_cancelled|balance_pending|balance_review|balance_error (&msg=...) */
@@ -1900,6 +2179,7 @@
         comments.value = "";
       }
       setFeedbackEnabled(false);
+      setFeedbackReadOnly(null);
       syncFeedbackTab(null);
       if (commentsCount) commentsCount.textContent = "0 / 1,000";
       updateRating(0);
@@ -1907,6 +2187,7 @@
     }
 
     function selectBooking(record, index, mobileDetail) {
+      if (feedbackSubmitting) return;
       // phones: "detail" shows the booking, "booking" keeps the list on screen
       page.setAttribute("data-cb-view", mobileDetail ? "detail" : "booking");
       listState.hidden = true;
@@ -1942,11 +2223,11 @@
       var alreadyRated = rating > 0;
       var isCompleted = Boolean(id) && isCompletedBooking(record);
       setFeedbackEnabled(isCompleted && !alreadyRated);
+      setFeedbackReadOnly(alreadyRated ? feedback : null);
       if (commentsCount) commentsCount.textContent = comments ? comments.value.length.toLocaleString("en-PH") + " / 1,000" : "0 / 1,000";
       updateRating(rating);
       if (alreadyRated && isCompleted) {
         showFeedbackMessage("Feedback already submitted.", "success");
-        if (submitButton) { submitButton.textContent = "Edit"; submitButton.disabled = false; }
       } else {
         showFeedbackMessage(id ? "" : "This booking does not include a booking_id yet.", "");
         if (submitButton) { submitButton.textContent = "Submit Feedback"; }
@@ -2010,7 +2291,7 @@
       var matched = false;
       if (preferredId) {
         var match = rows.findIndex(function (record) {
-          return asText(first(record, ["booking_id", "id"])) === String(preferredId);
+          return asText(first(record, ["booking_id", "id", "booking_ref", "reference"])) === String(preferredId);
         });
         if (match < 0) {   // the Home card had no booking id: fall back to the event name
           match = rows.findIndex(function (record) {
@@ -2020,6 +2301,10 @@
         if (match >= 0) { index = match; matched = true; }
       }
       var openFeedback = matched && wantFeedbackId !== "" && String(preferredId) === wantFeedbackId;
+      if (preferredId && !matched) {
+        if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("booking");
+        return;
+      }
       selectBooking(rows[index], index, openFeedback);
       var chosenBtn = list.querySelector(".cb-booking-button.is-active");
       if (matched && chosenBtn && chosenBtn.scrollIntoView) chosenBtn.scrollIntoView({ block: "nearest" });
@@ -2055,6 +2340,7 @@
     }
 
     list.addEventListener("click", function (event) {
+      if (feedbackSubmitting) return;
       var button = event.target.closest ? event.target.closest(".cb-booking-button") : null;
       if (!button) return;
       var index = Number(button.getAttribute("data-cb-index"));
@@ -2129,34 +2415,29 @@
         var incoming = Array.from(imageInput.files || []);
         imageInput.value = "";
         if (!incoming.length) return;
-        var combined = selectedImages.concat(incoming);
-        if (combined.length > MAX_FEEDBACK_IMAGES) {
-          showImageMessage("You can attach up to 4 photos.", "error");
-          return;
-        }
-        for (var i = 0; i < incoming.length; i++) {
-          var issue = feedbackImageError(incoming[i]);
-          if (issue) {
-            showImageMessage(issue, "error");
-            return;
-          }
-        }
-        selectedImages = combined;
+        var errors = [];
+        var seen = new Set(selectedImages.map(function (file) {
+          return [file.name.toLowerCase(), file.size, file.lastModified, file.type].join("|");
+        }));
+        incoming.forEach(function (file) {
+          var issue = feedbackImageError(file);
+          if (issue) { errors.push(issue); return; }
+          var key = [file.name.toLowerCase(), file.size, file.lastModified, file.type].join("|");
+          if (seen.has(key)) { errors.push(file.name + " is already selected."); return; }
+          if (selectedImages.length >= MAX_FEEDBACK_ATTACHMENTS) { errors.push("You can attach up to 4 files."); return; }
+          seen.add(key);
+          selectedImages.push(file);
+        });
         renderImagePreviews();
-        showImageMessage(selectedImages.length + " photo(s) selected.", "success");
+        if (errors.length) showImageMessage(errors.join(" "), "error");
+        else showImageMessage(selectedImages.length + " of 4 files selected.", "success");
       });
     }
 
     if (form) {
       form.addEventListener("submit", function (event) {
         event.preventDefault();
-        // If the button currently says "Edit", switch to edit mode instead of submitting.
-        if (submitButton && submitButton.textContent.trim() === "Edit") {
-          setFeedbackEnabled(true);
-          showFeedbackMessage("You can now update your feedback.", "");
-          submitButton.textContent = "Submit Feedback";
-          return;
-        }
+        if (feedbackSubmitting) return;
         var bookingId = bookingIdInput ? bookingIdInput.value.trim() : "";
         var rating = ratingInput ? Number(ratingInput.value) : 0;
         if (!bookingId) {
@@ -2167,8 +2448,6 @@
           showFeedbackMessage("Choose a star rating before submitting.", "error");
           return;
         }
-        if (submitButton) submitButton.disabled = true;
-        showFeedbackMessage("Submitting feedback...", "");
         var data = new FormData(form);
         data.set("booking_id", bookingId);
         data.set("rating", String(rating));
@@ -2176,6 +2455,10 @@
         selectedImages.forEach(function (file) {
           data.append("feedback_images[]", file, file.name);
         });
+        feedbackSubmitting = true;
+        setFeedbackEnabled(false);
+        if (submitButton) submitButton.textContent = "Submitting feedback...";
+        showFeedbackMessage("Submitting feedback...", "");
         fetch(API + "?action=submit_feedback", {
           method: "POST",
           credentials: "same-origin",
@@ -2184,19 +2467,25 @@
         })
           .then(parseResponse)
           .then(function (json) {
-            showFeedbackMessage("Feedback submitted.", "success");
+            var feedback = json.feedback || {};
+            records.forEach(function (record) {
+              if (asText(first(record, ["booking_id", "id"])) === bookingId) record.feedback = feedback;
+            });
             clearFeedbackImages();
             setFeedbackEnabled(false);
-            if (submitButton) { submitButton.textContent = "Edit"; submitButton.disabled = false; }
+            updateRating(feedback.rating || rating);
+            setFeedbackReadOnly(feedback);
+            if (window.crmToast) window.crmToast("Feedback Submitted Successfully", "success", { duration: 4500 });
           })
           .catch(function (error) {
             console.error("Feedback submission failed:", error);
             showFeedbackMessage(error.message || "Unable to submit feedback. Please try again.", "error");
           })
           .finally(function () {
-            // Only re-enable the button on error (success handler already sets "Edit" + enabled).
-            if (submitButton && submitButton.textContent.trim() !== "Edit") {
-              submitButton.disabled = !bookingIdInput || !bookingIdInput.value;
+            feedbackSubmitting = false;
+            if (submitButton && !form.hidden) {
+              setFeedbackEnabled(true);
+              submitButton.textContent = "Submit Feedback";
             }
           });
       });
@@ -2211,6 +2500,8 @@
       wantFeedbackId = sessionStorage.getItem("crmOpenFeedbackBooking") || "";
       sessionStorage.removeItem("crmOpenFeedbackBooking");
     } catch (error) { wantFeedbackId = ""; }
+    var wantBookingRef = window.crmPendingBookingRef || "";
+    window.crmPendingBookingRef = null;
     // Coming from Home "Payment Details": open the Payment tab.
     var wantTab = "";
     try {
@@ -2247,7 +2538,7 @@
       if (tabButton) tabButton.click();
       return true;
     };
-    load(wantFeedbackId || wantBookingId);
+    load(wantFeedbackId || wantBookingId || wantBookingRef);
   }
 
   function scan() {
@@ -2293,11 +2584,13 @@
        1 In Progress (incl. In Discussion, Quotation Preparation)
        2 Quotation Sent (incl. Negotiation)
        -- these three keep the server order (newest submitted first) --
-       3 other upcoming inquiries, earliest event first
+       3 other upcoming inquiries (Submitted, Quotation Accepted, ...), earliest event first
        4 date passed (most recent first)
-       5 declined / cancelled */
+       5 Converted to Booking, earliest event first
+       6 declined / cancelled */
   function inquiryGroup(r) {
-    if (inquiryPhase(r) === 2) return 5;                                   // declined / cancelled always last
+    if (inquiryPhase(r) === 2) return 6;                                   // declined / cancelled always last
+    if (r && r.booking) return 5;                                          // "Converted to Booking" comes after every active inquiry
     var s = listText(r, ["stage", "status", "inquiry_status"]).toLowerCase();
     if (/new inquiry/.test(s)) return 0;
     if (/in progress|in discussion|quotation prep/.test(s)) return 1;
@@ -2308,7 +2601,7 @@
     return rows.map(function (r, i) { return { r: r, i: i, k: inquiryGroup(r), d: inquiryDay(r) || "9999-99-99" }; }).sort(function (a, b) {
       if (a.k !== b.k) return a.k - b.k;
       if (a.k <= 2) return a.i - b.i;                                       // first three groups: server order
-      if (a.d !== b.d) return a.k === 4 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // date passed: most recent first; others: earliest first
+      if (a.d !== b.d) return a.k === 4 ? (a.d < b.d ? 1 : -1) : (a.d < b.d ? -1 : 1);   // date passed: most recent first; others: earliest first (converted + declined too)
       return a.i - b.i;
     }).map(function (x) { return x.r; });
   }
@@ -2503,10 +2796,10 @@
       }).filter(function (o) { return o.name; });
     }
 
-    function renderDishes(panel, record, hasPax) {
+    function renderDishes(panel, record, hasPax, letter) {
       var items = dishItems(record, hasPax);
       var tag = make("span", "av-d-tag", items.length + " Item" + (items.length === 1 ? "" : "s") + " Requested");
-      var card = avCard("B", "Food Orders", tag);
+      var card = avCard(letter || "B", "Food Orders", tag);
       if (!items.length) {
         card.appendChild(make("p", "av-d-menu-empty", "No dishes selected."));
         panel.appendChild(card);
@@ -2517,7 +2810,7 @@
         { key: "category", label: "Food Category", cls: "" },
         { key: "name", label: "Menu Item / Variety", cls: "av-d-item" },
         { key: "qty", label: "Quantity / Serving", cls: "av-d-qty" },
-        { key: "details", label: "Order Details", cls: "av-d-details" }
+        { key: "details", label: "Price", cls: "av-d-details" }
       ].filter(function (c) {
         return c.key === "name" || items.some(function (it) { return it[c.key]; });
       });
@@ -2525,7 +2818,7 @@
       var table = make("table", "av-d-table");
       var thead = document.createElement("thead");
       var hr = document.createElement("tr");
-      cols.forEach(function (c) { hr.appendChild(make("th", c.key === "qty" ? "av-d-qty" : "", c.label)); });
+      cols.forEach(function (c) { hr.appendChild(make("th", c.key === "qty" ? "av-d-qty" : (c.key === "details" ? "av-d-price" : ""), c.label)); });
       thead.appendChild(hr);
       table.appendChild(thead);
       var tbody = document.createElement("tbody");
@@ -2550,56 +2843,65 @@
       if (!detailsPanel) return;
       var detailsContent = page.querySelector("#ciDetailsContent") || detailsPanel;
       empty(detailsContent);
-      var arrangement = asText(firstValue(record, ["arrangement", "service_arrangement"]));
+      var arrangement = crmCustomerArrangementLabel(asText(firstValue(record, ["arrangement", "service_arrangement"])));
       var hasPax = /buffet|set-?up|on-?site/i.test(arrangement);
       if (/declin/i.test(asText(firstValue(record, ["status", "stage"])))) {
         var why = asText(record.decline_reason);
         detailsContent.appendChild(make("div", "ci-note ci-note-negative mb-3", "This inquiry was declined" + (why ? ": " + why : ".") + " You are welcome to send a new inquiry anytime."));
       }
 
-      // A. Event Information (same fields as the staff side)
-      var info = make("section", "ci-approved-card");
-      info.appendChild(make("h3", "ci-approved-title", "A. Event Information"));
-      [["Event Name", firstValue(record,["event_name","title"])], ["Number of Guests", hasPax ? firstValue(record,["pax","expected_guests"]) + " pax" : ""], ["Additional Notes", firstValue(record,["special_requests","notes","customer_notes"]) || "—"]].forEach(function(row) {
-        if (row[1] !== "") { info.appendChild(make("span","ci-approved-label",row[0])); info.appendChild(make("div","ci-approved-value",row[1])); }
-      });
-      detailsContent.appendChild(info);
-      var service = make("section", "ci-approved-card ci-service-card");
-      service.appendChild(make("h3", "ci-approved-title", "B. Service Arrangement"));
-      service.appendChild(make("span", "ci-approved-label", "Catering Arrangement"));
-      service.appendChild(make("div", "ci-approved-value", arrangement || "—"));
-      var arrangementDetails = record.arrangement_details || record.delivery_details;
-      if (typeof arrangementDetails === "string") { try { arrangementDetails = JSON.parse(arrangementDetails); } catch (_) { arrangementDetails = null; } }
-      if (!arrangementDetails || typeof arrangementDetails !== "object" || Array.isArray(arrangementDetails)) arrangementDetails = null;
-      var locationLabel = asText(record.event_location_label) || (/pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue / Address"));
-      service.appendChild(make("span", "ci-approved-label", locationLabel));
-      service.appendChild(make("div", "ci-approved-value", firstValue(record,["event_location","venue","address","location"]) || "—"));
-      if (arrangementDetails) {
-        var detailRows = /deliver/i.test(arrangement)
-          ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
-          : /pick-?up/i.test(arrangement)
-            ? [["pickup_notes", "Pickup Notes"]]
-            : hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
-        detailRows.forEach(function (entry) {
-          if (arrangementDetails[entry[0]]) {
-            service.appendChild(make("span", "ci-approved-label", entry[1]));
-            service.appendChild(make("div", "ci-approved-value", arrangementDetails[entry[0]]));
-          }
-        });
+      /* A. Event Information (same look as the staff "View Details": av-d-* classes) */
+      var info = avCard("A", "Event Information");
+      var grid = make("div", "av-d-grid av-d-grid-3");
+      grid.appendChild(avField("Event Name", firstValue(record, ["event_name", "title"]), "is-lg"));
+      grid.appendChild(avField("Event Date", fmtDay(firstValue(record, ["event_date", "date"]))));
+      grid.appendChild(avField("Catering Arrangement", arrangement));
+      if (record.event_time_display || record.event_time) {
+        grid.appendChild(avField(asText(record.event_time_label) || "Event Time", asText(record.event_time_display) || asText(record.event_time)));
       }
-      if (record.event_time_display || record.event_time) { service.appendChild(make("span", "ci-approved-label", asText(record.event_time_label) || "Event time")); service.appendChild(make("div", "ci-approved-value", asText(record.event_time_display) || asText(record.event_time))); }
-      detailsContent.appendChild(service);
-      var menu = make("section", "ci-approved-card ci-menu-card");
-      menu.appendChild(make("h3", "ci-approved-title", "C. Menu Selected"));
-      var dishes = dishItems(record, hasPax);
-      var table = make("div", "ci-approved-menu");
-      var heading = make("div", "ci-approved-menu-head");
-      ["Menu Item","Serving Size","Quantity"].forEach(function(x) { heading.appendChild(make("strong","",x)); });
-      table.appendChild(heading);
-      dishes.forEach(function(dish) { var row = make("div","ci-approved-menu-row"); row.appendChild(make("span","",dish.name)); row.appendChild(make("span","",dish.tier || dish.pax || "—")); row.appendChild(make("span","",dish.qty || "1")); table.appendChild(row); });
-      if (!dishes.length) table.appendChild(make("div","ci-approved-menu-row","No menu items selected."));
-      menu.appendChild(table);
-      detailsContent.appendChild(menu);
+      if (hasPax) {
+        var pax = asText(firstValue(record, ["pax", "expected_guests"]));
+        if (pax) grid.appendChild(avField("Number of Guests", pax + " pax"));
+      }
+      var pkg = asText(firstValue(record, ["package_name", "package"]));
+      if (pkg) { var pkgBox = avField("Package", pkg); pkgBox.className = "is-wide"; grid.appendChild(pkgBox); }
+      info.appendChild(grid);
+
+      var split = make("div", "av-d-split");
+      var notes = make("div");
+      notes.appendChild(make("span", "av-d-label", "Special Requests"));
+      notes.appendChild(make("div", "av-d-note", asText(firstValue(record, ["special_requests", "notes", "customer_notes"])) || "\u2014"));
+      split.appendChild(notes);
+      info.appendChild(split);
+      var pair = make("div", "ci-info-pair");   // Event Information + Delivery Address side by side (like My Bookings)
+      pair.appendChild(info);
+      detailsContent.appendChild(pair);
+
+      /* B. Delivery Address / Pickup Location / Event Location: its own card so the customer never mixes it up with the event details */
+      var locationLabel = asText(record.event_location_label) || (/pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Location"));
+      var readOnlyAddress = crmFormatReadOnlyAddress(record, arrangement);
+      var locationValue = readOnlyAddress.full;
+      var detailRows = readOnlyAddress.extras;
+      var hasLocation = asText(locationValue) || detailRows.length > 0;
+      var nextLetter = "B";
+      if (hasLocation) {
+        var place = avCard("B", locationLabel);
+        var placeGrid = make("div", "av-d-grid");
+        var addressBox = avField(/deliver/i.test(arrangement) ? "Street / Address" : "Location", locationValue);   // the card title already says "Delivery Address"
+        addressBox.className = "is-wide";
+        placeGrid.appendChild(addressBox);
+        detailRows.forEach(function (entry) {
+          var box = avField(entry[0], entry[1]);
+          if (/instructions|notes/.test(entry[0])) box.className = "is-wide";   // long text gets its own row
+          placeGrid.appendChild(box);
+        });
+        place.appendChild(placeGrid);
+        pair.appendChild(place);
+        nextLetter = "C";
+      }
+
+      /* Food Orders */
+      renderDishes(detailsContent, record, hasPax, nextLetter);
     }
 
     function peso(value) {
@@ -2828,7 +3130,7 @@
         }
         if (quotation.deposit_amount && !record.booking) {
           var dep = make("li", "");
-          dep.appendChild(make("span", "", "Deposit to reserve your date (" + (quotation.deposit_rate || 20) + "%)"));
+      dep.appendChild(make("span", "", "Deposit to reserve your date (" + quotation.deposit_rate + "%)"));
           dep.appendChild(make("strong", "", peso(quotation.deposit_amount)));
           lines.appendChild(dep);
           var bal = make("li", "");
@@ -2936,21 +3238,13 @@
         var booking = record.booking;
         var payment = make("section", "ci-payment-confirmed ci-box");
         payment.appendChild(make("h4", "", "Payment Summary"));
-        [["Total Amount", booking.total], ["Deposit Paid (20%)", booking.deposit_paid], ["Remaining Balance", booking.remaining_balance]].forEach(function (row) {
+        var bookingDepositRate = booking.total ? Math.round(Number(booking.deposit_required) / Number(booking.total) * 100) : 0;
+        [["Total Amount", booking.total], ["Deposit Paid (" + bookingDepositRate + "%)", booking.deposit_paid], ["Remaining Balance", booking.remaining_balance]].forEach(function (row) {
           var line = make("div", "ci-payment-line" + (row[0] === "Remaining Balance" ? " is-balance" : ""));
           line.appendChild(make("span", "", row[0])); line.appendChild(make("strong", "", peso(row[1]))); payment.appendChild(line);
         });
         quotePanel.appendChild(payment);
         quotePanel.appendChild(make("div", "ci-payment-verified", "✓  Deposit has been verified. Your booking is now confirmed."));
-        var viewBooking = make("button", "ci-btn-primary ci-view-booking", "View Booking Details →");
-        viewBooking.type = "button";
-        viewBooking.addEventListener("click", function () {
-          try { sessionStorage.setItem("crmOpenBookingId", String(booking.booking_id)); } catch (e) { /* continue to the bookings list */ }
-          var nav = document.querySelector('a[href*="customer-bookings"], [data-page="customer-bookings.html"]');
-          if (typeof window.loadPage === "function") window.loadPage("customer-bookings.html", nav || null);
-          else window.location.href = "index.php#bookings";
-        });
-        quotePanel.appendChild(viewBooking);
       } else if (status === "Accepted") {
         quotePanel.appendChild(make("div", "ci-note", "You accepted this quotation. Pay the " + peso(quotation.deposit_amount) + " deposit online (GCash or Maya) to confirm your booking."));
       } else if (status === "Declined") {
@@ -2958,6 +3252,41 @@
       } else if (expired) {
         quotePanel.appendChild(make("div", "ci-note", "This quotation has expired. Please message the catering team for a new one."));
       }
+    }
+
+    function openBooking(booking) {
+      try { sessionStorage.setItem("crmOpenBookingId", String(booking.booking_id)); } catch (e) { /* continue to the bookings list */ }
+      var nav = document.querySelector('a[href*="customer-bookings"], [data-page="customer-bookings.html"]');
+      if (typeof window.loadPage === "function") window.loadPage("customer-bookings.html", nav || null);
+      else window.location.href = "index.php#bookings";
+    }
+
+    /* Banner between the progress bar and the tabs, only when this inquiry already has a booking */
+    function renderBookingBanner(record) {
+      var old = page.querySelector("#ciBookingBanner");
+      if (old) old.remove();
+      var tabs = page.querySelector(".ci-tabs");
+      if (!record.booking || !record.booking.booking_id || !tabs || !tabs.parentNode) return;
+      var banner = make("div", "ci-callout ci-booking-banner");
+      banner.id = "ciBookingBanner";
+      banner.setAttribute("role", "status");
+      var icon = make("span", "ci-callout-icon");
+      var check = make("i", "bi bi-check-lg");
+      check.setAttribute("aria-hidden", "true");
+      icon.appendChild(check);
+      var copy = make("div", "");
+      copy.appendChild(make("h4", "", "This inquiry has been converted into a confirmed booking."));
+      copy.appendChild(make("p", "", "Your event is now a confirmed booking. You can view the booking details, payments, and updates."));
+      var go = make("button", "ci-btn-primary", "View Booking ");
+      go.type = "button";
+      var arrow = make("i", "bi bi-arrow-right");
+      arrow.setAttribute("aria-hidden", "true");
+      go.appendChild(arrow);
+      go.addEventListener("click", function () { openBooking(record.booking); });
+      banner.appendChild(icon);
+      banner.appendChild(copy);
+      banner.appendChild(go);
+      tabs.parentNode.insertBefore(banner, tabs);
     }
 
     function activateTab(name) {
@@ -2988,18 +3317,19 @@
         heroReference.textContent = inquiryRef ? "Inquiry reference · " + inquiryRef : "";
         heroReference.hidden = !inquiryRef;
       }
-      var displayStatus = record.booking ? "Converted to Booking" : (asText(firstValue(record, ["status", "inquiry_status", "stage"])) || "Submitted");
+      var displayStatus = asText(firstValue(record, ["inquiry_status", "status"])) || "In Progress";
       if (heroStatus) heroStatus.textContent = displayStatus;
       if (heroStatus) heroStatus.dataset.status = displayStatus;
       if (heroDescription) heroDescription.textContent = record.booking ? "This inquiry is linked to confirmed booking " + (record.booking.booking_ref || "") + ". Its details and quotation history remain available here." : (record.quotation && record.quotation.status === "Sent" ? "Your quotation is ready for review." : (record.quotation && record.quotation.status === "Accepted" ? "Your quotation has been accepted. Pay the deposit to confirm your booking." : "Your inquiry is currently " + displayStatus.toLowerCase() + ". We’ll prepare a quotation for you soon."));
       if (heroStatus && heroStatus.closest(".ci-hero")) heroStatus.closest(".ci-hero").classList.toggle("is-negative", /declin|cancel/i.test(heroStatus.textContent));   // red banner
       if (eventStrip) {
         empty(eventStrip);
-        [["bi-calendar-event","Event Date",fmtDay(firstValue(record,["event_date","date"]))], ["bi-clock","Pickup Time",asText(record.event_time_display)||asText(record.event_time)], ["bi-layers","Arrangement",asText(firstValue(record,["arrangement","service_arrangement"]))], ["bi-cake2","Event Type",asText(firstValue(record,["event_type","type"])) || "—"]].forEach(function (v) {
+        [["bi-calendar-event","Event Date",fmtDay(firstValue(record,["event_date","date"]))], ["bi-clock","Pickup Time",asText(record.event_time_display)||asText(record.event_time)], ["bi-layers","Arrangement",crmCustomerArrangementLabel(asText(firstValue(record,["arrangement","service_arrangement"])))], ["bi-cake2","Event Type",asText(firstValue(record,["event_type","type"])) || "—"]].forEach(function (v) {
           var cell=make("div","ci-event-summary-item"); cell.appendChild(make("i","bi "+v[0])); var copy=make("div",""); copy.appendChild(make("strong","",v[1])); copy.appendChild(make("span","",v[2]||"—")); cell.appendChild(copy); eventStrip.appendChild(cell);
         });
       }
       renderSteps(record);
+      renderBookingBanner(record);
       renderDetails(record);
       renderQuote(record);
       activateTab(record.booking ? "quote" : "details");
@@ -3048,6 +3378,11 @@
         inquiryCount.textContent = rows.length + (rows.length === 1 ? " inquiry" : " inquiries");
       }
       if (!rows.length) {
+        var pendingMissing = !!(window.crmPendingInquiryRef || window.crmPendingInquiryId);
+        window.crmPendingInquiryRef = null;
+        window.crmPendingInquiryId = null;
+        window.crmPendingInquiryTab = null;
+        if (pendingMissing && typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("inquiry");
         renderEmptyStructure();
         showState("0 inquiries yet. Your requests will appear here.", false, false);
         return;
@@ -3056,8 +3391,20 @@
       state.hidden = true;
       layout.hidden = false;
       page.setAttribute("data-ci-view", "list");
-      var pick = keepIndex >= 0 && rows[keepIndex] ? keepIndex : 0;
-      selectInquiry(rows[pick], pick, false);
+      var pendingInquiry = window.crmPendingInquiryRef || "";
+      var pendingId = window.crmPendingInquiryId || "";
+      var pendingAt = pendingInquiry || pendingId ? rows.findIndex(function (record) {
+        return (pendingId && String(firstValue(record, ["lead_id", "inquiry_id", "id"])) === String(pendingId)) ||
+          (pendingInquiry && String(firstValue(record, ["inquiry_ref", "reference", "inquiry_reference"])) === String(pendingInquiry));
+      }) : -1;
+      var hasPending = pendingInquiry || pendingId;
+      window.crmPendingInquiryRef = null;
+      window.crmPendingInquiryId = null;
+      var pick = pendingAt >= 0 ? pendingAt : (keepIndex >= 0 && rows[keepIndex] ? keepIndex : 0);
+      selectInquiry(rows[pick], pick, pendingAt >= 0);
+      if (pendingAt >= 0 && window.crmPendingInquiryTab === "quote") activateTab("quote");
+      window.crmPendingInquiryTab = null;
+      if (hasPending && pendingAt < 0 && typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("inquiry");
       if (keepTab) { activateTab(keepTab); keepTab = ""; }
       keepIndex = -1;
     }
@@ -3367,7 +3714,7 @@
         button.append(top);
         var sender = value(item, ["team_name", "staff_name", "sender_name"]);
         if (sender) button.append(make("span", "csi-item-sender", sender));
-        button.append(make("span", "csi-item-preview", value(item, ["last_message", "preview"], "")));
+        button.append(make("span", "csi-item-preview", (item.last_message_mine === true ? "You: " : "") + value(item, ["last_message", "preview"], "")));
         button.addEventListener("click", function () { openThreadView("cibMessagesPanel"); selectConversation(String(id)); });
         list.append(button);
       });
@@ -3398,7 +3745,7 @@
         meta.append(make("span", "stage-pill " + ticketStatusClass(ticketStatus), ticketStatus));
         if (Number(value(ticket, ["unread_count", "unread"], 0)) > 0) { var tdot = make("span", "csi-dot"); tdot.setAttribute("aria-label", "Unread"); meta.append(tdot); }
         button.append(meta);
-        var tPreview = value(ticket, ["last_message", "preview"], "");
+        var tPreview = (ticket.last_message_mine === true ? "You: " : "") + value(ticket, ["last_message", "preview"], "");
         if (tPreview) button.append(make("span", "csi-item-preview", tPreview));
         button.addEventListener("click", function () { openThreadView("cibConcernsPanel"); selectTicket(String(id)); });
         list.append(button);
@@ -3542,12 +3889,31 @@
       return card;
     }
 
-    function appendAttachments(container, attachments) {
+    function appendAttachments(container, attachments, includeSize) {
       if (!Array.isArray(attachments)) return;
       attachments.forEach(function (file) {
         var url = value(file, ["url", "href", "path"]);
         if (!url) return;
         var name = value(file, ["name", "filename", "original_name"], "Attachment");
+
+        var mediaType = String(value(file, ["media_type", "mime_type", "type", "mime"], "")).toLowerCase();
+        if (mediaType.indexOf("video/") === 0 || /\.(mp4|webm)(?:$|\?)/i.test(String(url))) {
+          var videoCard = make("div", "csi-image-card");
+          var video = document.createElement("video");
+          video.className = "csi-image";
+          video.src = url;
+          video.controls = true;
+          video.playsInline = true;
+          video.preload = "metadata";
+          video.setAttribute("aria-label", name);
+          var videoBar = make("div", "csi-image-bar");
+          videoBar.append(make("span", "csi-file-name", name));
+          var videoSize = fileSizeText(value(file, ["size"]));
+          if (includeSize && videoSize) videoBar.append(make("span", "csi-file-size", videoSize));
+          videoCard.append(video, videoBar);
+          container.append(videoCard);
+          return;
+        }
 
         if (!isImageFile(file, url)) {
           container.append(buildFileCard(file, url, name));
@@ -3572,6 +3938,8 @@
         open.append(img);
         var bar = make("div", "csi-image-bar");
         bar.append(make("span", "csi-file-name", name));
+        var imageSize = fileSizeText(value(file, ["size"]));
+        if (includeSize && imageSize) bar.append(make("span", "csi-file-size", imageSize));
         var link = make("a", "btn csi-outline-btn csi-download", "Download");
         link.href = url;
         link.target = "_blank";
@@ -3601,13 +3969,26 @@
       return list;
     }
 
-    function renderMessages(feed, messages) {
+    function renderMessages(feed, messages, ticketMessages) {
       feed.replaceChildren();
       if (!messages.length) {
         feed.append(make("p", "cib-state", "No messages in this conversation yet."));
         return;
       }
+      var lastDay = "";
       messages.forEach(function (message) {
+        /* day separator (Today / Yesterday / date) whenever the day changes, like a real chat */
+        var when = parseDate(value(message, ["created_at", "sent_at", "timestamp"]));
+        var validWhen = !Number.isNaN(when.getTime());
+        if (validWhen) {
+          var dayKey = when.toDateString();
+          if (dayKey !== lastDay) {
+            lastDay = dayKey;
+            var now = new Date(), yest = new Date(); yest.setDate(now.getDate() - 1);
+            feed.append(make("div", "cib-day-sep", dayKey === now.toDateString() ? "Today" : dayKey === yest.toDateString() ? "Yesterday" :
+              when.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })));
+          }
+        }
         var mine = message.is_mine === true || String(value(message, ["direction", "sender_type"], "")).toLowerCase() === "outgoing" || message.from_customer === true;
         var systemUpdate = message.is_system === true;
         var bubble = make("article", "cib-message" + (mine ? " is-mine" : "") + (systemUpdate ? " is-system" : ""));
@@ -3621,16 +4002,18 @@
           });
           bubble.append(textBox);
         }
-        appendAttachments(bubble, value(message, ["attachments", "files"], []));
+        var messageAttachments = value(message, ["attachments", "files"], []);
+        if (ticketMessages && Array.isArray(messageAttachments) && messageAttachments.length) bubble.append(make("div", "cib-ticket-attachment-label", "Attachments (" + messageAttachments.length + ")"));
+        appendAttachments(bubble, messageAttachments, ticketMessages === true);
         var quote = renderQuote(value(message, ["quotation", "quote", "quotation_summary"]));
         if (quote) bubble.append(quote);
         var payCard = cibPayCard(value(message, ["payment_request"]));
         if (payCard) bubble.append(payCard);
         var rateCard = cibFeedbackCard(value(message, ["feedback_request"]));
         if (rateCard) bubble.append(rateCard);
-        var who = systemUpdate ? (message.system_kind === "system" ? "System update" : "Payment update") : value(message, ["sender_name", "sender", "author_name"], mine ? "You" : "");
-        var sent = messageTime(value(message, ["created_at", "sent_at", "timestamp"]));
-        bubble.append(make("div", "cib-message-meta", [sent, who].filter(Boolean).join(" · ")));
+        var who = systemUpdate ? (message.system_kind === "system" ? "System update" : "Payment update") : (mine ? "" : value(message, ["sender_name", "sender", "author_name"], ""));
+        var sent = validWhen ? when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : messageTime(value(message, ["created_at", "sent_at", "timestamp"]));
+        bubble.append(make("div", "cib-message-meta", [who, sent].filter(Boolean).join(" · ")));
         feed.append(bubble);
       });
       /* The feed has a fixed height and scrolls: always show the newest message.
@@ -3645,6 +4028,7 @@
 
     async function loadConversations() {
       var stateNode = $("#cibConversationState");
+      var pendingTried = false;
       setState(stateNode, "Loading conversations…", true);
       try {
         var payload = await request("list_conversations");
@@ -3653,7 +4037,17 @@
         state.conversationsLoaded = true;
         state.conversationsLoadFailed = false;
         renderConversations();
-        if (!state.conversationId && state.conversations.length && !isPhone()) {
+        var pending = window.crmPendingCustomerConversationRef;
+        if (pending) {
+          pendingTried = true;
+          window.crmPendingCustomerConversationRef = null;
+          var match = state.conversations.find(function (record) {
+            return String(value(record, ["reference", "conversation_ref", "id", "conversation_id"])) === String(pending);
+          });
+          if (match) await selectConversation(String(value(match, ["conversation_id", "id"])));
+          else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("conversation");
+        }
+        if (!pendingTried && !state.conversationId && state.conversations.length && !isPhone()) {
           var firstId = value(state.conversations[0], ["conversation_id", "id"]);
           if (firstId) await selectConversation(String(firstId));
         }
@@ -3700,12 +4094,23 @@
 
     async function loadTickets() {
       var stateNode = $("#cibTicketState");
+      var pendingTried = false;
       setState(stateNode, "Loading support tickets…", true);
       try {
         var payload = await request("list_tickets");
         state.tickets = records(payload, ["tickets", "records"]);
         renderTickets();
-        if (!state.ticketId && state.tickets.length && !isPhone()) {
+        var pending = window.crmPendingCustomerTicketRef;
+        if (pending) {
+          pendingTried = true;
+          window.crmPendingCustomerTicketRef = null;
+          var match = state.tickets.find(function (ticket) {
+            return String(value(ticket, ["ticket_number", "reference", "ticket_id", "id"])) === String(pending);
+          });
+          if (match) await selectTicket(String(value(match, ["ticket_id", "id"])));
+          else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("ticket");
+        }
+        if (!pendingTried && !state.ticketId && state.tickets.length && !isPhone()) {
           var firstId = value(state.tickets[0], ["ticket_id", "id"]);
           if (firstId) await selectTicket(String(firstId));
         }
@@ -3738,7 +4143,7 @@
       feed.replaceChildren(make("p", "cib-state", "Loading ticket messages…"));
       try {
         var payload = await request("ticket_messages", null, { ticket_id: id });
-        renderMessages(feed, withTicketGreeting(records(payload, ["messages", "replies", "records"]), ticket));
+        renderMessages(feed, withTicketGreeting(records(payload, ["messages", "replies", "records"]), ticket), true);
         if (ticket && (Number(ticket.unread) > 0 || Number(ticket.unread_count) > 0)) { ticket.unread = 0; ticket.unread_count = 0; renderTickets(); }
       } catch (error) { feed.replaceChildren(make("p", "cib-state", error.message)); }
     }
@@ -3882,10 +4287,62 @@
     var discardPrompt = document.getElementById("confirmTicketCloseModal");
     var ticketSubject = document.getElementById("ticketSubject");
     var ticketDescription = document.getElementById("ticketDescription");
+    var ticketAttachmentInput = document.getElementById("cibTicketAttachments");
+    var ticketAttachmentPreviews = document.getElementById("cibTicketAttachmentPreviews");
+    var ticketAttachmentCount = document.getElementById("cibTicketAttachmentCount");
+    var ticketAttachmentMessage = document.getElementById("cibTicketAttachmentMessage");
+    var ticketFiles = [];
+    var ticketPreviewUrls = [];
+    var ticketSubmitting = false;
     var modalApi = modal && window.bootstrap && window.bootstrap.Modal ? window.bootstrap.Modal.getOrCreateInstance(modal) : null;
     var ticketSnapshot = "";
     var forceTicketClose = false;
     var discardFocusReturn = null;
+
+    function renderTicketAttachments() {
+      if (!ticketAttachmentPreviews) return;
+      ticketPreviewUrls.forEach(URL.revokeObjectURL);
+      ticketPreviewUrls = [];
+      ticketAttachmentPreviews.replaceChildren();
+      ticketFiles.forEach(function (file, index) {
+        var card = document.createElement("div"); card.className = "cb-image-preview cb-feedback-attachment";
+        var url = URL.createObjectURL(file); ticketPreviewUrls.push(url);
+        if (file.type === "video/mp4" || file.type === "video/webm") {
+          var video = document.createElement("video"); video.src = url; video.controls = true; video.playsInline = true; video.preload = "metadata"; video.setAttribute("aria-label", file.name); card.appendChild(video);
+        } else {
+          var link = document.createElement("a"); link.className = "cb-image-preview-media"; link.href = url; link.target = "_blank"; link.rel = "noopener";
+          var image = document.createElement("img"); image.src = url; image.alt = file.name; link.appendChild(image); card.appendChild(link);
+        }
+        var details = document.createElement("div"); details.className = "cb-image-preview-details";
+        var name = document.createElement("p"); name.className = "cb-image-preview-name"; name.textContent = file.name; name.title = file.name;
+        var size = document.createElement("span"); size.className = "cb-image-preview-size"; size.textContent = file.size < 1048576 ? Math.max(1, Math.round(file.size / 1024)) + " KB" : (file.size / 1048576).toFixed(file.size >= 10485760 ? 0 : 1) + " MB";
+        details.append(name, size);
+        var remove = document.createElement("button"); remove.type = "button"; remove.className = "cb-image-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", "Remove " + file.name);
+        remove.addEventListener("click", function () { ticketFiles.splice(index, 1); renderTicketAttachments(); });
+        card.append(details, remove); ticketAttachmentPreviews.appendChild(card);
+      });
+      if (ticketFiles.length < 4) {
+        var add = document.createElement("button"); add.type = "button"; add.className = "cb-image-add"; add.innerHTML = '<i class="bi bi-plus-lg" aria-hidden="true"></i><span>Add Files</span><small>' + (4 - ticketFiles.length) + ' slot' + (ticketFiles.length === 3 ? '' : 's') + ' remaining</small>';
+        add.addEventListener("click", function () { ticketAttachmentInput.click(); }); ticketAttachmentPreviews.appendChild(add);
+      }
+      if (ticketAttachmentCount) ticketAttachmentCount.textContent = ticketFiles.length + " of 4 files selected";
+    }
+    if (ticketAttachmentInput) ticketAttachmentInput.addEventListener("change", function () {
+      if (ticketAttachmentMessage) { ticketAttachmentMessage.textContent = ""; ticketAttachmentMessage.className = "cb-image-message"; }
+      var added = Array.from(ticketAttachmentInput.files || []);
+      if (ticketFiles.length + added.length > 4 && ticketAttachmentMessage) { ticketAttachmentMessage.textContent = "You can attach up to four files."; ticketAttachmentMessage.className = "cb-image-message is-error"; }
+      added.forEach(function (file) {
+        if (ticketFiles.length >= 4) return;
+        var ext = (file.name.split(".").pop() || "").toLowerCase(), mime = file.type.toLowerCase();
+        var image = ["image/jpeg", "image/png", "image/webp"].includes(mime) && ["jpg", "jpeg", "png", "webp"].includes(ext);
+        var video = (mime === "video/mp4" && ext === "mp4") || (mime === "video/webm" && ext === "webm");
+        if (!image && !video) { if (ticketAttachmentMessage) { ticketAttachmentMessage.textContent = "Only JPG, PNG, WebP, MP4, and WebM files are allowed."; ticketAttachmentMessage.className = "cb-image-message is-error"; } return; }
+        if (file.size > (video ? 50 : 25) * 1048576) { if (ticketAttachmentMessage) { ticketAttachmentMessage.textContent = (video ? "Videos" : "Images") + " must be " + (video ? "50" : "25") + " MB or smaller."; ticketAttachmentMessage.className = "cb-image-message is-error"; } return; }
+        ticketFiles.push(file);
+      });
+      ticketAttachmentInput.value = ""; renderTicketAttachments();
+    });
+    renderTicketAttachments();
 
     /* Subject dropdown: uses the ticket form's own dropdown styles in all-pages.css
        (cib-ticket-dropdown / cib-dropdown-toggle / cib-dropdown-menu / custom-dropdown-item), so it looks like the rest of the site.
@@ -3978,13 +4435,15 @@
     setSubjectChoice("");
 
     function ticketFormSnapshot() {
-      return [ticketSubject.value.trim(), ticketDescription.value.trim()].join("\u0000");
+      return [ticketSubject.value.trim(), ticketDescription.value.trim(), ticketFiles.map(function (f) { return [f.name, f.size, f.lastModified].join(":"); }).join("|")].join("\u0000");
     }
 
     function ticketHasChanges() { return ticketFormSnapshot() !== ticketSnapshot; }
 
     function clearTicketForm() {
       ticketForm.reset();
+      ticketFiles = [];
+      renderTicketAttachments();
       setState(document.getElementById("cibCreateTicketState"), "", false);
     }
 
@@ -4052,6 +4511,7 @@
 
     ticketForm.addEventListener("submit", async function (event) {
       event.preventDefault();
+      if (ticketSubmitting) return;
       var button = document.getElementById("cibSubmitTicket");
       var errorNode = document.getElementById("cibCreateTicketState");
       var subject = ticketSubject.value.trim();
@@ -4065,10 +4525,12 @@
         ticketForm.reportValidity();
         return;
       }
+      ticketSubmitting = true;
       button.disabled = true;
       setState(errorNode, "Creating ticket…", true);
       try {
         var formData = new FormData(ticketForm);
+        ticketFiles.forEach(function (file) { formData.append("attachments[]", file, file.name); });
         /* The backend can use the same details as the first chat message. */
         formData.set("initial_message", description);
         formData.set("message", description);
@@ -4102,7 +4564,7 @@
           renderTickets();
         }
       } catch (error) { showError(errorNode, error); }
-      finally { button.disabled = false; }
+      finally { ticketSubmitting = false; button.disabled = false; }
     });
 
     /* "Reopen this ticket?" question, so an accidental click does not reopen it.
@@ -4177,13 +4639,21 @@
   "use strict";
 
   var ARRANGEMENTS = {
-    "customer pickup": "Customer Pickup",
-    "pickup": "Customer Pickup",
+    "on_site_catering": "On Site Catering",
+    "on-site catering": "On Site Catering",
+    "onsite catering": "On Site Catering",
+    "customer_pickup": "Pickup",
+    "customer pickup": "Pickup",
+    "pickup": "Pickup",
+    "food_delivery": "Delivery",
     "delivery": "Delivery",
-    "buffet with setup": "Buffet set-up",
-    "buffet set-up": "Buffet set-up",
-    "buffet service": "Buffet set-up",
-    "buffet setup": "Buffet set-up"
+    "buffet with setup": "On-site Catering",
+    "buffet set-up": "On-site Catering",
+    "buffet service": "On-site Catering",
+    "buffet setup": "On-site Catering",
+    "on-site catering": "On-site Catering",
+    "onsite catering": "On-site Catering",
+    "on-site": "On-site Catering"
   };
 
   function firstValue(object, keys) {
@@ -4356,7 +4826,7 @@
     if (node) node.textContent = first ? greeting + ", " + first + "!" : "Welcome back!";
     var dateNode = page.querySelector("#homeTodayDate");
     var dateLabel = page.querySelector("#homeTodayDateLabel") || dateNode;
-    if (dateLabel) dateLabel.textContent = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date());
+    if (dateLabel) dateLabel.textContent = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date());
   }
 
   function renderRecord(page, record, kind) {
@@ -4373,7 +4843,7 @@
     text(page, prefix + "Status", booking ? (status || "Confirmed") : status);
     text(page, prefix + "Date", formatDate(date));
     if (booking) {
-      // Guests only for Buffet with Set-up that has a pax number; otherwise the whole row is removed.
+      // Guests only for On-site Catering that has a pax number; otherwise the whole row is removed.
       var guestsOn = /buffet|set-?up|on-?site/i.test(String(service || "")) && parseInt(guests, 10) > 0;
       text(page, prefix + "Guests", guestsOn ? guestCount(guests) : "");
       var gNode = page.querySelector("#" + prefix + "Guests");
@@ -4581,7 +5051,7 @@
           });
         }
       } else if (route === "new-inquiry") {
-        window.location.href = "html-content-navbar/customer-inquiries.html#inquiryWizardModal";
+        window.location.href = "index.php?crm_page=customer-inquiries.html#inquiryWizardModal";
       }
     });
     load();

@@ -8,6 +8,7 @@ mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
 define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
+require_once __DIR__ . '/includes/password-policy.php';
 
 header("Content-Type: application/json; charset=utf-8");
 header("Cache-Control: no-store");
@@ -59,6 +60,50 @@ function users_has_created_by(mysqli $conn): bool
     return $result instanceof mysqli_result && $result->num_rows > 0;
 }
 
+/** Whether a user has rows protected by a RESTRICT/NO ACTION foreign key. */
+function user_has_protected_records(mysqli $conn, int $userId): bool
+{
+    $references = $conn->query(
+        "SELECT k.TABLE_NAME, k.COLUMN_NAME
+         FROM information_schema.KEY_COLUMN_USAGE AS k
+         INNER JOIN information_schema.REFERENTIAL_CONSTRAINTS AS r
+           ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+          AND r.TABLE_NAME = k.TABLE_NAME
+          AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+         WHERE k.CONSTRAINT_SCHEMA = DATABASE()
+           AND k.REFERENCED_TABLE_NAME = 'users'
+           AND k.REFERENCED_COLUMN_NAME = 'user_id'
+           AND r.DELETE_RULE IN ('RESTRICT', 'NO ACTION')"
+    );
+
+    while ($reference = $references->fetch_assoc()) {
+        $table = '`' . str_replace('`', '``', $reference['TABLE_NAME']) . '`';
+        $column = '`' . str_replace('`', '``', $reference['COLUMN_NAME']) . '`';
+        $check = $conn->prepare("SELECT 1 FROM {$table} WHERE {$column} = ? LIMIT 1");
+        $check->bind_param('i', $userId);
+        $check->execute();
+        $found = $check->get_result()->num_rows > 0;
+        $check->close();
+        if ($found) return true;
+    }
+
+    return false;
+}
+
+function account_role_change_allowed(string $currentRole, string $requestedRole): bool
+{
+    $employeeRoles = ["Manager", "Sales Staff", "Customer Service Staff"];
+    if ($currentRole === "Customer") return $requestedRole === "Customer";
+    if ($requestedRole === "Customer") return false;
+    if ($currentRole === "Admin") return $requestedRole === "Admin" || in_array($requestedRole, $employeeRoles, true);
+    return in_array($currentRole, $employeeRoles, true) && in_array($requestedRole, $employeeRoles, true);
+}
+
+function manager_can_manage_employee_role(string $roleName): bool
+{
+    return in_array($roleName, ["Manager", "Sales Staff", "Customer Service Staff"], true);
+}
+
 if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
     try {
         require_once __DIR__ . "/config/database.php";
@@ -76,8 +121,10 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
                LEFT JOIN roles AS cr ON cr.role_id = cb.role_id"
             : "";
 
-        // A Manager never sees Admin accounts (Admin sees everyone).
-        $whereClause = $isAdminSession ? "" : "WHERE r.role_name <> 'Admin'";
+        // Managers work only with the employee roles allowed by the existing account-management policy.
+        $whereClause = $isAdminSession
+            ? ""
+            : "WHERE r.role_name IN ('Manager', 'Sales Staff', 'Customer Service Staff')";
 
         $result = $conn->query(
             "SELECT
@@ -98,6 +145,16 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
         );
 
         $users = [];
+        $activeAdminCount = 0;
+        if ($isAdminSession) {
+            $activeAdminResult = $conn->query(
+                "SELECT COUNT(*) AS active_admin_count
+                 FROM users AS u
+                 INNER JOIN roles AS r ON r.role_id = u.role_id
+                 WHERE r.role_name = 'Admin' AND u.account_status = 'Active'"
+            );
+            $activeAdminCount = (int) $activeAdminResult->fetch_assoc()["active_admin_count"];
+        }
         foreach ($result->fetch_all(MYSQLI_ASSOC) as $user) {
             // "Admin (Shane Admin)"; accounts with no creator show "System Root".
             if (!$hasCreatedBy) {
@@ -109,6 +166,12 @@ if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "list") {
             }
             // A Manager may not change Admin accounts.
             $user["can_status"] = $isAdminSession || $user["role_name"] !== "Admin";
+            $isLastActiveAdmin = $user["role_name"] === "Admin"
+                && $user["status"] === "Active"
+                && $activeAdminCount <= 1;
+            $user["can_delete"] = $isAdminSession
+                && !$isLastActiveAdmin
+                && !user_has_protected_records($conn, (int) $user["user_id"]);
             unset($user["created_by_name"], $user["created_by_role"]);
             $users[] = $user;
         }
@@ -206,10 +269,11 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
         ]);
     }
 
-    if (mb_strlen($password, "UTF-8") < 12 || strlen($password) > 72) {
+    $passwordError = passwordPolicyError($password);
+    if ($passwordError !== null) {
         respond(400, [
             "success" => false,
-            "message" => "Password must be at least 12 characters and no more than 72 bytes."
+            "message" => $passwordError
         ]);
     }
 
@@ -224,7 +288,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
         require_once __DIR__ . "/config/database.php";
 
         $roleQuery = $conn->prepare(
-            "SELECT role_id FROM roles WHERE role_name = ? LIMIT 1"
+            "SELECT role_id, role_name FROM roles WHERE role_name = ? LIMIT 1"
         );
         $roleQuery->bind_param("s", $roleName);
         $roleQuery->execute();
@@ -238,6 +302,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
             ]);
         }
 
+        // Use the role name stored in roles, not a caller-supplied casing variant.
+        $roleName = (string) $role["role_name"];
+
         if (!$isAdminSession && $roleName === "Admin") {
             respond(403, [
                 "success" => false,
@@ -250,6 +317,13 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "create") {
             respond(403, [
                 "success" => false,
                 "message" => "Customer accounts cannot be created here. Customers sign up on their own."
+            ]);
+        }
+
+        if (!$isAdminSession && !manager_can_manage_employee_role($roleName)) {
+            respond(403, [
+                "success" => false,
+                "message" => "Managers can create employee accounts only."
             ]);
         }
 
@@ -461,6 +535,16 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "edit") {
             ]);
         }
 
+        if (!account_role_change_allowed($account["role_name"], $role["role_name"])) {
+            $conn->rollback();
+            respond(403, [
+                "success" => false,
+                "message" => $account["role_name"] === "Customer"
+                    ? "Customer accounts must remain Customer. Create a separate employee account for employee access."
+                    : "Employee accounts cannot be changed to Customer or Admin through Edit Account."
+            ]);
+        }
+
         $duplicateQuery = $conn->prepare(
             "SELECT user_id FROM users WHERE email = ? AND user_id <> ? LIMIT 1"
         );
@@ -640,6 +724,14 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "status") {
             ]);
         }
 
+        if (!$isAdminSession && !manager_can_manage_employee_role((string) $account["role_name"])) {
+            $conn->rollback();
+            respond(403, [
+                "success" => false,
+                "message" => "Managers can change the status of employee accounts only."
+            ]);
+        }
+
         if ((int) $userId === (int) $_SESSION["user_id"] && $status === "Inactive") {
             $conn->rollback();
             respond(400, [
@@ -763,15 +855,6 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
             ]);
         }
 
-        // An account must be deactivated before it can be deleted.
-        if ($account["status"] === "Active") {
-            $conn->rollback();
-            respond(400, [
-                "success" => false,
-                "message" => "Deactivate this account first before deleting it."
-            ]);
-        }
-
         if ($account["role_name"] === "Admin" && $account["status"] === "Active") {
             $activeAdminQuery = $conn->prepare(
                 "SELECT COUNT(*) AS active_admin_count
@@ -790,6 +873,17 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
                     "message" => "The last active Admin cannot be deleted."
                 ]);
             }
+        }
+
+        if (user_has_protected_records($conn, (int) $userId)) {
+            $conn->rollback();
+            respond(409, [
+                "success" => false,
+                "code" => "protected_records",
+                "message" => $account["status"] === "Active"
+                    ? "This account has associated records that must be retained. You can deactivate it instead."
+                    : "This account has associated records that must be retained. It will remain deactivated."
+            ]);
         }
 
         $delete = $conn->prepare("DELETE FROM users WHERE user_id = ?");
@@ -815,7 +909,10 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && $action === "delete") {
         if ((int) $e->getCode() === 1451) {
             respond(409, [
                 "success" => false,
-                "message" => "This account has related records and cannot be deleted. Deactivate it instead."
+                "code" => "protected_records",
+                "message" => isset($account) && $account["status"] === "Active"
+                    ? "This account has associated records that must be retained. You can deactivate it instead."
+                    : "This account has associated records that must be retained. It will remain deactivated."
             ]);
         }
 

@@ -54,6 +54,7 @@ The base installation schema is `database/catering_crm.sql`. It includes the cur
 - **Customer:** inquiries, quotations, bookings, payments, messaging, support, and feedback.
 
 Access is role-based. Keep authorization checks in the PHP endpoints; hiding a page or control in the browser is not an authorization boundary.
+Authenticated HTML fragments are served through `page-content.php`, whose role allowlist must stay aligned with the sidebar. Direct access to files in `html-content-navbar/` is intentionally denied.
 
 ## Main workflow
 

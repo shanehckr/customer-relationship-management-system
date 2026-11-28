@@ -21,7 +21,7 @@
  *   New customers       = registered inside the period (users.created_at; without that column: date of their first inquiry)
  *   Returning clients   = registered before the period AND sent at least one inquiry inside it
  *   Customers by staff  = ALL customers, grouped by the Sales Staff of their most recent accepted inquiry (none = Unassigned)
- *   Inquiries submitted = leads created in the period.  Stages: New Inquiry | Declined | In Progress (every other stage)
+ *   Inquiries submitted = leads created in the period.  General statuses: In Progress | Confirmed | Declined | Cancelled
  *   Quotations sent     = inquiries whose quotation was sent in the period (a revised version counts once; Drafts never)
  *   Confirmed bookings  = bookings created in the period (bookings.created_at = the day the deposit confirmed it), not cancelled
  *   Quotation value     = total of those quotations      Booking value = quotation_amount of the confirmed bookings
@@ -156,11 +156,12 @@ function rpTrend(array $buckets, array $dates): array {
     return $out;
 }
 
-function rpInquiryStage($stage): string {
+function rpInquiryStage($stage, bool $hasBooking = false): string {
     $s = strtolower(trim((string)$stage));
-    if ($s === 'new inquiry' || $s === 'new') return 'new';
-    if ($s === 'declined') return 'declined';
-    return 'in_progress';
+    if ($s === 'cancelled' || $s === 'canceled') return 'Cancelled';
+    if ($s === 'declined') return 'Declined';
+    if ($hasBooking) return 'Confirmed';
+    return 'In Progress';
 }
 function rpArrangement($a): string {
     if (arrangementIsPickup($a)) return 'Customer Pickup';
@@ -223,7 +224,9 @@ $leads = $quoteRows = $bkRows = $tkRows = $fbRows = $fbReq = [];
 $salesStaff = $leadStaff = $firstLead = $mine = $custStaff = $custStaffAt = [];
 
 if ($showSales) {
-    $leads = $db->query("SELECT `$LEAD_PK` AS id, customer_id, stage, assigned_staff_id, assigned_staff_name, created_at, claimed_at FROM leads")->fetchAll();
+    $leads = $db->query("SELECT l.`$LEAD_PK` AS id, l.customer_id, l.stage, l.assigned_staff_id, l.assigned_staff_name, l.created_at, l.claimed_at,
+                                EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = l.`$LEAD_PK`) AS has_booking
+                         FROM leads l")->fetchAll();
     foreach ($leads as $l) $leadStaff[(int)$l['id']] = (int)$l['assigned_staff_id'];       // lead id => staff id (scopes quotations for a Sales Staff)
 
     foreach ($users as $u) {                                                                // every active Sales Staff, so staff with 0 customers still show
@@ -308,13 +311,13 @@ $compute = function (string $from, string $to) use ($showSales, $showTickets, $i
         $out['customer'] = $cust + ['trend' => rpTrend($buckets, $newDates), 'by_staff' => $byStaff];
 
         /* ---------------- inquiries ---------------- */
-        $inq = ['new' => 0, 'in_progress' => 0, 'declined' => 0];
+        $inq = ['In Progress' => 0, 'Confirmed' => 0, 'Declined' => 0, 'Cancelled' => 0];
         foreach ($leads as $l) {
             if (!rpIn($l['created_at'], $from, $to)) continue;
             if ($isSales && (int)$l['assigned_staff_id'] !== $uid) continue;
-            $inq[rpInquiryStage($l['stage'])]++;
+            $inq[rpInquiryStage($l['stage'], (bool)$l['has_booking'])]++;
         }
-        $inquiries = $inq['new'] + $inq['in_progress'] + $inq['declined'];
+        $inquiries = array_sum($inq);
 
         /* ---------------- quotations sent (one per inquiry: its latest version sent in the period) ---------------- */
         $quoted = [];
@@ -343,7 +346,7 @@ $compute = function (string $from, string $to) use ($showSales, $showTickets, $i
         }
         $out['sales'] = [
             'inquiries' => $inquiries, 'quotations' => count($quoted), 'confirmed_bookings' => $confirmed, 'verified_revenue' => round($paid, 2),
-            'stages' => [['label' => 'New Inquiry', 'count' => $inq['new']], ['label' => 'In Progress', 'count' => $inq['in_progress']], ['label' => 'Declined', 'count' => $inq['declined']]],
+            'stages' => array_map(static fn($label, $count) => ['label' => $label, 'count' => $count], array_keys($inq), array_values($inq)),
             'arrangement' => array_map(fn($k) => ['label' => $k, 'count' => $arr[$k]], array_keys($arr)),
             'finance' => ['quotation_value' => round(array_sum($quoted), 2), 'booking_value' => round($bookingValue, 2),
                           'verified_payments' => round($paid, 2), 'outstanding' => round($outstanding, 2)],
@@ -389,8 +392,8 @@ $compute = function (string $from, string $to) use ($showSales, $showTickets, $i
     }
 
     if ($showTickets) {
-        $tix = ['total' => 0, 'open' => 0, 'in_progress' => 0, 'resolved' => 0];
-        $statusCount = ['Open' => 0, 'In Progress' => 0, 'Resolved' => 0];
+        $tix = ['total' => 0, 'open' => 0, 'in_progress' => 0, 'pending' => 0, 'resolved' => 0];
+        $statusCount = ['Open' => 0, 'In Progress' => 0, 'Pending' => 0, 'Resolved' => 0];
         $prio = ['High' => 0, 'Medium' => 0, 'Low' => 0];
         foreach ($tkRows as $t) {
             if (!rpIn($t['created_at'], $from, $to)) continue;
@@ -399,6 +402,7 @@ $compute = function (string $from, string $to) use ($showSales, $showTickets, $i
             $statusCount[$status] = ($statusCount[$status] ?? 0) + 1;
             if ($status === 'Open') $tix['open']++;
             if ($status === 'In Progress') $tix['in_progress']++;
+            if ($status === 'Pending') $tix['pending']++;
             if ($status === 'Resolved') $tix['resolved']++;
             $p = ucfirst(strtolower(trim((string)$t['priority'])));
             if (!in_array($p, ['Urgent', 'High', 'Medium', 'Low'], true)) $p = 'Medium';
@@ -430,6 +434,6 @@ $response['previous'] = ['label' => $prevLabel, 'range' => ['from' => $pf->forma
     + (isset($prev['customer']) ? ['customer' => $keep($prev['customer'], ['total', 'new', 'returning'])] : [])
     + (isset($prev['sales'])    ? ['sales'    => $keep($prev['sales'], ['inquiries', 'quotations', 'confirmed_bookings', 'verified_revenue'])] : [])
     + (isset($prev['feedback']) ? ['feedback' => $keep($prev['feedback'], ['total', 'average', 'satisfied', 'low'])] : [])
-    + (isset($prev['ticket'])   ? ['ticket'   => $keep($prev['ticket'], ['total', 'open', 'in_progress', 'resolved'])] : []);
+    + (isset($prev['ticket'])   ? ['ticket'   => $keep($prev['ticket'], ['total', 'open', 'in_progress', 'pending', 'resolved'])] : []);
 
 out($response);

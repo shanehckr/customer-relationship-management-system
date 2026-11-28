@@ -167,6 +167,52 @@
     try { window.loadPage(page, link); } catch (err) { console.warn('Could not open', page, err); }
   }
 
+  window.crmNavigationUnavailable = function (kind) {
+    var label = ({ inquiry: 'inquiry', booking: 'booking', feedback: 'feedback', ticket: 'ticket', conversation: 'conversation' })[kind] || 'record';
+    if (typeof window.crmToast === 'function') window.crmToast('That ' + label + ' is unavailable or you do not have access to it.', 'error');
+  };
+
+  function prepareDeepLink(item) {
+    if (!item || !item.ref) return;
+    var ref = String(item.ref).trim();
+    var page = String(item.page || '').toLowerCase();
+    var title = String(item.title || '').toLowerCase();
+    var role = typeof window.crmNormalizeRole === 'function'
+      ? window.crmNormalizeRole(localStorage.getItem('userRole'))
+      : String(localStorage.getItem('userRole') || '').toLowerCase();
+    var isTicket = /^TCK-/i.test(ref) || /ticket/.test(page) || item.type === 'ticket';
+    var isBooking = /^BK-/i.test(ref) || /booking/.test(page);
+    var isInquiry = /^INQ-/i.test(ref) || /inquir/.test(page);
+
+    if (isTicket) {
+      if (page === 'inbox' || page === 'customer-inbox.html') {
+        if (role === 'customer') window.crmPendingCustomerTicketRef = ref;
+        else if (role === 'customer service') window.crmPendingInboxTicket = ref;
+        else window.crmPendingInboxConversation = ref;
+      } else window.crmPendingTicketRef = ref;
+      return;
+    }
+    if (isBooking) {
+      if (/feedback/.test(title)) window.crmPendingFeedbackBookingRef = ref;
+      else window.crmPendingBookingRef = ref;
+      if (role === 'customer' && /payment|deposit|balance|paid/.test(title)) {
+        try { sessionStorage.setItem('crmOpenBookingTab', '#tab-payment-details'); } catch (_) {}
+      }
+      return;
+    }
+    if (page === 'inbox' || page === 'customer-inbox.html') {
+      if (role === 'customer') window.crmPendingCustomerConversationRef = ref;
+      else if (role === 'manager' || role === 'admin') window.crmPendingInboxConversation = ref;
+      else window.crmPendingChatRef = ref;
+      return;
+    }
+    if (isInquiry) {
+      window.crmPendingInquiryRef = ref;
+      if (role === 'customer' && /quotation/.test(title)) window.crmPendingInquiryTab = 'quote';
+      return;
+    }
+  }
+
   function onItemClick(e) {
     var li = e.target.closest('.notif-item');
     if (!li) return;
@@ -174,8 +220,7 @@
     var item = items.filter(function (n) { return String(n.id) === String(id); })[0];
     markRead(id);
     close();
-    // A ticket notification opens that ticket on the Tickets page.
-    if (item && item.ref && item.type === 'ticket' && /ticket/i.test(item.page || '')) window.crmPendingTicketRef = item.ref;
+    prepareDeepLink(item);
     if (item) openPage(item.page);
   }
 

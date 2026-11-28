@@ -125,13 +125,13 @@ function deadlineExpired($date, $time = null): bool {
     return $at !== '' && date('Y-m-d H:i:s') > $at;
 }
 /** "Nov 18, 2026, 6:00 PM" (just the day when there is no time). */
-/** "today, Nov 19, 2026" / "tomorrow, Nov 20, 2026" / "Nov 21, 2026" (from the day after tomorrow on, just the date). */
+/** "Today, Nov 19, 2026" / "Tomorrow, Nov 20, 2026" / "Nov 21, 2026" (from the day after tomorrow on, just the date). */
 function deadlineDayLabel($date): string {
     $day = substr((string)$date, 0, 10);
     $text = quoteDay($date);
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $day)) return $text;
-    if ($day === date('Y-m-d')) return 'today, ' . $text;
-    if ($day === date('Y-m-d', strtotime('+1 day'))) return 'tomorrow, ' . $text;
+    if ($day === date('Y-m-d')) return 'Today, ' . $text;
+    if ($day === date('Y-m-d', strtotime('+1 day'))) return 'Tomorrow, ' . $text;
     return $text;
 }
 function deadlineLabel($date, $time = null): string {

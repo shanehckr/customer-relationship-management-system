@@ -32,9 +32,8 @@ function legal_date(array $doc): string
 
     <div class="top">
       <button type="button" class="back" id="backBtn" aria-label="Go back">
-        <svg class="back-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
-             stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>
-        <span>Back</span>
+        <svg class="back-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg><span>Back</span>
       </button>
       <span class="brand">Customer Relationship Management System</span>
     </div>

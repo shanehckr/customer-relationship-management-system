@@ -5,9 +5,11 @@ declare(strict_types=1);
  * Menu Management API.
  *
  *   GET  ?action=list    any signed-in user (Customer too: the inquiry form "Menu & Dishes" step reads this)
+ *   GET  ?action=archived Admin / Manager
  *   POST ?action=add     Admin / Manager   multipart: item_name, category, display_price, serving_specs, photo
  *   POST ?action=edit    Admin / Manager   multipart: menu_item_id + the same fields (photo is optional)
- *   POST ?action=delete  Admin / Manager   form: menu_item_id
+ *   POST ?action=delete  Admin / Manager   archive item; form: menu_item_id
+ *   POST ?action=restore Admin / Manager   restore archived item; form: menu_item_id
  *
  * Database structure is provisioned centrally from database/catering_crm.sql.
  *
@@ -358,6 +360,33 @@ try {
         ]);
     }
 
+    // ---------- ARCHIVED LIST (Admin / Manager only) ----------
+    if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "archived") {
+        if (!$canManage) {
+            respond(403, ["success" => false, "message" => "Only an Admin or Manager can view archived menu items."]);
+        }
+        $result = $conn->query(
+            "SELECT menu_item_id, item_name, category, display_price, serving_specs, photo_path, status
+             FROM menu_items
+             WHERE status = 'Archived' AND category IN ('Lechon', 'Bilao', 'Viands')
+             ORDER BY FIELD(category, 'Lechon', 'Bilao', 'Viands'), menu_item_id ASC"
+        );
+        $rows = $result->fetch_all(MYSQLI_ASSOC);
+        $tiersById = $tiersReady ? menu_load_tiers($conn, array_column($rows, "menu_item_id")) : [];
+        $items = array_map(
+            fn(array $row): array => menu_item_json($row, $tiersById[(int) $row["menu_item_id"]] ?? []),
+            $rows
+        );
+
+        respond(200, [
+            "success" => true,
+            "items" => $items,
+            "categories" => MENU_CATEGORIES,
+            "can_manage" => true,
+            "csrf_token" => $_SESSION["menu_csrf_token"]
+        ]);
+    }
+
     // ---------- ADD ----------
     if ($action === "add") {
         menu_require_manager($canManage);
@@ -371,12 +400,18 @@ try {
             respond(400, ["success" => false, "message" => "Choose a valid category."]);
         }
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
-        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
-        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
-        $tierPrices = array_column($tiers, "price");
-        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
-        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
-        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
+        // Every category can use portion tiers. Lechon and Viands need at least one;
+        // Bilao may use tiers too, or a single item price when it has no tiers.
+        if ($category !== "Bilao" && !$tiers) respond(400, ["success" => false, "message" => "Add at least one pricing tier."]);
+        if (!$tiers && $price === "") respond(400, ["success" => false, "message" => "Add a pricing tier or enter an item price."]);
+        if ($tiers) {
+            $tierPrices = array_column($tiers, "price");
+            $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+            $basePrice = null;
+        } else {
+            $basePrice = menu_base_price($price);
+            if ($basePrice === null) respond(400, ["success" => false, "message" => "Enter a valid item price."]);
+        }
         if ($tiers && !$tiersReady) {
             respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }
@@ -431,12 +466,18 @@ try {
         }
 
         $tiers = menu_read_tiers();          // validate BEFORE the photo is saved
-        if (($category === "Bilao" && $tiers) || ($category !== "Bilao" && !$tiers)) respond(400, ["success" => false, "message" => "Bilao items use one item price; Lechon and Viands use pricing tiers."]);
-        if ($category === "Bilao" && $price === "") respond(400, ["success" => false, "message" => "Bilao needs an item price."]);
-        $tierPrices = array_column($tiers, "price");
-        if ($category !== "Bilao") $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
-        $basePrice = $category === "Bilao" ? menu_base_price($price) : null;
-        if ($category === "Bilao" && $basePrice === null) respond(400, ["success" => false, "message" => "Bilao needs a valid item price."]);
+        // Every category can use portion tiers. Lechon and Viands need at least one;
+        // Bilao may use tiers too, or a single item price when it has no tiers.
+        if ($category !== "Bilao" && !$tiers) respond(400, ["success" => false, "message" => "Add at least one pricing tier."]);
+        if (!$tiers && $price === "") respond(400, ["success" => false, "message" => "Add a pricing tier or enter an item price."]);
+        if ($tiers) {
+            $tierPrices = array_column($tiers, "price");
+            $price = "₱" . number_format(min($tierPrices), 2) . (min($tierPrices) !== max($tierPrices) ? " – ₱" . number_format(max($tierPrices), 2) : "");
+            $basePrice = null;
+        } else {
+            $basePrice = menu_base_price($price);
+            if ($basePrice === null) respond(400, ["success" => false, "message" => "Enter a valid item price."]);
+        }
         if ($tiers && !$tiersReady) {
             respond(500, ["success" => false, "message" => "The menu tiers table is missing. Install database/catering_crm.sql and try again."]);
         }
@@ -478,6 +519,23 @@ try {
         $stmt->execute();
         if ($stmt->affected_rows < 1) respond(404, ["success" => false, "message" => "Active menu item not found."]);
         respond(200, ["success" => true, "message" => "Menu item archived."]);
+    }
+
+    // ---------- RESTORE (preserves the original row and historical references) ----------
+    if ($action === "restore") {
+        menu_require_manager($canManage);
+        $id = (int) ($_POST["menu_item_id"] ?? 0);
+        if ($id < 1) {
+            respond(400, ["success" => false, "message" => "Archived menu item not found."]);
+        }
+        $stmt = $conn->prepare(
+            "UPDATE menu_items SET status = 'Active', archived_at = NULL
+             WHERE menu_item_id = ? AND status = 'Archived'"
+        );
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        if ($stmt->affected_rows < 1) respond(404, ["success" => false, "message" => "Archived menu item not found."]);
+        respond(200, ["success" => true, "message" => "Menu item restored."]);
     }
 
     respond(400, ["success" => false, "message" => "Unknown action."]);

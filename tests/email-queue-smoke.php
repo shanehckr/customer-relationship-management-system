@@ -64,20 +64,44 @@ try {
     $assert($sent === 1 && $success['delivery_status'] === 'SENT' && (int) $success['attempt_count'] === 1, 'Successful dispatch did not log SENT.');
     $assert($success['sent_at'] !== null && $success['user_id'] === null, 'Sent timestamp or external-recipient logging failed.');
 
+    $cutoffId = $enqueue('phase1-smoke:cutoff:' . $suffix);
+    $ids[] = $cutoffId;
+    $afterCutoffId = $enqueue('phase1-smoke:after-cutoff:' . $suffix);
+    $ids[] = $afterCutoffId;
+    $cutoffSends = [];
+    $worker->processOne(null, static function (array $row) use (&$cutoffSends): void {
+        $cutoffSends[] = (int) $row['notification_id'];
+    }, $cutoffId);
+    $row->execute([$cutoffId]);
+    $cutoff = $row->fetch();
+    $row->execute([$afterCutoffId]);
+    $afterCutoff = $row->fetch();
+    $assert($cutoff['delivery_status'] === 'QUEUED' && (int) $cutoff['attempt_count'] === 0
+        && $afterCutoff['delivery_status'] === 'SENT' && $cutoffSends === [$afterCutoffId],
+        'Queue cutoff did not exclude old notifications and process only later eligible rows.');
+
     $retryId = $enqueue('phase1-smoke:retry:' . $suffix);
     $ids[] = $retryId;
     $firstAttempt = true;
-    $worker->processOne($retryId, static function () use (&$firstAttempt): void {
+    $retryDeliveries = 0;
+    $worker->processOne($retryId, static function () use (&$firstAttempt, &$retryDeliveries): void {
         if ($firstAttempt) {
             $firstAttempt = false;
             throw new RuntimeException('Simulated transient transport failure.');
         }
+        $retryDeliveries++;
     });
     $db->prepare("UPDATE notification_logs SET next_attempt_at = DATE_SUB(UTC_TIMESTAMP(), INTERVAL 1 SECOND) WHERE notification_id = ?")->execute([$retryId]);
-    $worker->processOne($retryId, static function (): void {});
+    $worker->processOne($retryId, static function () use (&$retryDeliveries): void {
+        $retryDeliveries++;
+    });
     $row->execute([$retryId]);
     $retried = $row->fetch();
-    $assert($retried['delivery_status'] === 'SENT' && (int) $retried['attempt_count'] === 2, 'Retry did not transition back to SENT.');
+    $assert($retried['delivery_status'] === 'SENT' && (int) $retried['attempt_count'] === 2
+        && $retryDeliveries === 1, 'Retry did not transition to SENT exactly once.');
+    $assert(!$worker->processOne($retryId, static function () use (&$retryDeliveries): void {
+        $retryDeliveries++;
+    }) && $retryDeliveries === 1, 'A sent notification was delivered again.');
 
     $terminalId = $enqueue('phase1-smoke:terminal:' . $suffix);
     $ids[] = $terminalId;

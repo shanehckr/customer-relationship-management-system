@@ -6,6 +6,8 @@
 .env
 .env.*
 !.env.example
+/uploads/inbox/*
+!/uploads/inbox/.gitkeep
 
 # Local mail configuration and secret material must never be committed.
 /config/mail.local.php

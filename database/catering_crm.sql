@@ -540,6 +540,23 @@ CREATE TABLE password_reset_tokens (
  INDEX idx_reset_user_expiry (user_id,expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE signup_email_otps (
+ signup_otp_id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+ session_hash CHAR(64) NOT NULL,
+ email VARCHAR(255) NOT NULL,
+ otp_hash VARCHAR(255) NOT NULL,
+ expires_at DATETIME NOT NULL,
+ resend_available_at DATETIME NOT NULL,
+ attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+ send_count SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+ verified_at DATETIME NULL,
+ used_at DATETIME NULL,
+ invalidated_at DATETIME NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ INDEX idx_signup_otp_session_created (session_hash, created_at),
+ INDEX idx_signup_otp_email_created (email, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- APPLICATION COMPATIBILITY / FEATURE TABLES
 -- These preserve behavior currently used by PHP while application queries are
 -- migrated to the normalized entities above. They are provisioned here, not at
@@ -681,10 +698,13 @@ CREATE TABLE cib_ticket_messages (
  ticket_id INT UNSIGNED NOT NULL,
  sender_type VARCHAR(20) NOT NULL,
  sender_name VARCHAR(120) NOT NULL DEFAULT '',
+ sender_id INT UNSIGNED NULL,
  message TEXT NULL,
  attachments LONGTEXT NULL,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  INDEX idx_cib_ticket_messages (ticket_id,id),
+ INDEX idx_cib_ticket_sender (sender_id),
+ CONSTRAINT fk_cib_ticket_msg_sender FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE RESTRICT,
  CONSTRAINT fk_cib_tm_ticket FOREIGN KEY (ticket_id) REFERENCES cib_tickets(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

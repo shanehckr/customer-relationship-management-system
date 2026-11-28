@@ -1,24 +1,3 @@
-/* =============================================================================
-   date-picker.js  -  one modern calendar for EVERY <input type="date">, and one matching time list for EVERY
-   <input type="time">, in the system.
-
-   TIME inputs: the browser's own time dropdown (all 12 hours, every minute) is replaced by a list of slots that
-   follows the input's min / max / step (e.g. min="08:00" max="20:00" step="900" = 8:00 AM to 8:00 PM every 15 minutes).
-   The input stays a normal <input type="time"> (.value is HH:MM, typing still works). Optional: data-time-label="Pickup time"
-   is the title shown on top of the list. Same look as the calendar (.dp-* in all-pages.css).
-   --- the date part, unchanged: ---
-
-   The browser's own calendar popup cannot be styled with CSS, so this file swaps it for
-   a custom one. Nothing else has to change:
-     - the input stays a normal <input type="date"> (typing still works, .value is still yyyy-mm-dd)
-     - min / max / disabled / readonly on the input are respected (read every time it opens)
-     - "input" and "change" events are fired when a date is picked, so existing code keeps working
-     - inputs added later (modals, cards drawn by pages.js / customer-pages.js) work automatically
-   Opt out for one input with  data-native-date  on it.
-   Add ONE line to the shared layout, next to all-pages.css / pages.js:
-        <script src="date-picker.js" defer></script>
-   The look lives at the end of all-pages.css (.dp-*).
-   ============================================================================= */
 (function () {
   "use strict";
   if (window.__crmDatePicker) return;
@@ -291,7 +270,11 @@
       if (stay) { e.stopPropagation(); e.preventDefault(); }   // Esc closes the popup only, not the modal behind it
       return;
     }
-    if (isDate(el) && (e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) { e.preventDefault(); open(el); }
+    if (isDate(el) && (e.key === " " || e.code === "Space" || e.key === "F4" || (e.altKey && e.key === "ArrowDown"))) {
+      e.preventDefault();                                   // stops the browser's own calendar
+      if (input === el && pop && !pop.hidden) close();      // Space again closes ours
+      else open(el);
+    }
   }, true);
 
   // Typing in the field while the popup is open: keep the popup on the same date.

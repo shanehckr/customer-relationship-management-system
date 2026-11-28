@@ -1,18 +1,5 @@
 <?php
-/**
- * manager-admin-inbox-api.php  (XAMPP / MySQL)   -   Admin + Manager inbox (READ-ONLY)
- *
- * Put this file in the SAME folder as sales-inbox-api.php and cs-inbox-api.php.
- * It reads the SAME tables they use, so Admin and Manager can monitor everything:
- *   - Sales conversations (cib_conversations / cib_messages)       -> "Sales Conversations" tab
- *   - Support tickets     (cib_tickets / cib_ticket_messages)      -> "Support Tickets" tab
- *
- * READ ONLY: there is no send / reply action here, and opening a conversation does NOT mark it as read
- * (the "Unread" count means "the assigned staff has not opened it yet").
- *
- * Actions used by pages.js (crmInitManagerInbox):
- *   list_conversations, conversation_messages, list_tickets, ticket_messages
- */
+
 
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
 $DB_NAME = 'catering_crm';
@@ -27,7 +14,6 @@ $CUSTOMER_EMAIL_COL = 'email';
 $ALLOWED_ROLES     = ['admin', 'manager'];
 $ROLE_SESSION_KEY = 'role_name';
 
-/* ---------------------------------------------------------------------------- */
 
 date_default_timezone_set('Asia/Manila');
 ini_set('display_errors', '0');
@@ -46,7 +32,8 @@ function fail(string $message, int $status = 400): void {
     out(['success' => false, 'message' => $message], $status);
 }
 set_exception_handler(function ($e) {
-    fail('Server error: ' . $e->getMessage(), 500);
+    error_log('manager-admin-inbox-api: ' . get_class($e) . ' (' . (int)$e->getCode() . '): ' . $e->getMessage());
+    fail('An unexpected database error occurred. Please try again later.', 500);
 });
 
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
@@ -69,6 +56,7 @@ if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('Only Ad
 
 /* ------------------------- 3. DATABASE + CURRENT ACCOUNT AUTHORIZATION ------------------------- */
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/inbox-message-identity.php';
 try {
     $identity = $db->prepare('SELECT u.account_status, r.role_name FROM users u
                               JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1');
@@ -86,6 +74,7 @@ if (!in_array($databaseRole, array_map('normRole', $ALLOWED_ROLES), true)) {
 if ($databaseRole !== $role) fail('Your role changed. Please log in again.', 403);
 $role = $databaseRole;
 $viewerRole = (string)$account['role_name'];
+$ticketSenderIdAvailable = ticketMessageSenderIdAvailable($db);
 
 // Read only: this API never accepts a POST.
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'GET') {
@@ -242,6 +231,7 @@ function conversationQuery(AppDatabase $db, string $where, array $args): array {
     global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL;
     $base = "cv.id, cv.customer_id, cv.title, cv.reference, cv.status, cv.inquiry_id, cv.created_at, cv.updated_at,
         (SELECT m.message FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+        (SELECT m.sender_id FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_sender_id,
         (SELECT m.attachments FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
         COALESCE(
             (SELECT m.sender_name FROM cib_messages m WHERE m.conversation_id = cv.id AND m.sender_type = 'staff' ORDER BY m.id DESC LIMIT 1),
@@ -266,19 +256,24 @@ function conversationQuery(AppDatabase $db, string $where, array $args): array {
         $rows = $st->fetchAll();
     }
     $validSales = staffNamesForRole($db, 'Sales Staff');
-    return array_map(function ($r) use ($db, $validSales) {
+    $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+    return array_map(function ($r) use ($db, $validSales, $currentUserId) {
         $r['staff_name'] = pickStaffName($validSales, [$r['staff_name'] ?? '', $r['lead_staff_name'] ?? '']);
         $row = shapeRow($r, 'reference', 'INQ-', 'title', false);
         $row['last_message'] = str_replace('**', '', staffAcceptText($db, $row['inquiry_id'], (string)$row['subject'], (string)$row['reference'], (string)$row['last_message']));
+        $row['last_message_mine'] = $currentUserId > 0 && (int)($r['last_sender_id'] ?? 0) === $currentUserId;
         return $row;
     }, $rows);
 }
 
 /** Support tickets (alias t) with customer, last message, handling staff and unread count. */
 function ticketQuery(AppDatabase $db, string $where, array $args): array {
-    global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL;
+    global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL, $ticketSenderIdAvailable;
     $base = "t.id, t.customer_id, t.ticket_number, t.subject, t.status, t.priority, t.created_at, t.updated_at,
         (SELECT m.message FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+        " . ($ticketSenderIdAvailable
+            ? "(SELECT m.sender_id FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1)"
+            : "NULL") . " AS last_sender_id,
         (SELECT m.attachments FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
         (SELECT m.sender_name FROM cib_ticket_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'staff' ORDER BY m.id DESC LIMIT 1) AS staff_name,
         COALESCE((SELECT MAX(m.created_at) FROM cib_ticket_messages m WHERE m.ticket_id = t.id), t.updated_at) AS last_message_at,
@@ -297,9 +292,12 @@ function ticketQuery(AppDatabase $db, string $where, array $args): array {
         $rows = $st->fetchAll();
     }
     $validCs = staffNamesForRole($db, 'Customer Service Staff');
-    return array_map(function ($r) use ($validCs) {
+    $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+    return array_map(function ($r) use ($validCs, $currentUserId) {
         $r['staff_name'] = pickStaffName($validCs, [$r['staff_name'] ?? '']);
-        return shapeRow($r, 'ticket_number', 'TCK-', 'subject', true);
+        $row = shapeRow($r, 'ticket_number', 'TCK-', 'subject', true);
+        $row['last_message_mine'] = $currentUserId > 0 && (int)($r['last_sender_id'] ?? 0) === $currentUserId;
+        return $row;
     }, $rows);
 }
 

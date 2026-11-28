@@ -1,6 +1,8 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/environment.php';
+
 /** Runtime mail settings. SMTP credentials are loaded only from the protected file outside htdocs. */
 $env = static function (string $key, string $default = ''): string {
     $value = getenv($key);
@@ -118,6 +120,6 @@ return [
     'retry_max_seconds' => 3600,
     'claim_seconds' => 300,
     'batch_limit' => 25,
-    'base_url' => rtrim($env('CRM_APP_BASE_URL', 'http://localhost/customer-relationship-management-system/'), '/') . '/',
+    'base_url' => crmApplicationBaseUrl(),
     'token_minutes' => 30,
 ];

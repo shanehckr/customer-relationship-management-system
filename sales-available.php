@@ -17,9 +17,10 @@ $staff = requireSalesStaff();
 $action = $_GET['action'] ?? '';
 
 if ($action === 'available') {
-    $st = $db->query("SELECT l.* FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage <> 'Declined'
+    $st = $db->query("SELECT l.* FROM leads l WHERE l.assigned_staff_id IS NULL AND l.stage NOT IN ('Declined','Cancelled')
                       ORDER BY l.created_at DESC, l.`$LEAD_PK` DESC");
-    out(['success' => true, 'inquiries' => enrichLeads($db, $DB_CRM, $st->fetchAll())]);
+    $rows = enrichLeads($db, $DB_CRM, $st->fetchAll());
+    out(['success' => true, 'inquiries' => $rows]);
 }
 
 if ($action === 'claim') {
@@ -31,7 +32,7 @@ if ($action === 'claim') {
         $db->beginTransaction();
         // The conditional update is atomic: only one staff member can claim an unassigned, open inquiry.
         $st = $db->prepare("UPDATE leads SET assigned_staff_id = ?, assigned_staff_name = ?, stage = ?, claimed_at = ?
-                            WHERE `$LEAD_PK` = ? AND assigned_staff_id IS NULL AND stage <> 'Declined'");
+                            WHERE `$LEAD_PK` = ? AND assigned_staff_id IS NULL AND stage NOT IN ('Declined','Cancelled')");
         $st->execute([$staff['id'], $staff['name'], STAGE_PROGRESS, now(), $id]);
         if ($st->rowCount() === 0) {
             $db->rollBack();

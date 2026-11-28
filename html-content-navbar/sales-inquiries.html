@@ -25,7 +25,7 @@
       <div class="dropdown av-stage" data-av-filter="stage">
         <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                 data-bs-toggle="dropdown" aria-expanded="false">
-          <span>Inquiry Stage</span>
+          <span>Inquiry Status</span>
           <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
         </button>
         <ul class="dropdown-menu custom-dropdown-menu" id="avStageMenu"></ul>
@@ -41,7 +41,7 @@
           <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="all">All Arrangements</a></li>
           <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="pickup">Customer Pickup</a></li>
           <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="delivery">Food Delivery</a></li>
-          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="onsite">Buffet with Setup</a></li>
+          <li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="onsite">On-site Catering</a></li>
         </ul>
       </div>
 
@@ -52,7 +52,7 @@
 
     <div class="iq-pool-head">
       <h3 class="iq-pool-title">Assigned Inquiries</h3>
-      <span class="text-muted">Sales Staff Portfolio</span>
+     
     </div>
 
     <p class="iq-state" id="avState">Loading inquiries...</p>
@@ -76,7 +76,7 @@
 </div>
 
 <!-- ==========================================================================
-     Create Quotation page (Buffet with Setup, Customer Pickup and Delivery).
+     Create Quotation page (On-site Catering, Customer Pickup and Delivery).
      Markup only: quotation-page.js fills every [data-qp-*] hook. Styles: quotation-page.css.
      Reuses: card, av-d-card, av-d-card-head, av-d-grid, av-d-label, av-d-value, av-d-total, av-d-cat,
              ci-food, modal-input-label, modal-input-field, modal-btn-save, csi-outline-btn, stage-pill.
@@ -85,10 +85,9 @@
   <div class="qp-page">
 
     <header class="card qp-head">
-      <button type="button" class="btn csi-outline-btn qp-back" data-qp="back"><i class="bi bi-arrow-left" aria-hidden="true"></i> <span data-qp-out="back-label">Back to Inquiry Details</span></button>
+      <button type="button" class="iq-back qp-back" data-qp="back"><i class="bi bi-arrow-left" aria-hidden="true"></i><span data-qp-out="back-label">Back to Inquiry Details</span></button>
       <div class="qp-head-row">
         <h2 class="qp-title" data-qp-out="page-title">Create Quotation</h2>
-        <span class="stage-pill stage-won qp-mode" data-qp-out="mode">Mode: New Quotation</span>
       </div>
       <p class="qp-sub"><span>Inquiry Reference: <b class="qp-mono" data-qp-out="inquiry-ref"></b></span> <span>Customer Name: <b data-qp-out="customer"></b></span></p>
       <ol class="qp-steps" aria-label="Steps">
@@ -103,20 +102,8 @@
     <div data-qp-step="1">
 
       <section class="card iq-detail-card av-d-card">
-        <div class="av-d-card-head"><h3 class="iq-section-title">A. Customer and Event Information</h3><span class="av-d-tag">Read-only, inherited from <span data-qp-out="inquiry-ref"></span></span></div>
-        <div class="av-d-grid av-d-grid-3">
-          <div class="qp-info"><span class="av-d-label">Customer name</span><span class="av-d-value" data-qp-out="customer"></span></div>
-          <div class="qp-info"><span class="av-d-label">Inquiry reference</span><span class="av-d-value qp-mono" data-qp-out="inquiry-ref"></span></div>
-          <div class="qp-info"><span class="av-d-label">Event name</span><span class="av-d-value" data-qp-out="event"></span></div>
-          <div class="qp-info"><span class="av-d-label">Event date</span><span class="av-d-value" data-qp-out="date"></span></div>
-          <div class="qp-info"><span class="av-d-label">Catering arrangement</span><span class="av-d-value" data-qp-out="arrangement"></span></div>
-          <div class="qp-info"><span class="av-d-label">Event location</span><span class="av-d-value" data-qp-out="location"></span></div>
-        </div>
-      </section>
-
-      <section class="card iq-detail-card av-d-card">
         <div class="av-d-card-head">
-          <h3 class="iq-section-title">B. Selected Food Items (<span data-qp-out="count">0</span>)</h3>
+          <h3 class="iq-section-title">A. Selected Food Items (<span data-qp-out="count">0</span>)</h3>
           <button type="button" class="btn csi-outline-btn qp-edit" data-qp="edit-toggle"><i class="bi bi-pencil" aria-hidden="true"></i> <span data-qp-out="edit-label">Edit Items</span></button>
         </div>
         <p class="qp-hint" data-qp-out="menu-hint"></p>
@@ -152,8 +139,8 @@
       </section>
 
       <section class="card iq-detail-card av-d-card">
-        <div class="av-d-card-head"><h3 class="iq-section-title">C. Additional Fee</h3>
-          <span class="qp-chips" data-qp="arr-chips"><span class="qp-chip" data-arr="pickup">Customer Pickup</span><span class="qp-chip" data-arr="delivery">Food Delivery</span><span class="qp-chip" data-arr="onsite">Buffet with Setup</span></span>
+        <div class="av-d-card-head"><h3 class="iq-section-title">B. Additional Fee</h3>
+          <span class="qp-chips" data-qp="arr-chips"><span class="qp-chip" data-arr="pickup">Customer Pickup</span><span class="qp-chip" data-arr="delivery">Food Delivery</span><span class="qp-chip" data-arr="onsite">On-site Catering</span></span>
         </div>
         <p class="qp-hint" data-qp-out="charge-hint"></p>
         <div class="qp-fee-grid">
@@ -166,9 +153,9 @@
       </section>
 
       <section class="card iq-detail-card av-d-card">
-        <div class="av-d-card-head"><h3 class="iq-section-title" data-qp-out="terms-title">D. Quotation Terms</h3></div>
+        <div class="av-d-card-head"><h3 class="iq-section-title" data-qp-out="terms-title">C. Quotation Terms</h3></div>
         <p class="qp-hint" data-qp-out="terms-hint">Validity, deposit percentage and an optional message to the customer.</p>
-        <div class="av-d-grid av-d-grid-3">
+        <div class="av-d-grid qp-grid-4">
           <div data-qp="valid-wrap"><label class="modal-input-label" for="qpValid">Valid until</label><input class="modal-input-field" id="qpValid" type="date" data-qp="valid"></div>
           <div data-qp="rate-wrap"><label class="modal-input-label" for="qpRate">Deposit percentage (%)</label><input class="modal-input-field" id="qpRate" type="number" min="1" max="100" step="1" value="20" data-qp="rate"></div>
           <div data-qp="discount-wrap"><label class="modal-input-label" for="qpDiscount">Discount (PHP, optional)</label><input class="modal-input-field" id="qpDiscount" type="number" min="0" step="0.01" value="0" data-qp="discount"></div>
@@ -201,7 +188,7 @@
           <div><span class="av-d-label">Event name</span><span class="av-d-value" data-qp-out="event"></span></div>
           <div><span class="av-d-label">Event date</span><span class="av-d-value" data-qp-out="date"></span></div>
           <div><span class="av-d-label">Catering arrangement</span><span class="av-d-value" data-qp-out="arrangement"></span></div>
-          <div class="qp-span-2"><span class="av-d-label">Event location</span><span class="av-d-value" data-qp-out="location"></span></div>
+          <div class="qp-span-2"><span class="av-d-label" data-qp-out="location-label">Event Venue / Address</span><span class="av-d-value" data-qp-out="location"></span></div>
         </div>
 
         <h4 class="qp-doc-h">Detailed food breakdown</h4>
@@ -210,15 +197,7 @@
         </div>
 
         <div class="qp-doc-split">
-          <div>
-            <h4 class="qp-doc-h">Terms and customer message</h4>
-            <div class="qp-terms">
-              <p><b data-qp-out="terms-line"></b></p>
-              <p class="qp-hint" data-qp-out="terms-text"></p>
-              <p class="qp-msg" data-qp-out="message" hidden></p>
-            </div>
-          </div>
-          <div>
+          <div class="qp-doc-sumwrap">
             <h4 class="qp-doc-h">Charges and payment summary</h4>
             <dl class="qp-sum">
               <div><dt>Food subtotal</dt><dd data-qp-out="s-sub"></dd></div>
@@ -229,10 +208,18 @@
               <div data-qp="s-bal-row"><dt>Remaining balance</dt><dd data-qp-out="s-bal"></dd></div>
             </dl>
           </div>
+          <div>
+            <h4 class="qp-doc-h">Terms and customer message</h4>
+            <div class="qp-terms">
+              <p><b data-qp-out="terms-line"></b></p>
+              <p class="qp-hint" data-qp-out="terms-text"></p>
+              <p class="qp-msg" data-qp-out="message" hidden></p>
+            </div>
+          </div>
         </div>
 
         <div class="qp-doc-actions">
-          <button type="button" class="btn csi-outline-btn" data-qp="back-edit"><i class="bi bi-arrow-left" aria-hidden="true"></i> Back to Edit</button>
+          <button type="button" class="btn iq-back qp-doc-back" data-qp="back-edit"><i class="bi bi-arrow-left" aria-hidden="true"></i>Back to Edit</button>
           <span class="qp-grow"></span>
           <button type="button" class="btn csi-outline-btn" data-qp="save-draft">Save as Draft</button>
           <button type="button" class="btn modal-btn-save" data-qp="send"><i class="bi bi-send" aria-hidden="true"></i> <span data-qp-out="send-label">Send Quotation to Customer</span></button>

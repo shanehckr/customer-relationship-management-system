@@ -14,6 +14,7 @@ require __DIR__ . '/inquiry-common.php';
 require __DIR__ . '/quotations-schema.php';
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 require_once __DIR__ . '/booking-deadlines.php';        // CUSTOMER_MIN_DAYS_BEFORE_EVENT
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 
 $customerId = (int)sessionFirst(['customer_id', 'user_id', 'id']);
 if (!$customerId) fail('Please log in again.', 401);
@@ -24,6 +25,10 @@ if ($configuredPickupLocation === '') $configuredPickupLocation = trim((string)(
 
 if ($action === 'pickup_location') {
     out(['success' => true, 'pickup_location' => $configuredPickupLocation]);
+}
+
+if ($action === 'booking_rules') {
+    out(['success' => true, 'booking_rules' => customerInquiryDateRules()]);
 }
 
 if ($action === 'list') {
@@ -61,24 +66,11 @@ if ($action === 'list') {
         ] : null;
         // Progress follows the booking only after the verified-deposit booking row exists.
         $r['progress_step'] = $b ? 6 : inquiryProgressStep((string)$r['stage'], $q);
-        if ($b) {
-            $r['status'] = $r['inquiry_status'] = 'Converted to Booking';
-        } else {
-            $stage = (string)$r['stage'];
-            // A legacy/completed lead without its verified booking row must not be presented as paid.
-            if ($stage === 'Completed') $r['progress_step'] = ($q && $q['status'] === 'Accepted') ? 4 : 2;
-            $label = match ($stage) {
-                'New Inquiry' => 'Submitted',
-                'In Progress', 'In Discussion', 'Quotation Preparation' => 'Under Review',
-                'Quotation Sent', 'Negotiation' => 'Quotation Sent',
-                'Confirmed' => 'Quotation Accepted',
-                'Declined' => 'Declined',
-                'Completed' => ($q && $q['status'] === 'Accepted') ? 'Quotation Accepted' : 'Under Review',
-                default => $stage,
-            };
-            if ($q && $q['status'] === 'Accepted') $label = 'Quotation Accepted';
-            $r['status'] = $r['inquiry_status'] = $label;
-        }
+        $stage = (string)$r['stage'];
+        if ($stage === 'Completed' && !$b) $r['progress_step'] = ($q && $q['status'] === 'Accepted') ? 4 : 2;
+        $r['workflow_label'] = inquiryWorkflowLabel($stage, $q, (bool)$b);
+        $r['inquiry_status'] = inquiryGeneralStatus($stage, (bool)$b);
+        $r['status'] = $r['inquiry_status'];
     }
     unset($r);
     out(['success' => true, 'csrf_token' => $_SESSION['csrf_token'], 'inquiries' => $rows]);
@@ -264,15 +256,39 @@ if ($action === 'create') {
         'message' => 'Thank you! We received your inquiry for ' . $eventName . '. Please wait while our team reviews it.',
         'user_ids' => [$customerId], 'include_admins' => false,
     ]);
+    $recipient = EmailNotificationService::customerRecipient($db, $customerId, $email, $name);
+    EmailNotificationService::queue(
+        $db,
+        $customerId,
+        $recipient['email'],
+        $recipient['name'],
+        'inquiry_received',
+        'Inquiry received - ' . $ref,
+        [
+            'heading' => 'Inquiry Received',
+            'greeting' => $recipient['name'],
+            'message' => 'We received your inquiry. Submission of an inquiry does not confirm a booking or reserve the event date.',
+            'rows' => [
+                'Inquiry reference' => $ref,
+                'Event name' => $eventName,
+                'Event date' => date('F j, Y', strtotime($eventDate)),
+                'Service arrangement' => arrangementDisplay($arrangement),
+                'Submission status' => 'Submitted',
+            ],
+            'button_text' => 'View My Inquiries',
+            'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-inquiries.html'),
+        ],
+        'inquiry_received:' . $leadId,
+        'lead',
+        $leadId
+    );
     out(['success' => true, 'message' => 'Inquiry submitted. We will be in touch soon.', 'inquiry_ref' => $ref, 'inquiry_id' => $leadId]);
 }
 
-/** 1 Submitted, 2 Under review, 3 Quotation, 4 Confirmation (quotation accepted), 5 Completed. */
+/** 1 Submitted, 2 Under review, 3 Quotation sent, 4 Quotation accepted, 5 Deposit verified, 6 Booking confirmed. */
 function inquiryProgressStep(string $stage, ?array $quote): int {
-    if ($stage === 'Declined') return 0;           // no progress bar for a declined inquiry
-    if ($stage === 'Completed') return 5;
     if ($quote && $quote['status'] === 'Accepted') return 4;
-    if ($stage === 'Confirmed') return 4;
+    if ($stage === 'Cancelled' && $quote && ($quote['status'] ?? '') === 'Declined') return 3;
     if ($stage === 'Quotation Sent' || $stage === 'Negotiation') return 3;
     if ($stage === 'New Inquiry') return 1;
     return 2;
@@ -290,12 +306,13 @@ if ($action === 'quotation_respond') {
     $db->beginTransaction();
     try {
         // the quotation must belong to one of THIS customer's inquiries
-        $st = $db->prepare("SELECT q.*, l.`$LEAD_PK` AS lead_pk, l.stage AS lead_stage, l.event_name AS lead_event_name, l.assigned_staff_id AS lead_staff_id FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
+        $st = $db->prepare("SELECT q.*, l.`$LEAD_PK` AS lead_pk, l.stage AS lead_stage, l.event_name AS lead_event_name, l.event_date AS lead_event_date, l.assigned_staff_id AS lead_staff_id FROM quotations q JOIN leads l ON l.`$LEAD_PK` = q.inquiry_id
                             WHERE q.quotation_id = ? AND l.customer_id = ? FOR UPDATE");
         $st->execute([(int)($_POST['quotation_id'] ?? 0), $customerId]);
         $q = $st->fetch();
         if (!$q) { $db->rollBack(); fail('Quotation not found.', 404); }
         $q = quoteHydrate($db, $q);
+        if (in_array((string)$q['lead_stage'], ['Declined', 'Cancelled', 'Completed'], true)) { $db->rollBack(); fail('This inquiry is closed and can no longer be changed.', 409); }
         if ($decision === 'change') {
             // a change request is allowed while the quotation is open (Sent) or accepted but not yet paid
             $paid = in_array($q['lead_stage'], ['Confirmed', 'Completed'], true);
@@ -311,7 +328,8 @@ if ($action === 'quotation_respond') {
         $newStatus = $decision === 'accept' ? 'Accepted' : 'Declined';
         $db->prepare('UPDATE quotations SET status = ?, responded_at = ? WHERE quotation_id = ?')->execute([$newStatus, now(), $q['quotation_id']]);
         syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
-        if ($decision !== 'accept') $db->prepare("UPDATE leads SET stage = 'Negotiation' WHERE `$LEAD_PK` = ?")->execute([$iid]);
+        if ($decision === 'change') $db->prepare("UPDATE leads SET stage = 'Negotiation' WHERE `$LEAD_PK` = ?")->execute([$iid]);
+        elseif ($decision === 'decline') $db->prepare("UPDATE leads SET stage = 'Cancelled', declined_at = ? WHERE `$LEAD_PK` = ?")->execute([now(), $iid]);
 
         $ref = '**' . (trim((string)($q['lead_event_name'] ?? '')) !== '' ? $q['lead_event_name'] : 'my event') . '**';   // the event name replaces the QT-0000 (v1) label
         if ($decision === 'accept') {
@@ -319,7 +337,7 @@ if ($action === 'quotation_respond') {
         } elseif ($decision === 'change') {
             $text = 'I would like to request changes to the quotation for ' . $ref . ($q['status'] === 'Accepted' ? ' (I had accepted it, but changed my mind before paying)' : '') . '. Requested changes: ' . mb_substr($reason, 0, 1000) . ' Could you please send a revised quotation?';
         } else {
-            $text = 'I am declining the quotation for ' . $ref . '.' . ($reason !== '' ? ' Reason: ' . mb_substr($reason, 0, 500) : '') . ' Could you please send a revised one?';
+            $text = 'I am declining the quotation and will not proceed with ' . $ref . '.' . ($reason !== '' ? ' Reason: ' . mb_substr($reason, 0, 500) : '');
         }
         $cv = $db->prepare("SELECT id FROM `$DB_CRM`.cib_conversations WHERE inquiry_id = ? LIMIT 1");
         $cv->execute([$iid]);
@@ -356,6 +374,36 @@ if ($action === 'quotation_respond') {
         'user_ids' => !empty($q['lead_staff_id']) ? [(int)$q['lead_staff_id']] : [],
         'exclude_user_id' => $customerId,
     ]);
+    if ($decision === 'accept') {
+        $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+        EmailNotificationService::queue(
+            $db,
+            $customerId,
+            $recipient['email'],
+            $recipient['name'],
+            'deposit_payment_required',
+            'Deposit payment required - ' . quoteRef($iid),
+            [
+                'heading' => 'Deposit Payment Required',
+                'greeting' => $recipient['name'],
+        'message' => 'You accepted the quotation, but your booking is not confirmed yet. Pay the required ' . (int)($q['deposit_rate'] ?? round(QUOTE_DEPOSIT_RATE * 100)) . '% deposit to reserve the event date. We will confirm your booking after the payment is verified.',
+                'amount' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
+                'rows' => [
+                    'Inquiry or quotation reference' => quoteRef($iid),
+                    'Event name' => $nfEvent,
+                    'Event date' => !empty($q['lead_event_date']) ? date('F j, Y', strtotime((string) $q['lead_event_date'])) : '',
+                    'Total quotation amount' => 'PHP ' . number_format((float) $q['total'], 2),
+                    'Required deposit' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
+                    'Quotation validity' => !empty($q['valid_until']) ? deadlineLabel((string) $q['valid_until'], $q['valid_until_time'] ?? null) : '',
+                ],
+                'button_text' => 'Review My Inquiries',
+                'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-inquiries.html'),
+            ],
+            'deposit_payment_required:' . (int) $q['quotation_id'],
+            'quotation',
+            (int) $q['quotation_id']
+        );
+    }
     $quote = quotesByInquiry($db, [$iid], true)[$iid] ?? null;
     out(['success' => true, 'decision' => $decision, 'quotation' => $quote,
          'message' => $decision === 'accept'

@@ -163,11 +163,23 @@ html.light-mode .moon-icon { display: block; }
   font-size: 13px;
   transition: opacity 0.2s ease;
 }
+.back-link.back-nav {
+  color: #2bb673;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 600;
+  transition: opacity 0.2s ease;
+}
+.back-link.back-nav { display: inline-flex; align-items: center; gap: 8px; padding: 0; border: 0; background: none; }
 
 .forgot:hover,
-.back-link:hover {
-  opacity: 0.8;
+.back-link:hover { opacity: 0.8; }
+.back-link.back-nav:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
+.back-link.back-nav:focus-visible { outline: 2px solid #2bb673; outline-offset: 3px; border-radius: 4px; }
+.back-link.back-nav .back-icon { flex: 0 0 15px; }
 
 /* Scope form styles to the login panel. */
 .login-panel form label {
@@ -544,8 +556,13 @@ html.light-mode {
 .signup-container .login-panel {
   height: auto;
   min-height: 600px;
+  position: relative;
   padding-top: 40px;
   padding-bottom: 40px;
+}
+
+.signup-container .form-content {
+  position: relative;
 }
 
 /* theme toggle sits over the branding panel on desktop */
@@ -584,6 +601,16 @@ html.light-mode {
   color: var(--text-muted);
   margin: 0 0 20px;
 }
+
+.signup-back {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 24px;
+    text-align: left;
+}
+.signup-back:hover:not(:disabled) { text-decoration: underline; opacity: 1; }
 
 /* ---------- steps ---------- */
 .su-step {
@@ -628,6 +655,46 @@ html.light-mode {
   color: var(--text-muted);
 }
 
+.su-field-error {
+  color: var(--auth-error);
+  font-size: 12px;
+  line-height: 1.35;
+  margin-top: 5px;
+}
+
+.su-field-error:empty {
+  display: none;
+}
+
+.su-strength {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.su-strength-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.25);
+}
+
+.su-strength-bar {
+  height: 100%;
+  width: 0;
+  border-radius: inherit;
+  transition: width 0.15s ease, background-color 0.15s ease;
+}
+
+.su-strength.is-weak .su-strength-bar { background-color: #dc3545; }
+.su-strength.is-fair .su-strength-bar { background-color: #fd7e14; }
+.su-strength.is-strong .su-strength-bar { background-color: #198754; }
+.su-strength-label {
+  display: block;
+  margin-top: 3px;
+  color: var(--text-muted);
+}
+
 /* ---------- phone field: +63 prefix ---------- */
 .su-prefix {
   position: absolute;
@@ -650,6 +717,20 @@ html.light-mode {
 .login-panel form input.is-invalid,
 .login-panel form input.is-invalid:focus {
   border-color: var(--auth-error) !important;
+}
+
+/* Keep Bootstrap's invalid marker out of password fields; the inline error and red border are sufficient. */
+.login-panel form .password-wrapper input.is-invalid,
+.login-panel form .password-wrapper input.is-invalid:focus {
+  background-image: none !important;
+}
+
+.login-panel form .su-terms input.su-check.is-invalid {
+  border-color: var(--auth-error) !important;
+}
+
+.su-terms-error {
+  margin: -13px 0 15px 30px;
 }
 
 /* ---------- OTP boxes ---------- */
@@ -699,6 +780,8 @@ html.light-mode {
   font-size: 14px;
   cursor: pointer;
 }
+.signup-back { display: inline-flex; align-items: center; gap: 8px; color: #2bb673 !important; font-size: 15px; font-weight: 600; }
+.signup-back-icon { flex: 0 0 15px; }
 
 .su-link:disabled {
   color: var(--text-muted) !important;
@@ -1005,6 +1088,8 @@ html.light-mode {
     text-decoration: none !important;
     text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
   }
+  html.dark-mode .signup-back,
+  html.light-mode .signup-back { color: #2bb673 !important; text-shadow: none !important; }
 
   html.dark-mode .forgot:hover,
   html.light-mode .forgot:hover,
@@ -1072,4 +1157,11 @@ html .login-panel form input:autofill {
   box-shadow: 0 0 0 1000px var(--input-bg) inset !important;
   -webkit-text-fill-color: var(--input-text) !important;
   caret-color: var(--input-text) !important;
+}
+
+/* Keep the strength label readable over the green-toned mobile signup background. */
+@media (max-width: 768px) {
+  .login-panel .su-strength-label {
+    color: #0d1712 !important;
+  }
 }

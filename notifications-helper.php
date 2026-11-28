@@ -162,7 +162,8 @@ function notifySend($db, array $n): void
             );
         }
     } catch (Throwable $e) {
-        error_log('notifySend failed: ' . $e->getMessage());
+        error_log('notifySend failed: ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
+        if (!empty($n['_throw_on_failure'])) throw $e;
     }
 }
 

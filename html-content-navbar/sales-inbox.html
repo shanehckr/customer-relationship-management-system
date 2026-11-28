@@ -4,10 +4,10 @@
      (crmInitSalesInbox) from sales-inbox-api.php, which uses the same conversation tables as the
      customer's "Messages" tab (cib_conversations, cib_messages).
      "View Inquiry Details" opens the page named in data-inquiries-page (change it to your Inquiries page). -->
-<div class="csi-page p-3 p-md-4" id="salesInboxPage" data-api="sales-inbox-api.php" data-inquiries-page="inquiries">
+<div class="csi-page iq-page--sales" id="salesInboxPage" data-api="sales-inbox-api.php" data-inquiries-page="inquiries">
+  <!-- Same heading block as the Customer Service inbox, so the title and the gap under it match -->
   <header class="crm-inbox-page-heading">
     <h2>Inbox</h2>
-    <p>Review customer inquiry conversations and send updates.</p>
   </header>
 
   <div class="card csi-shell" id="csiShell">
@@ -38,7 +38,7 @@
     <!-- RIGHT: selected conversation -->
     <section class="csi-thread" aria-label="Conversation">
       <div class="csi-empty" id="csiEmpty">
-        <i class="bi bi-chat-square-text" aria-hidden="true"></i>
+        <i class="bi bi-chat-dots" aria-hidden="true"></i>
         <p>Select a conversation to view its messages.</p>
       </div>
 

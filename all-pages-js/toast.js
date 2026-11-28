@@ -40,7 +40,16 @@
     icon.textContent = icons[type];
     var text = document.createElement("span");
     text.className = "crm-toast__message";
-    text.textContent = message;
+    if (options.title) {
+      var title = document.createElement("strong");
+      title.className = "crm-toast__title";
+      title.textContent = String(options.title);
+      var body = document.createElement("span");
+      body.textContent = message;
+      text.append(title, body);
+    } else {
+      text.textContent = message;
+    }
     var close = document.createElement("button");
     close.type = "button";
     close.className = "crm-toast__close";
