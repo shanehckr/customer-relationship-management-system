@@ -179,9 +179,9 @@
   }
 
   // Account status/delete feedback uses the shared transient notification component.
-  function showPageNotice(settingsRoot, message, type) {
+  function showPageNotice(settingsRoot, message, type, options) {
     const toastType = type === "success" ? "success" : type === "warning" ? "warning" : type === "danger" ? "error" : "info";
-    if (window.crmToast) window.crmToast(message, toastType);
+    if (window.crmToast) window.crmToast(message, toastType, options);
     else console.error("CRM toast component was not loaded before Settings feedback.");
   }
 
@@ -202,7 +202,7 @@
   function updateSettingsEmptyRow(settingsRoot, hasFilters) {
     const rows = settingsRoot.querySelector("#settings-user-rows");
     if (!rows) return;
-    crmSetNoResultsRow(rows, 6, true, {
+    crmSetNoResultsRow(rows, 7, true, {
       icon: hasFilters ? "search" : "people",
       title: hasFilters ? "No results found" : "No user accounts found",
       description: hasFilters
@@ -396,6 +396,21 @@
     editForm.elements.email.value = fields.email;
     editForm.elements.role.value = fields.role;
     editForm.elements.status.value = fields.status;
+
+    const employeeRoles = ["Manager", "Sales Staff", "Customer Service Staff"];
+    const editableRoles = fields.role === "Customer"
+      ? ["Customer"]
+      : fields.role === "Admin" ? ["Admin", ...employeeRoles] : employeeRoles;
+    const roleDropdown = editForm.elements.role.closest(".dropdown");
+    roleDropdown?.querySelectorAll('[data-settings-select="edit-account-role"]').forEach((item) => {
+      item.closest("li").hidden = !editableRoles.includes(item.dataset.value);
+    });
+    editForm.elements.role.querySelectorAll("option").forEach((option) => {
+      option.hidden = !editableRoles.includes(option.value);
+    });
+    const roleToggle = roleDropdown?.querySelector("#edit-account-role-toggle");
+    if (roleToggle) roleToggle.disabled = fields.role === "Customer";
+
     [editForm.elements.role, editForm.elements.status].forEach((select) => {
       const dropdown = select.closest(".dropdown");
       const label = dropdown?.querySelector("[data-select-label]");
@@ -418,7 +433,7 @@
 
     const loadingRow = document.createElement("tr");
     const loadingCell = document.createElement("td");
-    loadingCell.colSpan = 6;
+    loadingCell.colSpan = 7;
     loadingCell.className = "text-center py-4";
     loadingCell.textContent = "Loading user accounts...";
     loadingRow.className = "settings-loading-row";
@@ -495,13 +510,12 @@
         row.dataset.createdDate = createdDate;
         row.dataset.createdBy = createdBy;
 
-        // USER NAME
         const nameCell = makeCell("settings-user-name");
-        nameCell.textContent = user.full_name || user.username || "";
-        // EMAIL
+        nameCell.textContent = user.full_name || "";
+        const usernameCell = makeCell();
+        usernameCell.textContent = user.username || "";
         const emailCell = makeCell("settings-user-email");
         emailCell.textContent = user.email || "";
-        // ROLE
         const roleCell = makeCell();
         roleCell.textContent = user.role_name || "";
         // CREATED INFO: date, and "by Role (Name)" under it when the API knows who created it
@@ -542,9 +556,8 @@
             user
           ));
         }
-        if (canDelete) {
+        if (canDelete && user.can_delete === true) {
           const deleteButton = makeAction("Delete", "delete", "action-btn-delete", user);
-          if (isActive) deleteButton.title = "Deactivate this account first before deleting it.";
           second.push(deleteButton);
         }
 
@@ -557,7 +570,7 @@
         }
         actionsCell.append(actions);
 
-        row.append(nameCell, emailCell, roleCell, createdCell, statusCell, actionsCell);
+        row.append(nameCell, usernameCell, emailCell, roleCell, createdCell, statusCell, actionsCell);
         rows.append(row);
       });
 
@@ -572,7 +585,7 @@
       const errorCell = document.createElement("td");
 
       errorRow.className = "settings-load-error-row";
-      errorCell.colSpan = 6;
+      errorCell.colSpan = 7;
       errorCell.className = "text-center text-danger py-4";
       errorCell.textContent =
         "Unable to load user accounts. Refresh the page and try again.";
@@ -582,14 +595,12 @@
     }
   }
 
-  // ------------------------------------------------------------------
   // ACTIVATE / DEACTIVATE / DELETE ACCOUNT
   // Uses the shared crmConfirm() popup from pages.js (the same card and buttons as "Discard changes?"),
   // so no extra modal HTML is needed in the Settings page.
   //  - Activate / Deactivate (Admin and Manager) -> settings-api.php?action=status
   //  - Delete (Admin only)                       -> settings-api.php?action=delete
-  //    An account must be Deactivated first. Active accounts cannot be deleted (the API checks this too).
-  // ------------------------------------------------------------------
+  //    The API independently checks whether protected records reference the account.
   async function postAccountAction(settingsRoot, action, fields, fallbackError) {
     if (!settingsRoot.dataset.csrfToken) {
       throw new Error("Security token is unavailable. Refresh Settings and try again.");
@@ -614,7 +625,11 @@
     } catch (error) {
       data = {};
     }
-    if (!response.ok || !data.success) throw new Error(data.message || fallbackError);
+    if (!response.ok || !data.success) {
+      const error = new Error(data.message || fallbackError);
+      error.code = data.code || "";
+      throw error;
+    }
     return data;
   }
 
@@ -628,7 +643,7 @@
       message: willActivate
         ? `Are you sure you want to activate ${name}? The account status will be set to Active.`
         : `Are you sure you want to deactivate ${name}? The account status will be set to Inactive and the user will no longer be able to sign in.`,
-      confirmText: willActivate ? "Yes, Activate" : "Yes, Deactivate",
+      confirmText: willActivate ? "Activate" : "Deactivate",
       cancelText: "Cancel",
       danger: !willActivate
     });
@@ -660,20 +675,10 @@
   async function openDeleteModal(settingsRoot, row) {
     const name = row.dataset.name || row.dataset.username || "this account";
 
-    // Rule: deactivate first, then delete.
-    if (row.dataset.status === "Active") {
-      showPageNotice(
-        settingsRoot,
-        `${name} is still Active. Deactivate this account first before deleting it.`,
-        "warning"
-      );
-      return;
-    }
-
     const confirmed = await crmConfirm({
       title: "Delete account?",
       message: `Are you sure you want to delete ${name}? This permanently removes the account and cannot be undone.`,
-      confirmText: "Yes, Delete",
+      confirmText: "Delete",
       cancelText: "Cancel",
       danger: true
     });
@@ -690,10 +695,17 @@
       await loadSettingsUsers(settingsRoot);
     } catch (error) {
       console.error("Settings account delete failed:", error);
+      const isActive = row.dataset.status === "Active";
+      const protectedRecords = error instanceof Error && error.code === "protected_records";
       showPageNotice(
         settingsRoot,
-        error instanceof Error ? error.message : "Unable to delete this account. Please try again.",
-        "danger"
+        protectedRecords
+          ? isActive
+            ? "This account has associated records that must be retained. You can deactivate it instead."
+            : "This account has associated records that must be retained. It will remain deactivated."
+          : error instanceof Error ? error.message : "Unable to delete this account. Please try again.",
+        "danger",
+        protectedRecords ? { title: "Account Cannot Be Deleted" } : undefined
       );
     }
   }
@@ -729,13 +741,11 @@
     });
   }
 
-  // Rules for the role dropdowns:
-  //  - Manager cannot create or manage Admin accounts, so "Admin" is removed from every role dropdown (Admin keeps the full list).
-  //  - Nobody (Admin included) creates Customer accounts here: customers sign up themselves, so "Customer" is
-  //    removed from Create New Account only (the All Roles filter and the Edit form still know the role).
+  // Managers manage employee roles; customers self-register, and only Admin can manage Admin accounts.
   function removeAdminRoleOptions(settingsRoot) {
     if (!document.documentElement.classList.contains("role-admin")) {
       removeRoleOptions(settingsRoot, ["settings-role-filter", "new-account-role", "edit-account-role", "settings-permission-role"], ["admin"]);
+      removeRoleOptions(settingsRoot, ["settings-role-filter"], ["customer"]);
     }
     removeRoleOptions(settingsRoot, ["new-account-role"], ["customer"]);
   }

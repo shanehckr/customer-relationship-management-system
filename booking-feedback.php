@@ -1,21 +1,5 @@
 <?php
 require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
-/**
- * booking-feedback.php - customer feedback (rating, comments, photos) for a booking.
- *
- * Used by:
- *   - customer-bookings-api.php   (the customer saves feedback; this file makes sure the table exists)
- *   - calendar-api.php, bookings-api.php, sales-bookings-api.php   (staff screens show the feedback)
- *
- * In a staff API, add these two lines (the second one right BEFORE the rows are sent with out(...)):
- *     require_once __DIR__ . '/booking-feedback.php';
- *     attachBookingFeedback($db, $rows);          // $rows = the list of bookings; each one gets  ['feedback' => {...} | null]
- * For a single booking (details):
- *     attachBookingFeedbackOne($db, $booking);
- *
- * pages.js (crmBookingFeedbackHTML) reads record.feedback = { rating, comments, images: [{url, name}], created_at }.
- * Feedback never breaks the page: if anything goes wrong here, the booking is returned with feedback = null.
- */
 
 function ensureBookingFeedbackSchema(AppDatabase $db): void {
     // Schema is provisioned centrally from database/catering_crm.sql.
@@ -27,15 +11,58 @@ function bookingFeedbackMap(AppDatabase $db, array $ids): array {
     $map = [];
     if (!$ids) return $map;
     $in = implode(',', array_fill(0, count($ids), '?'));
-    $st = $db->prepare("SELECT booking_id, rating, comments, images, created_at FROM booking_feedback WHERE booking_id IN ($in) ORDER BY feedback_id");
+    $st = $db->prepare("SELECT feedback_id, booking_id, rating, comments, images, created_at FROM booking_feedback WHERE booking_id IN ($in) ORDER BY feedback_id");
     $st->execute($ids);
+    $feedbackIdByBooking = [];
     foreach ($st->fetchAll() as $f) {
-        $map[(int)$f['booking_id']] = [
+        $images = !empty($f['images']) ? (json_decode($f['images'], true) ?: []) : [];
+        if (!is_array($images)) $images = [];
+        foreach ($images as &$image) {
+            if (is_array($image)) $image['media_type'] = 'IMAGE';
+            else $image = ['url' => (string)$image, 'name' => 'Customer photo', 'media_type' => 'IMAGE'];
+        }
+        unset($image);
+        $bookingId = (int)$f['booking_id'];
+        $feedbackIdByBooking[$bookingId] = (int)$f['feedback_id'];
+        $map[$bookingId] = [
             'rating'     => (int)$f['rating'],
             'comments'   => (string)($f['comments'] ?? ''),
-            'images'     => !empty($f['images']) ? (json_decode($f['images'], true) ?: []) : [],
+            'images'     => $images,
+            'attachments'=> [],
             'created_at' => $f['created_at'] ? str_replace(' ', 'T', $f['created_at']) : '',
         ];
+    }
+    $attachmentIds = array_values(array_filter($feedbackIdByBooking));
+    if ($attachmentIds) {
+        $attachmentIn = implode(',', array_fill(0, count($attachmentIds), '?'));
+        $attachments = $db->prepare("SELECT feedback_id, media_type, file_path, original_name, mime_type, file_size, uploaded_at FROM feedback_attachments WHERE feedback_id IN ($attachmentIn) ORDER BY attachment_id");
+        $attachments->execute($attachmentIds);
+        $byFeedbackId = [];
+        foreach ($attachments->fetchAll() as $attachment) {
+            $byFeedbackId[(int)$attachment['feedback_id']][] = [
+                'url' => (string)$attachment['file_path'],
+                'name' => (string)$attachment['original_name'],
+                'mime_type' => (string)$attachment['mime_type'],
+                'media_type' => strtoupper((string)$attachment['media_type']),
+                'size' => (int)$attachment['file_size'],
+                'uploaded_at' => $attachment['uploaded_at'] ? str_replace(' ', 'T', $attachment['uploaded_at']) : '',
+            ];
+        }
+        foreach ($feedbackIdByBooking as $bookingId => $feedbackId) {
+            $fromTable = $byFeedbackId[$feedbackId] ?? [];
+            $existingPaths = array_fill_keys(array_map(static fn($item) => (string)($item['url'] ?? ''), $map[$bookingId]['images']), true);
+            foreach ($fromTable as $attachment) {
+                if (isset($existingPaths[$attachment['url']])) {
+                    foreach ($map[$bookingId]['images'] as &$legacyImage) {
+                        if ((string)($legacyImage['url'] ?? '') === $attachment['url']) $legacyImage = array_merge($legacyImage, $attachment);
+                    }
+                    unset($legacyImage);
+                    continue;
+                }
+                $map[$bookingId]['images'][] = $attachment;
+            }
+            $map[$bookingId]['attachments'] = $map[$bookingId]['images'];
+        }
     }
     return $map;
 }
@@ -63,9 +90,7 @@ function attachBookingFeedbackOne(AppDatabase $db, array &$booking): void {
     $booking = $list[0];
 }
 
-/* ======================================================================================================
-   After the event: Completed + "Thank you, please rate us" message in the customer's inbox
-   ====================================================================================================== */
+/* After-event completion and feedback requests. */
 
 /** Adds bookings.feedback_requested_at and cib_messages.feedback_booking_id when missing. $crm = database of the cib_* tables ('' = same database). */
 function ensureFeedbackRequestColumns(AppDatabase $db, string $crm = ''): bool {
@@ -185,9 +210,7 @@ function completeFinishedBookings(AppDatabase $db, string $crm = ''): void {
     remindOverdueBalances($db);
 }
 
-/* ======================================================================================================
-   Unpaid balance after the event: remind the customer + assigned staff (+ Admin / Manager) and repeat weekly
-   ====================================================================================================== */
+/* Overdue balance reminders. */
 
 const BALANCE_OVERDUE_AFTER_DAYS = 3;   // a balance counts as overdue this many days after the event date
 const BALANCE_REMIND_EVERY_DAYS  = 7;   // then remind again every this many days until it is paid

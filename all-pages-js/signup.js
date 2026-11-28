@@ -232,10 +232,9 @@
     }
     else if (field === "full_name") valid = input.value.replace(/\s+/g, " ").trim().length >= 2;
     else if (field === "phone") {
-      valid = /^9\d{9}$/.test(cleanPhone(input.value));
-      if (!valid && error && error.textContent) {
-        error.textContent = input.value.trim() ? "Enter a valid Philippine mobile number." : "Mobile number is required.";
-      }
+      var phoneMessage = phoneError(input.value);
+      valid = phoneMessage === "";
+      if (!valid) setFieldError("phone", phoneMessage, false);
     } else if (field === "username") {
       valid = usernameError(input.value) === "";
       if (!valid && error && error.textContent) error.textContent = usernameError(input.value);
@@ -294,7 +293,7 @@
   function showStep(n) {
     state.step = n;
     var backButton = $("suBack");
-    backButton.textContent = n === 1 ? "\u2190 Back to login" : "\u2190 Back";
+    backButton.querySelector("span").textContent = n === 1 ? "Back to login" : "Back";
     backButton.setAttribute("aria-label", n === 1 ? "Back to login" : "Back to previous step");
     steps.forEach(function (s) {
       s.classList.toggle("is-active", Number(s.getAttribute("data-step")) === n);
@@ -408,19 +407,38 @@
   var phoneInput = $("suPhone");
 
   function cleanPhone(raw) {
-    var d = String(raw).replace(/\D/g, "");
-    if (d.indexOf("63") === 0) d = d.slice(2);   // pasted +63 ...
-    d = d.replace(/^0+/, "");                     // pasted 09...
+    var text = String(raw).trim();
+    var d = text.replace(/\D/g, "");
+    if (/^\+?63/.test(text) && d.indexOf("63") === 0) d = d.slice(2); // Avoid duplicating the UI's +63 prefix.
     return d.slice(0, 10);
   }
 
+  function phoneError(raw) {
+    var text = String(raw).trim();
+    var digits = cleanPhone(raw);
+    if (!digits) return text ? "Please enter a complete Philippine mobile number (+63 9XX XXX XXXX)." : "Mobile number is required.";
+    if (digits.charAt(0) !== "9") return "Philippine mobile numbers must start with 9 after +63.";
+    if (!/^9\d{9}$/.test(digits)) return "Please enter a complete Philippine mobile number (+63 9XX XXX XXXX).";
+    return "";
+  }
+
   function formatPhone(d) {
-    return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 10)].filter(Boolean).join(" ");
+    return [d.slice(0, 3), d.slice(3, 6), d.slice(6)].filter(Boolean).join(" ");
   }
 
   phoneInput.addEventListener("input", function () {
-    var formatted = formatPhone(cleanPhone(phoneInput.value));
-    if (phoneInput.value !== formatted) phoneInput.value = formatted;
+    var value = phoneInput.value;
+    var caret = phoneInput.selectionStart || 0;
+    var digitsBeforeCaret = cleanPhone(value.slice(0, caret)).length;
+    var digits = cleanPhone(value);
+    var formatted = formatPhone(digits);
+    if (value !== formatted) {
+      phoneInput.value = formatted;
+      var position = Math.min(digitsBeforeCaret, digits.length);
+      if (position > 3) position++;
+      if (position > 7) position++;
+      phoneInput.setSelectionRange(position, position);
+    }
   });
 
   /* ---------------- step 2: OTP ---------------- */
@@ -606,9 +624,8 @@
     var terms = $("suTerms");
 
     var phoneDigits = cleanPhone(phone.value);
-    if (!/^9\d{9}$/.test(phoneDigits)) {
-      return setFieldError("phone", phone.value.trim() ? "Enter a valid Philippine mobile number." : "Mobile number is required.");
-    }
+    var phoneMessage = phoneError(phone.value);
+    if (phoneMessage) return setFieldError("phone", phoneMessage);
     var usernameMessage = usernameError(username.value);
     if (usernameMessage) return setFieldError("username", usernameMessage);
     var pw = password.value;

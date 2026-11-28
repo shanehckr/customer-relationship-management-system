@@ -1,35 +1,11 @@
 <?php
-/**
- * booking-deadlines.php - payment deadlines, automatic follow-up messages and auto-cancel.
- * Put it in the SAME folder as booking-feedback.php, payments-schema.php and quotations-schema.php.
- *
- * RULES
- *  - A customer can only pick an event date that is at least CUSTOMER_MIN_DAYS_BEFORE_EVENT days from today
- *    (checked in customer-inquiries-api.php and in the Add Inquiry calendar of customer-pages.js).
- *  - DEPOSIT deadline  = event date - DEADLINE_DEPOSIT_DAYS_BEFORE_EVENT days   (event in 3 days -> deposit due tomorrow).
- *    Not paid in time: the open quotation is withdrawn and the inquiry is closed (Declined). No money was taken, nothing to refund.
- *  - FULL PAYMENT deadline = event date - DEADLINE_FULL_PAYMENT_DAYS_BEFORE_EVENT days.
- *    Balance not paid in time: the booking is Cancelled. The deposit is NOT refundable.
- *  - The deadlines are the date + TIME the Sales Staff set (quotation "valid until", payment request "pay by", 8:00 AM - 8:00 PM).
- *  - Before each deadline the assigned Sales Staff "sends" a message to the customer's inbox (and a bell notification):
- *    ONE per day at 8:00 AM (DEADLINE_REMIND_FROM_HOUR), starting the day AFTER it was sent, never within 3 hours of it, until the deadline day.
- *    PLUS one "last call" on the deadline day, 2 hours before the cutoff time (never later than 9:00 PM, and only when that is 10:00 AM or later).
- *    A deadline set on the same day it was sent: no morning reminder; the last call is 2 hours before the cutoff, or 30 minutes before when the
- *    2-hour mark has already passed; nothing when less than that is left (see deadlineReminderStage()). The balance reminder carries a Pay Now card.
- *  - A deadline with no time chosen (a later date) ends at 11:59 PM of that day. Auto-close (deposit) and auto-cancel (balance) happen at the exact deadline time.
- *  - Only inquiries / bookings created on or after DEADLINES_APPLY_FROM are touched, so old test data is never cancelled.
- *
- *  - EVENT reminders: for confirmed, fully paid bookings only, the day before and the morning of the event (see processEventReminders()).
- *
- * HOW IT RUNS: cron-booking-deadlines.php (Windows Task Scheduler, every hour). It also runs (at most every 10 minutes)
- * when a staff member opens Bookings or a customer opens My Bookings, as a backup.
- * Every step is safe to repeat: each reminder is sent once (table deadline_reminders).
- */
+
 require_once __DIR__ . '/bookings-schema.php';
 require_once __DIR__ . '/quotations-schema.php';
 require_once __DIR__ . '/payments-schema.php';
 require_once __DIR__ . '/notifications-helper.php';
 require_once __DIR__ . '/xendit-invoice-verification.php';
+require_once __DIR__ . '/includes/Mail/EmailNotificationService.php';
 
 const CUSTOMER_MIN_DAYS_BEFORE_EVENT          = 3;
 const CUSTOMER_SUBMIT_CUTOFF_HOUR             = 21;   // 9:00 PM: an inquiry sent at or after this hour cannot use the 3-day date (staff close at 11:00 PM)
@@ -57,6 +33,14 @@ function customerEarliestEventDate(?int $now = null): string {
     $now = $now ?? time();
     $days = CUSTOMER_MIN_DAYS_BEFORE_EVENT + ((int)date('G', $now) >= CUSTOMER_SUBMIT_CUTOFF_HOUR ? 1 : 0);
     return date('Y-m-d', strtotime('+' . $days . ' days', $now));
+}
+
+/** Public inquiry form rules sourced from the same values used by server-side validation. */
+function customerInquiryDateRules(): array {
+    return [
+        'minimum_lead_days' => CUSTOMER_MIN_DAYS_BEFORE_EVENT,
+        'submit_cutoff_hour' => CUSTOMER_SUBMIT_CUTOFF_HOUR,
+    ];
 }
 function depositDeadlineDate(string $eventDate): string {
     return date('Y-m-d', strtotime($eventDate . ' -' . DEADLINE_DEPOSIT_DAYS_BEFORE_EVENT . ' days'));
@@ -154,13 +138,136 @@ function ensureDeadlineSchema(AppDatabase $db): void {
 }
 
 /** true only for the first caller: two requests at the same moment cannot send the same reminder twice. */
-function deadlineClaim(AppDatabase $db, string $kind, int $refId, int $stage): bool {
+function deadlineClaim(AppDatabase $db, string $kind, int $refId, int|string $stage): bool {
     $st = $db->prepare('INSERT IGNORE INTO deadline_reminders (kind, ref_id, stage, sent_at) VALUES (?,?,?,?)');
     $st->execute([$kind, $refId, $stage, date('Y-m-d H:i:s')]);
     return $st->rowCount() === 1;
 }
-function deadlineRelease(AppDatabase $db, string $kind, int $refId, int $stage): void {
+function deadlineRelease(AppDatabase $db, string $kind, int $refId, int|string $stage): void {
     $db->prepare('DELETE FROM deadline_reminders WHERE kind = ? AND ref_id = ? AND stage = ?')->execute([$kind, $refId, $stage]);
+}
+
+/** Queue one final payment reminder for this exact deadline. The email queue owns delivery retries. */
+function queueFinalPaymentReminderEmail(
+    AppDatabase $db,
+    int $recipientId,
+    string $recipientEmail,
+    string $recipientName,
+    string $kind,
+    int $recordId,
+    string $deadlineAt,
+    string $notificationType,
+    string $subject,
+    array $templateData,
+    string $relatedRecordType,
+    string $buttonText,
+    string $buttonUrl
+): bool {
+    // Key claims by deadline and keep email retries separate from daily Inbox reminders.
+    $claimStage = $deadlineAt;
+    $db->beginTransaction();
+    try {
+        if (!deadlineClaim($db, $kind, $recordId, $claimStage)) {
+            $db->rollBack();
+            return false;
+        }
+        $templateData['button_text'] = $buttonText;
+        $templateData['button_url'] = $buttonUrl;
+        $queued = EmailNotificationService::queue(
+            $db,
+            $recipientId,
+            $recipientEmail,
+            $recipientName,
+            $notificationType,
+            $subject,
+            $templateData,
+            'final-payment-reminder:' . $kind . ':' . $recordId . ':' . sha1($deadlineAt),
+            $relatedRecordType,
+            $recordId
+        );
+        if ($queued === null) {
+            $db->rollBack();
+            return false;
+        }
+        $db->commit();
+        return true;
+    } catch (Throwable $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        error_log('booking-deadlines: final payment reminder email could not be queued (' . get_class($e) . ').');
+        return false;
+    }
+}
+
+function queueFinalDepositReminder(AppDatabase $db, string $leadPk, array $quote, int $inquiryId, int $customerId, string $event, string $amount, string $deadlineAt, string $deadlineText): void {
+    $paid = $db->prepare("SELECT 1 FROM xendit_payments WHERE inquiry_id = ? AND status IN ('paid','duplicate','needs_review') LIMIT 1");
+    $paid->execute([$inquiryId]);
+    $booking = $db->prepare('SELECT 1 FROM bookings WHERE inquiry_id = ? LIMIT 1');
+    $booking->execute([$inquiryId]);
+    $lead = $db->prepare("SELECT stage FROM leads WHERE `$leadPk` = ? LIMIT 1");
+    $lead->execute([$inquiryId]);
+    $currentQuote = $db->prepare('SELECT status FROM quotations WHERE quotation_id = ? LIMIT 1');
+    $currentQuote->execute([(int)$quote['quotation_id']]);
+    if ($paid->fetchColumn() || $booking->fetchColumn()
+        || !in_array($currentQuote->fetchColumn(), ['Sent', 'Accepted'], true)
+        || in_array($lead->fetchColumn(), ['Declined', 'Cancelled'], true)) return;
+
+    $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+    $quoteReference = quoteRef($inquiryId);
+    queueFinalPaymentReminderEmail(
+        $db, $customerId, $recipient['email'], $recipient['name'], 'dep_email',
+        (int)$quote['quotation_id'], $deadlineAt, 'final_deposit_payment_reminder',
+        'Deposit Payment Reminder – ' . $quoteReference,
+        [
+            'heading' => 'Final Deposit Payment Reminder',
+            'greeting' => $recipient['name'],
+            'message' => 'Your deposit payment for ' . $event . ' is due by ' . $deadlineText . '. If payment is not received by this deadline, the inquiry will be closed and the event date released.',
+            'rows' => [
+                'Customer name' => $recipient['name'],
+                'Event name' => $event,
+                'Transaction reference' => $quoteReference,
+                'Outstanding payment amount' => $amount,
+                'Payment deadline' => $deadlineText,
+            ],
+        ],
+        'lead', 'Pay Deposit', EmailNotificationService::customerAppUrl($db, 'customer-inquiries.html')
+    );
+}
+
+function queueFinalBalanceReminder(AppDatabase $db, int $bookingId, int $inquiryId, string $reference, string $event, string $deadlineAt, string $deadlineText): void {
+    $current = $db->prepare('SELECT * FROM bookings WHERE booking_id = ? LIMIT 1');
+    $current->execute([$bookingId]);
+    $currentBooking = $current->fetch();
+    if (!$currentBooking || $currentBooking['booking_status'] !== 'Confirmed' || bookingBalanceDue($currentBooking) <= 0) return;
+    $paymentRequest = $db->prepare('SELECT status FROM payment_requests WHERE booking_id = ? ORDER BY id DESC LIMIT 1');
+    $paymentRequest->execute([$bookingId]);
+    if (in_array($paymentRequest->fetchColumn(), ['Paid', 'Needs Review'], true)) return;
+
+    if ($inquiryId > 0) {
+        $leadPk = quoteLeadPk($db);
+        $lead = $db->prepare("SELECT stage FROM leads WHERE `$leadPk` = ? LIMIT 1");
+        $lead->execute([$inquiryId]);
+        if (in_array($lead->fetchColumn(), ['Declined', 'Cancelled'], true)) return;
+    }
+    $customerId = (int)$currentBooking['customer_id'];
+    $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+    queueFinalPaymentReminderEmail(
+        $db, $customerId, $recipient['email'], $recipient['name'], 'bal_email',
+        $bookingId, $deadlineAt, 'final_balance_payment_reminder',
+        'Full Payment Reminder – ' . $reference,
+        [
+            'heading' => 'Final Full Payment Reminder',
+            'greeting' => $recipient['name'],
+            'message' => 'The remaining balance for ' . $event . ' is due by ' . $deadlineText . '. If payment is not received by this deadline, the booking will be cancelled and the deposit is non-refundable.',
+            'rows' => [
+                'Customer name' => $recipient['name'],
+                'Event name' => $event,
+                'Transaction reference' => $reference,
+                'Outstanding payment amount' => quotePeso(bookingBalanceDue($currentBooking)),
+                'Payment deadline' => $deadlineText,
+            ],
+        ],
+        'booking', 'Pay Remaining Balance', EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', $bookingId)
+    );
 }
 
 /** Shared nonblocking lock for the CLI worker and page-load fallback. */
@@ -205,7 +312,7 @@ function deadlineXenditClosureGate(array $paymentRows, array $scannedIds, array 
 function deadlineClosureStateEligible(?string $leadStage, ?string $quoteStatus, bool $hasBooking): bool {
     return !$hasBooking && $leadStage !== null && $quoteStatus !== null
         && in_array($quoteStatus, ['Sent', 'Accepted'], true)
-        && !in_array($leadStage, ['Declined', 'Completed', 'Confirmed'], true);
+        && !in_array($leadStage, ['Declined', 'Cancelled', 'Completed', 'Confirmed'], true);
 }
 
 /** Posts a message in the customer's chat under the staff member's name. Returns false when the inquiry has no chat yet. */
@@ -227,7 +334,7 @@ function deadlineSay(AppDatabase $db, string $crm, int $inquiryId, string $from,
     return true;
 }
 
-/* ============================== 1) DEPOSIT deadline ============================== */
+/* Deposit deadline processing. */
 function processDepositDeadlines(AppDatabase $db, string $crm): array {
     global $DB_CATERING;
     $res = ['reminded' => 0, 'closed' => 0, 'deferred_payment' => 0, 'errors' => 0];
@@ -239,7 +346,7 @@ function processDepositDeadlines(AppDatabase $db, string $crm): array {
                           FROM quotations q JOIN quotation_versions qv ON qv.quotation_id=q.quotation_id AND qv.version_number=q.version
                           JOIN leads l ON l.`$pk` = q.inquiry_id
                           WHERE q.status IN ('Sent','Accepted') AND l.event_date IS NOT NULL
-                            AND l.stage NOT IN ('Declined','Completed','Confirmed')
+                            AND l.stage NOT IN ('Declined','Cancelled','Completed','Confirmed')
                             AND COALESCE(q.sent_at, q.prepared_at) >= ?
                             AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.inquiry_id = q.inquiry_id)
                             AND q.quotation_id = (SELECT MAX(q2.quotation_id) FROM quotations q2 WHERE q2.inquiry_id = q.inquiry_id AND q2.status IN ('Sent','Accepted'))
@@ -334,10 +441,43 @@ function processDepositDeadlines(AppDatabase $db, string $crm): array {
             }
             deadlineInquiryLock($db, $iid, false);
             $res['closed']++;
+            try {
+                $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+                EmailNotificationService::queue(
+                    $db,
+                    $customerId,
+                    $recipient['email'],
+                    $recipient['name'],
+                    'inquiry_declined',
+                    'Inquiry closed - ' . $ref,
+                    [
+                        'heading' => 'Inquiry Closed',
+                        'greeting' => $recipient['name'],
+                        'message' => 'Your inquiry was closed because the required deposit was not received by the deadline.',
+                        'rows' => [
+                            'Inquiry reference' => $ref,
+                            'Event name' => $event,
+                            'Deposit deadline' => $dueText,
+                            'Status' => 'Declined',
+                        ],
+                        'button_text' => 'View My Inquiries',
+                        'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-inquiries.html'),
+                    ],
+                    'inquiry-declined-system:' . $iid,
+                    'lead',
+                    $iid
+                );
+            } catch (Throwable $e) {
+                error_log('booking-deadlines: could not queue inquiry closure email for ' . $iid . ': ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
+            }
             continue;
         }
         $stage = deadlineReminderStage($q['sent_at'] ?: ($q['prepared_at'] ?? null), $remindEnd);
         if ($stage === null) continue;
+        if ($stage >= 98) {
+            $finalDueText = deadlineLabel(substr($remindEnd, 0, 10), substr($remindEnd, 11, 5));
+            queueFinalDepositReminder($db, $pk, $q, $iid, $customerId, $event, $money, $remindEnd, $finalDueText);
+        }
         $db->beginTransaction();
         try {
             if (!deadlineClaim($db, 'dep2', (int)$q['quotation_id'], $stage)) { $db->rollBack(); continue; }
@@ -359,7 +499,7 @@ function processDepositDeadlines(AppDatabase $db, string $crm): array {
     return $res;
 }
 
-/* ============================== 2) FULL PAYMENT deadline ============================== */
+/* Full-payment deadline processing. */
 function processBalanceDeadlines(AppDatabase $db, string $crm): array {
     $res = ['reminded' => 0, 'cancelled' => 0];
     $st = $db->prepare("SELECT * FROM bookings
@@ -426,11 +566,46 @@ function processBalanceDeadlines(AppDatabase $db, string $crm): array {
                 'message' => ($b['customer_name'] ?: 'The customer') . ' did not pay ' . $money . ' for ' . $event . ' (' . $ref . ') by ' . $deadlineText . '. The booking was cancelled.',
                 'user_ids' => $ids,
                 'customer' => ['title' => 'Booking cancelled', 'message' => 'Your booking for ' . $event . ' was cancelled because the balance of ' . $money . ' was not paid by ' . $deadlineText . '. The deposit is non-refundable.']]);
+            try {
+                $customerId = (int)($cur['customer_id'] ?? 0);
+                $recipient = EmailNotificationService::customerRecipient($db, $customerId);
+                EmailNotificationService::queue(
+                    $db,
+                    $customerId,
+                    $recipient['email'],
+                    $recipient['name'],
+                    'booking_cancelled_system',
+                    'Booking cancelled - ' . $ref,
+                    [
+                        'heading' => 'Booking Cancelled',
+                        'greeting' => $recipient['name'],
+                        'message' => 'Your booking was cancelled because the remaining balance was not received by the payment deadline. The deposit is non-refundable.',
+                        'rows' => [
+                            'Booking reference' => $ref,
+                            'Event name' => $event,
+                            'Balance deadline' => $deadlineText,
+                            'Unpaid balance' => $money,
+                            'Status' => 'Cancelled',
+                        ],
+                        'button_text' => 'View My Bookings',
+                        'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-bookings.html', $bid),
+                    ],
+                    'booking-cancelled-system:' . $bid,
+                    'booking',
+                    $bid
+                );
+            } catch (Throwable $e) {
+                error_log('booking-deadlines: could not queue booking cancellation email for ' . $bid . ': ' . get_class($e) . ' (' . (int)$e->getCode() . ')');
+            }
             $res['cancelled']++;
             continue;
         }
         $stage = deadlineReminderStage($open['requested_at'] ?? ($b['created_at'] ?? null), $deadlineAt);
         if ($stage === null) continue;
+        if ($stage >= 98) {
+            $finalDeadlineText = deadlineLabel(substr($deadlineAt, 0, 10), substr($deadlineAt, 11, 5));
+            queueFinalBalanceReminder($db, $bid, $iid, $ref, $event, $deadlineAt, $finalDeadlineText);
+        }
         $reqId = $open ? (int)$open['id'] : 0;
         try {
             if (!$reqId) {   // staff did not send a request: create one with the automatic deadline so the reminder carries a Pay Now card
@@ -459,7 +634,7 @@ function processBalanceDeadlines(AppDatabase $db, string $crm): array {
     return $res;
 }
 
-/* ============================== 3) EVENT reminders (day before + morning of) ============================== */
+/* Event reminders. */
 /**
  * For CONFIRMED and FULLY PAID bookings only (unpaid or cancelled ones are ignored):
  *   - the day before the event (from DEADLINE_REMIND_FROM_HOUR) and the morning of the event (from the same hour)
@@ -511,7 +686,7 @@ function processEventReminders(AppDatabase $db, string $crm): array {
             // staff: the assigned Sales Staff + Admin / Manager (notifySend adds them)
             $who = trim((string)($b['customer_name'] ?? '')) !== '' ? $b['customer_name'] : 'The customer';
             notifySend($db, ['type' => 'deal', 'kind' => 'booking', 'ref' => $ref,
-                'title' => $isToday ? 'Event today' : 'Event tomorrow',
+                'title' => $isToday ? 'Event Today' : 'Event Tomorrow',
                 'message' => $event . ' (' . $ref . ') for ' . $who . ' is ' . $when . $timePart . '.',
                 'user_ids' => !empty($b['assigned_staff_id']) ? [(int)$b['assigned_staff_id']] : [],
                 'exclude_user_id' => $customerId]);

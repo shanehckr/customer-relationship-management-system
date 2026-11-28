@@ -37,8 +37,8 @@ if (empty($_SESSION["forgot_csrf_token"])) {
 
 $emailError = "";
 $formError = "";
-$successMessage = "";
-$neutralResetMessage = "If an account exists with this email address, we'll send you a password reset link.";
+$feedbackHeading = "";
+$feedbackMessage = "";
 
 if ($_SERVER["REQUEST_METHOD"] === "POST") {
     $submittedToken = $_POST["csrf_token"] ?? "";
@@ -157,6 +157,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         }
 
                         // Process only this request's notification; never drain earlier customer messages here.
+                        $deliveryStatus = "UNKNOWN";
                         try {
                             $worker = new EmailQueueWorker($db, $emailService, $mailConfig);
                             $worker->processOne($notificationId);
@@ -173,11 +174,15 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
                         } catch (Throwable $deliveryError) {
                             error_log("Password reset notification delivery attempt failed (" . get_class($deliveryError) . ", code " . $deliveryError->getCode() . ").");
                         }
+                        if ($deliveryStatus === "SENT") {
+                            $feedbackHeading = "Password Reset Link Sent!";
+                            $feedbackMessage = "We've sent a password reset link to your registered email address. Please check your inbox and spam folder.";
+                        }
                     }
+                } elseif (!$user) {
+                    $feedbackHeading = "Email Address Not Found";
+                    $feedbackMessage = "We couldn't find an account linked to this email address. Please double-check your email or sign up to create an account.";
                 }
-
-                // No account, inactive account, cooldown, or accepted queue request share the same response.
-                $successMessage = $neutralResetMessage;
             } catch (Throwable $e) {
                 error_log("Password reset request processing failed (" . get_class($e) . ", code " . $e->getCode() . ").");
                 $formError = "Password reset is temporarily unavailable. Please try again later.";
@@ -236,7 +241,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
 
     <section class="login-panel d-flex flex-column justify-content-center">
       <div class="form-content w-100">
-        <a href="login.php" class="su-link d-inline-block mb-2">&larr; Back to login</a>
+        <a href="login.php" class="back-link back-nav mb-4"><svg class="back-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg><span>Back to login</span></a>
 
         <h1 class="fw-bold mb-3">
           <span class="reset-word">Reset Your</span>
@@ -260,8 +265,8 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
             <div class="su-field-error" id="forgotEmailError" aria-live="polite"><?= htmlspecialchars($emailError, ENT_QUOTES, "UTF-8") ?></div>
           </div>
 
-          <?php if ($successMessage !== "") : ?>
-            <div class="su-help mb-3" role="status"><?= htmlspecialchars($successMessage, ENT_QUOTES, "UTF-8") ?></div>
+          <?php if ($feedbackHeading !== "" && $feedbackMessage !== "") : ?>
+            <div class="su-help mb-3" role="status"><strong><?= htmlspecialchars($feedbackHeading, ENT_QUOTES, "UTF-8") ?></strong><br><?= htmlspecialchars($feedbackMessage, ENT_QUOTES, "UTF-8") ?></div>
           <?php endif; ?>
 
           <button type="submit" class="btn btn-submit rounded-pill w-100 fw-semibold mb-3">Send Reset Link</button>

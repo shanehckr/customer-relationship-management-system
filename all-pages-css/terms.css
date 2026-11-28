@@ -43,16 +43,14 @@ body {
   font-weight: 800; color: var(--heading); font-size: 1.4rem; letter-spacing: 0.2px;
 }
 .back {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 9px 20px 9px 12px; border-radius: 999px; border: 1.5px solid var(--accent);
-  background: transparent; color: var(--accent-text); font: inherit; font-weight: 700; line-height: 1; cursor: pointer;
-  transition: background-color .2s ease, color .2s ease, transform .15s ease;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 0; border: 0; border-radius: 0;
+  background: transparent; color: #2bb673; font: inherit; font-size: 15px; font-weight: 600; line-height: 1.5; cursor: pointer;
+  transition: color .2s ease;
 }
-.back-icon { flex: none; transition: transform .2s ease; }
-.back:hover { background: var(--accent); color: #fff; }
-.back:hover .back-icon { transform: translateX(-3px); }
-.back:active { transform: scale(.97); }
-.back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.back-icon { flex: 0 0 15px; }
+.back:hover { color: #2bb673; text-decoration: underline; }
+.back:focus-visible { outline: 2px solid #2bb673; outline-offset: 3px; border-radius: 4px; }
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: 20px;
   padding: 32px 36px; margin-bottom: 24px;

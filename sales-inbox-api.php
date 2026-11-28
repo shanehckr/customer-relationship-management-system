@@ -1,24 +1,4 @@
 <?php
-/**
- * sales-inbox-api.php  (XAMPP / MySQL)   -   Sales Staff inbox
- *
- * Put this file in the SAME folder as customer-inbox-api.php.
- * It reads and writes the SAME conversation tables the customer inbox uses
- * (cib_conversations, cib_messages), so a message a customer sends in the "Messages" tab
- * shows up here, and a Sales Staff reply shows up in the customer's "Messages" tab.
- *
- * Only INQUIRY conversations are handled here. Support-ticket conversations (status "Support",
- * or linked from cib_tickets) belong to Customer Service Staff and are not shown here.
- * A conversation is created when a customer submits an inquiry and a staff member accepts it.
- *
- * Payment is now handled by PayMongo (xendit-api.php). The old receipt-upload / OCR /
- * confirm_payment flow has been removed. Booking creation happens automatically when PayMongo
- * confirms the deposit — no staff action required.
- *
- * Actions used by pages.js (crmInitSalesInbox):
- *   list_conversations, messages, send_message, payment_status
- */
-
 /* ------------------------- 1. SETTINGS (edit these) ------------------------- */
 $DB_NAME     = 'catering_crm';
 $DB_CATERING = 'catering_crm';   // leads table (same value as in inquiry-common.php)
@@ -39,7 +19,6 @@ $UPLOAD_DIR     = __DIR__ . '/uploads/inbox';
 $UPLOAD_URL     = 'uploads/inbox';
 $MAX_FILE_BYTES = 5 * 1024 * 1024;   // 5 MB per file
 $ALLOWED_EXT    = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
-/* ---------------------------------------------------------------------------- */
 
 date_default_timezone_set('Asia/Manila');
 ini_set('display_errors', '0');
@@ -58,7 +37,8 @@ function fail(string $message, int $status = 400): void {
     out(['success' => false, 'message' => $message], $status);
 }
 set_exception_handler(function ($e) {
-    fail('Server error: ' . $e->getMessage(), 500);
+    error_log('sales-inbox-api: ' . get_class($e) . ' (' . (int)$e->getCode() . '): ' . $e->getMessage());
+    fail('An unexpected database error occurred. Please try again later.', 500);
 });
 
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
@@ -156,6 +136,7 @@ function conversationQuery(AppDatabase $db, string $where, array $args): array {
     $base = "cv.id, cv.customer_id, cv.title, cv.reference, cv.status, cv.inquiry_id,
         cv.created_at, cv.updated_at,
         (SELECT m.message     FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+        (SELECT m.sender_id   FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_sender_id,
         (SELECT m.attachments FROM cib_messages m WHERE m.conversation_id = cv.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
         COALESCE((SELECT MAX(m.created_at) FROM cib_messages m WHERE m.conversation_id = cv.id), cv.updated_at) AS last_message_at,
         (SELECT COUNT(*) FROM cib_messages m WHERE m.conversation_id = cv.id AND m.sender_type = 'customer'
@@ -174,7 +155,8 @@ function conversationQuery(AppDatabase $db, string $where, array $args): array {
         $st->execute($args);
         $rows = $st->fetchAll();
     }
-    return array_map(function ($r) use ($db) {
+    $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+    return array_map(function ($r) use ($db, $currentUserId) {
         $name = trim((string)($r['customer_name'] ?? ''));
         $last = str_replace('**', '', staffAcceptText($db, $r['inquiry_id'], (string)$r['title'], (string)($r['reference'] ?: 'INQ-' . str_pad((string)$r['id'], 4, '0', STR_PAD_LEFT)), (string)$r['last_message']));
         if ($last === '' && !empty($r['last_attachments'])) $last = 'Sent an attachment';
@@ -189,6 +171,7 @@ function conversationQuery(AppDatabase $db, string $where, array $args): array {
             'customer_email'  => (string)($r['customer_email'] ?? ''),
             'customer_photo'  => inboxPhotoUrl($r['customer_photo_path'] ?? ''),
             'last_message'    => $last,
+            'last_message_mine' => $currentUserId > 0 && (int)($r['last_sender_id'] ?? 0) === $currentUserId,
             'last_message_at' => str_replace(' ', 'T', $r['last_message_at']),
             'created_at'      => str_replace(' ', 'T', $r['created_at']),
             'unread'          => (int)$r['unread'],
@@ -322,8 +305,8 @@ switch ($action) {
         $files = saveUploads($UPLOAD_DIR, $UPLOAD_URL, $MAX_FILE_BYTES, $ALLOWED_EXT);
         if ($text === '' && !$files) fail('Type a reply or attach a file.');
         if (mb_strlen($text) > 5000) fail('Message is too long (max 5000 characters).');
-        $db->prepare('INSERT INTO cib_messages (conversation_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,?,?)')
-           ->execute([$conv['id'], 'staff', $staffName, $text, $files ? json_encode($files) : null, now()]);
+        $db->prepare('INSERT INTO cib_messages (conversation_id, sender_type, sender_name, sender_id, message, attachments, created_at) VALUES (?,?,?,?,?,?,?)')
+           ->execute([$conv['id'], 'staff', $staffName, $staffId, $text, $files ? json_encode($files) : null, now()]);
         $db->prepare('UPDATE cib_conversations SET updated_at = ?, sales_read_at = ? WHERE id = ?')->execute([now(), now(), $conv['id']]);
         // Bell: the customer (+ Admin / Manager) sees the new message.
         notifySend($db, [

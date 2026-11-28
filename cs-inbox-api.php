@@ -1,18 +1,6 @@
 <?php
-/**
- * cs-inbox-api.php  (XAMPP / MySQL)   -   Customer Service Staff inbox
- *
- * Put this file in the SAME folder as customer-inbox-api.php.
- * It reads and writes the SAME support-ticket tables the customer inbox uses
- * (cib_tickets, cib_ticket_messages), so a ticket a customer creates shows up here,
- * and a staff reply shows up in the customer's "My Concerns" tab.
- * Only SUPPORT TICKETS are handled here. Inquiry conversations (Sales Staff) are not touched.
- *
- * Actions used by pages.js (crmInitCsInbox):
- *   list_tickets, ticket_messages, reply_ticket
- */
 
-/* ------------------------- 1. SETTINGS (edit these) ------------------------- */
+/* 1. Settings */
 $DB_NAME = 'catering_crm';
 // Where the customer's name / email come from. Change to match your customers table.
 // If this lookup fails, the inbox still works and shows "Customer #id".
@@ -29,7 +17,6 @@ $UPLOAD_DIR = __DIR__ . '/uploads/inbox';
 $UPLOAD_URL = 'uploads/inbox';
 $MAX_FILE_BYTES = 5 * 1024 * 1024;
 $ALLOWED_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'doc', 'docx', 'xls', 'xlsx'];
-/* ---------------------------------------------------------------------------- */
 
 require_once __DIR__ . '/notifications-helper.php';   // bell notifications (see notifications-api.php)
 
@@ -50,14 +37,15 @@ function fail(string $message, int $status = 400): void {
     out(['success' => false, 'message' => $message], $status);
 }
 set_exception_handler(function ($e) {
-    fail('Server error: ' . $e->getMessage(), 500);
+    error_log('cs-inbox-api: ' . get_class($e) . ' (' . (int)$e->getCode() . '): ' . $e->getMessage());
+    fail('An unexpected database error occurred. Please try again later.', 500);
 });
 
 // Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
 if (!defined('SESSION_API')) define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 
-/* ------------------------- 2. WHO IS LOGGED IN ------------------------- */
+/* 2. Staff authentication */
 function normRole($r): string {
     return trim(preg_replace('/\s+/', ' ', preg_replace('/[_-]+/', ' ', strtolower((string)$r))));
 }
@@ -67,8 +55,9 @@ $staffId = (int)($_SESSION['user_id'] ?? 0);
 if ($staffId < 1 || $role === '') fail('Please log in again.', 401);
 if (!in_array($role, array_map('normRole', $ALLOWED_ROLES), true)) fail('You do not have access to the support inbox.', 403);
 
-/* ------------------------- 3. DATABASE ------------------------- */
+/* 3. Database */
 require_once __DIR__ . '/config/database.php';
+require_once __DIR__ . '/includes/inbox-message-identity.php';
 $identity = $db->prepare("SELECT u.full_name, u.account_status, r.role_name FROM users u
                           JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? LIMIT 1");
 $identity->execute([$staffId]);
@@ -79,6 +68,7 @@ if (!$staffAccount || $staffAccount['account_status'] !== 'Active' ||
     fail('Please log in again.', 401);
 }
 $staffName = trim((string)$staffAccount['full_name']) ?: 'Customer Service Staff';
+$ticketSenderIdAvailable = ticketMessageSenderIdAvailable($db);
 
 $CUSTOMER_PHOTO_SQL = 'NULL';   // customer profile photo (users.photo_path), see inboxPhotoUrl()
 /* The customer's account lives in the users table (there is no customers table):
@@ -99,17 +89,13 @@ try {
     }
 } catch (Throwable $e) { error_log('inbox: could not read the users table: ' . $e->getMessage()); }
 
-// The customer inbox creates these tables. Make sure they exist, then add the 2 columns this inbox needs.
-    // Schema is installed from database/catering_crm.sql, never mutated in requests.
-    // Schema is installed from database/catering_crm.sql, never mutated in requests.
+// Ticket tables and columns are provisioned centrally; requests do not run schema changes.
 function ensureColumn(AppDatabase $db, string $table, string $column, string $definition): void {
-    // Inbox columns are provisioned centrally from database/catering_crm.sql.
 }
 ensureColumn($db, 'cib_tickets', 'priority', "VARCHAR(20) NOT NULL DEFAULT 'Medium'");
 ensureColumn($db, 'cib_tickets', 'cs_read_at', 'DATETIME NULL DEFAULT NULL');
-    // Schema is installed from database/catering_crm.sql, never mutated in requests.
 
-/* ------------------------- 4. HELPERS ------------------------- */
+/* 4. Helpers */
 /** A customer's profile photo as a web path (uploads/profile/...), or '' when they have none. Staff never have photos. */
 function inboxPhotoUrl($rel): string {
     $rel = trim((string)$rel);
@@ -122,9 +108,12 @@ function now(): string { return date('Y-m-d H:i:s'); }
 
 /** One ticket row with customer name / email, last message and unread count. */
 function ticketQuery(AppDatabase $db, string $where, array $args): array {
-    global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL;
+    global $CUSTOMER_TABLE, $CUSTOMER_ID_COL, $CUSTOMER_NAME_SQL, $CUSTOMER_EMAIL_COL, $CUSTOMER_PHOTO_SQL, $ticketSenderIdAvailable;
     $base = "t.id, t.customer_id, t.ticket_number, t.subject, t.status, t.priority, t.created_at, t.updated_at,
         (SELECT m.message FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_message,
+        " . ($ticketSenderIdAvailable
+            ? "(SELECT m.sender_id FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1)"
+            : "NULL") . " AS last_sender_id,
         (SELECT m.attachments FROM cib_ticket_messages m WHERE m.ticket_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_attachments,
         COALESCE((SELECT MAX(m.created_at) FROM cib_ticket_messages m WHERE m.ticket_id = t.id), t.updated_at) AS last_message_at,
         (SELECT COUNT(*) FROM cib_ticket_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'customer'
@@ -142,7 +131,8 @@ function ticketQuery(AppDatabase $db, string $where, array $args): array {
         $st->execute($args);
         $rows = $st->fetchAll();
     }
-    return array_map(function ($r) {
+    $currentUserId = (int)($_SESSION['user_id'] ?? 0);
+    return array_map(function ($r) use ($currentUserId) {
         $name = trim((string)($r['customer_name'] ?? ''));
         $last = (string)$r['last_message'];
         if ($last === '' && !empty($r['last_attachments'])) $last = 'Sent an attachment';
@@ -157,6 +147,7 @@ function ticketQuery(AppDatabase $db, string $where, array $args): array {
             'customer_email' => (string)($r['customer_email'] ?? ''),
             'customer_photo' => inboxPhotoUrl($r['customer_photo_path'] ?? ''),
             'last_message' => $last,
+            'last_message_mine' => $currentUserId > 0 && (int)($r['last_sender_id'] ?? 0) === $currentUserId,
             'last_message_at' => str_replace(' ', 'T', $r['last_message_at']),
             'created_at' => str_replace(' ', 'T', $r['created_at']),
             'unread' => (int)$r['unread'],
@@ -210,7 +201,7 @@ $action = $_GET['action'] ?? $_POST['action'] ?? '';
 $isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
 $text = trim((string)($_POST['message'] ?? ''));
 
-/* ------------------------- 5. ACTIONS ------------------------- */
+/* 5. Actions */
 switch ($action) {
 
     case 'list_tickets': {
@@ -235,8 +226,13 @@ switch ($action) {
         $files = saveUploads($UPLOAD_DIR, $UPLOAD_URL, $MAX_FILE_BYTES, $ALLOWED_EXT);
         if ($text === '' && !$files) fail('Type a reply or attach a file.');
         if (mb_strlen($text) > 5000) fail('Message is too long (max 5000 characters).');
-        $db->prepare('INSERT INTO cib_ticket_messages (ticket_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,?,?)')
-           ->execute([$ticket['id'], 'staff', $staffName, $text, $files ? json_encode($files) : null, now()]);
+        if ($ticketSenderIdAvailable) {
+            $db->prepare('INSERT INTO cib_ticket_messages (ticket_id, sender_type, sender_name, sender_id, message, attachments, created_at) VALUES (?,?,?,?,?,?,?)')
+               ->execute([$ticket['id'], 'staff', $staffName, $staffId, $text, $files ? json_encode($files) : null, now()]);
+        } else {
+            $db->prepare('INSERT INTO cib_ticket_messages (ticket_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,?,?)')
+               ->execute([$ticket['id'], 'staff', $staffName, $text, $files ? json_encode($files) : null, now()]);
+        }
         // First staff reply moves a new ticket to In Progress; replying also counts as reading.
         $db->prepare("UPDATE cib_tickets SET updated_at = ?, cs_read_at = ?, status = IF(status = 'Open', 'In Progress', status) WHERE id = ?")
            ->execute([now(), now(), $ticket['id']]);

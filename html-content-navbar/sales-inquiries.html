@@ -25,7 +25,7 @@
       <div class="dropdown av-stage" data-av-filter="stage">
         <button type="button" class="btn custom-dropdown-toggle d-flex justify-content-between align-items-center w-100"
                 data-bs-toggle="dropdown" aria-expanded="false">
-          <span>Inquiry Stage</span>
+          <span>Inquiry Status</span>
           <i class="bi bi-chevron-down ms-2" aria-hidden="true"></i>
         </button>
         <ul class="dropdown-menu custom-dropdown-menu" id="avStageMenu"></ul>
@@ -85,7 +85,7 @@
   <div class="qp-page">
 
     <header class="card qp-head">
-      <button type="button" class="btn csi-outline-btn qp-back" data-qp="back"><i class="bi bi-arrow-left" aria-hidden="true"></i> <span data-qp-out="back-label">Back to Inquiry Details</span></button>
+      <button type="button" class="iq-back qp-back" data-qp="back"><i class="bi bi-arrow-left" aria-hidden="true"></i><span data-qp-out="back-label">Back to Inquiry Details</span></button>
       <div class="qp-head-row">
         <h2 class="qp-title" data-qp-out="page-title">Create Quotation</h2>
       </div>
@@ -188,7 +188,7 @@
           <div><span class="av-d-label">Event name</span><span class="av-d-value" data-qp-out="event"></span></div>
           <div><span class="av-d-label">Event date</span><span class="av-d-value" data-qp-out="date"></span></div>
           <div><span class="av-d-label">Catering arrangement</span><span class="av-d-value" data-qp-out="arrangement"></span></div>
-          <div class="qp-span-2"><span class="av-d-label">Event location</span><span class="av-d-value" data-qp-out="location"></span></div>
+          <div class="qp-span-2"><span class="av-d-label" data-qp-out="location-label">Event Venue / Address</span><span class="av-d-value" data-qp-out="location"></span></div>
         </div>
 
         <h4 class="qp-doc-h">Detailed food breakdown</h4>
@@ -219,7 +219,7 @@
         </div>
 
         <div class="qp-doc-actions">
-          <button type="button" class="btn csi-outline-btn" data-qp="back-edit"><i class="bi bi-arrow-left" aria-hidden="true"></i> Back to Edit</button>
+          <button type="button" class="btn iq-back qp-doc-back" data-qp="back-edit"><i class="bi bi-arrow-left" aria-hidden="true"></i>Back to Edit</button>
           <span class="qp-grow"></span>
           <button type="button" class="btn csi-outline-btn" data-qp="save-draft">Save as Draft</button>
           <button type="button" class="btn modal-btn-save" data-qp="send"><i class="bi bi-send" aria-hidden="true"></i> <span data-qp-out="send-label">Send Quotation to Customer</span></button>

@@ -1,21 +1,5 @@
 <?php
-/**
- * sales-bookings-api.php - Bookings list + "Request Full Payment" (pages.js crmInitManagerBookings contract).
- *   GET  ?action=list             -> { success, bookings: [ {booking_ref, customer_name, event_title, event_date, event_time, location,
- *                                     arrangement, expected_guests, quotation_amount, amount_paid, remaining_balance, payment_status,
- *                                     assigned_staff, booking_status,
- *                                     payment_request, can_request_payment, default_due_date} ] }
- *   POST ?action=request_payment  booking_id, due_date (optional, YYYY-MM-DD), note (optional)
- *                                 -> asks the customer to pay the FULL remaining balance: saves a payment request, posts a chat message
- *                                    with a "Pay Now" card in the customer's inbox, and shows it in My Bookings > Payment.
- *   POST ?action=cancel_request   request_id   -> cancels a Pending request (e.g. to send a new one)
- *   POST ?action=update_progress  booking_id, status -> Sales Staff moves the food / service progress one step forward (see bookingProgress() in bookings-schema.php)
- * Admin / Manager see every booking; Sales Staff see only the bookings of inquiries they handle.
- * Payment requests are for SALES STAFF only: Admin / Manager get no payment_request, can_request_payment = false,
- * and request_payment / cancel_request answer 403 for them (so the Payment Request card is not shown on their Bookings page).
- * Needs payments-schema.php in the same folder.
- */
-// Shared session setup (30-minute timeout). bookings-api.php defines this first, so guard it.
+
 if (!defined('SESSION_API')) define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 

@@ -47,16 +47,16 @@ if (empty($_SESSION["signup_csrf_token"])) {
     <section class="welcome-panel flex-grow-1 d-flex flex-column justify-content-start">
       <div class="welcome-content w-100">
         <p class="welcome-label fw-semibold text-uppercase">Welcome to</p>
-        <h2 class="fw-bold">Create your customer account</h2>
+        <h2 class="fw-bold">Espinosilla's Kainan</h2>
         <div class="accent rounded-pill"></div>
-        <p class="description">Send inquiries, review quotations, follow your bookings and reach support in one place.</p>
+        <p class="description">Create an account to explore our catering services, send inquiries, and manage your bookings.</p>
       </div>
     </section>
 
     <section class="login-panel d-flex flex-column justify-content-center">
       <div class="form-content w-100">
 
-        <button type="button" class="su-link signup-back" id="suBack" aria-label="Back to login">&larr; Back to login</button>
+        <button type="button" class="su-link signup-back" id="suBack" aria-label="Back to login"><svg class="signup-back-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg><span>Back to login</span></button>
 
         <h1 class="fw-bold mb-3">
           <span class="log-word">Sign</span>
@@ -223,7 +223,7 @@ if (empty($_SESSION["signup_csrf_token"])) {
   </main>
   
   <script src="all-pages-js/toast.js?v=2"></script>
-  <script src="all-pages-js/signup.js?v=2"></script>
+  <script src="all-pages-js/signup.js?v=3"></script>
     <script src="all-pages-js/loading.js"></script>
   <script src="all-pages-js/cookie-consent.js" defer></script>
 </body>

@@ -82,3 +82,15 @@ if (!function_exists('crmLoadEnvironment')) {
 }
 
 crmLoadEnvironment(dirname(__DIR__));
+
+if (!function_exists('crmApplicationBaseUrl')) {
+    /** Canonical application URL; localhost is the documented local-development default. */
+    function crmApplicationBaseUrl(): string
+    {
+        $configuredUrl = getenv('CRM_APP_BASE_URL');
+        $baseUrl = $configuredUrl === false || trim((string) $configuredUrl) === ''
+            ? 'http://localhost/customer-relationship-management-system/'
+            : trim((string) $configuredUrl);
+        return rtrim($baseUrl, '/') . '/';
+    }
+}

@@ -196,9 +196,9 @@ if ($_SERVER["REQUEST_METHOD"] === "POST") {
     <section class="welcome-panel flex-grow-1 d-flex flex-column justify-content-start">
       <div class="welcome-content w-100">
         <p class="welcome-label fw-semibold text-uppercase">Welcome to</p>
-        <h2 class="fw-bold">Customer Management System</h2>
+        <h2 class="fw-bold">Espinosilla's Kainan</h2>
         <div class="accent rounded-pill"></div>
-        <p class="description">Connecting our team and customers, all in one place.</p>
+        <p class="description">Good food, memorable moments, and seamless experiences.</p>
       </div>
     </section>
 

@@ -27,7 +27,7 @@ $amountHtml = $amount !== ''
     ? '<div style="margin:20px 0;text-align:center"><div style="color:#156042;font-size:24px;font-weight:700">' . $escape($amount) . '</div></div>'
     : '';
 $buttonHtml = ($buttonText !== '' && $buttonUrl !== '')
-    ? '<div style="margin:22px 0;text-align:center"><a href="' . $escape($buttonUrl) . '" style="display:inline-block;background:#156042;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 22px;border-radius:4px">' . $escape($buttonText) . '</a></div>'
+    ? '<div style="margin:22px 0;text-align:center"><a href="' . $escape($buttonUrl) . '" style="display:inline-block;background:#156042;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:12px 22px;border-radius:12px">' . $escape($buttonText) . '</a></div>'
     : '';
 $html = '<div style="margin:0;padding:24px 12px;background:#f3f5f4;font-family:Arial,Helvetica,sans-serif;color:#202724">'
     . '<div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #edf0ee;border-radius:6px">'

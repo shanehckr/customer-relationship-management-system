@@ -13,7 +13,6 @@ $DB_CRM      = 'catering_crm';   // customers + conversation compatibility table
 
 const STAGE_NEW = 'New Inquiry';
 const STAGE_PROGRESS = 'In Progress';
-const STAGES = ['New Inquiry', 'In Progress', 'In Discussion', 'Quotation Preparation', 'Quotation Sent', 'Negotiation', 'Confirmed', 'Declined'];
 
 date_default_timezone_set('Asia/Manila');
 ini_set('display_errors', '0');
@@ -34,7 +33,10 @@ function fail(string $m, int $status = 400): void { out(['success' => false, 'me
 if (PHP_SAPI === 'cli') {
     set_exception_handler(function ($e) { error_log('CLI request failed: ' . get_class($e) . ' (' . (int)$e->getCode() . ')'); exit(1); });
 } else {
-    set_exception_handler(function ($e) { fail('Server error: ' . $e->getMessage(), 500); });
+    set_exception_handler(function ($e) {
+        error_log('inquiry-common: ' . get_class($e) . ' (' . (int)$e->getCode() . '): ' . $e->getMessage());
+        fail('An unexpected database error occurred. Please try again later.', 500);
+    });
 }
 
 if (PHP_SAPI !== 'cli' && session_status() === PHP_SESSION_NONE) session_start();
@@ -164,7 +166,9 @@ function shapeLead(array $r): array {
         'dishes'         => !empty($r['dishes']) ? (json_decode($r['dishes'], true) ?: []) : [],
         'customer_notes' => $r['notes'] ?? '',
         'stage'          => $r['stage'],
-        'status'         => $r['stage'],
+        'status'         => inquiryGeneralStatus((string)$r['stage']),
+        'inquiry_status' => inquiryGeneralStatus((string)$r['stage']),
+        'workflow_label' => inquiryWorkflowLabel((string)$r['stage']),
         'assigned_staff' => $r['assigned_staff_name'] ?? '',
         'submitted_at'   => $r['created_at'],
         'created_at'     => $r['created_at'],
@@ -179,6 +183,27 @@ function shapeLead(array $r): array {
         'service_fee_bracket'  => serviceFeeFor($r['arrangement'] ?? '', $r['expected_guests'] ?? 0)['bracket'] ?? '',
         'service_fee_editable' => !arrangementIsPickup($r['arrangement'] ?? ''),
     ];
+}
+
+/** General status is derived from authoritative workflow state; stage remains the detailed workflow value. */
+function inquiryGeneralStatus(string $stage, bool $hasBooking = false): string {
+    if ($stage === 'Cancelled') return 'Cancelled';
+    if ($stage === 'Declined') return 'Declined';
+    if ($hasBooking) return 'Confirmed';
+    return 'In Progress';
+}
+
+function inquiryWorkflowLabel(string $stage, ?array $quote = null, bool $hasBooking = false): string {
+    if ($stage === 'Cancelled') return 'Cancelled';
+    if ($stage === 'Declined') return 'Declined';
+    if ($hasBooking) return 'Booking Confirmed';
+    if ($quote && ($quote['status'] ?? '') === 'Accepted') return 'Quotation Accepted';
+    return match ($stage) {
+        'New Inquiry' => 'Submitted',
+        'Quotation Sent' => 'Quotation Sent',
+        'Negotiation' => 'Negotiation',
+        default => 'Under Review',
+    };
 }
 /** Find a lead by "INQ-0007" (or plain numeric id). */
 function leadIdFromRef(string $ref): int {
@@ -241,6 +266,17 @@ function customerPhotoUrl(array $user): string {
 }
 
 function enrichLeads(AppDatabase $db, string $crmDb, array $rows): array {
+    // General inquiry status depends on whether the lead has been converted to a booking.
+    $bookingLeads = [];
+    $leadIds = array_values(array_unique(array_filter(array_map(static fn($r) => (int)($r['lead_id'] ?? $r['id'] ?? 0), $rows))));
+    if ($leadIds) {
+        try {
+            $in = implode(',', array_fill(0, count($leadIds), '?'));
+            $st = $db->prepare("SELECT DISTINCT inquiry_id FROM bookings WHERE inquiry_id IN ($in)");
+            $st->execute($leadIds);
+            foreach ($st->fetchAll(AppDatabase::FETCH_COLUMN) as $inquiryId) $bookingLeads[(int)$inquiryId] = true;
+        } catch (Throwable $e) { error_log('enrichLeads: could not read inquiry bookings: ' . $e->getMessage()); }
+    }
     // 1) the customer's account (email / phone live in the users table; there is no customers table)
     // customers AND the assigned staff live in the users table (staff are loaded here for their profile photo)
     $ids = array_values(array_unique(array_filter(array_merge(
@@ -264,6 +300,9 @@ function enrichLeads(AppDatabase $db, string $crmDb, array $rows): array {
     $out = [];
     foreach ($rows as $r) {
         $s = shapeLead($r);
+        $hasBooking = isset($bookingLeads[(int)($r['lead_id'] ?? $r['id'] ?? 0)]);
+        $s['status'] = inquiryGeneralStatus((string)($r['stage'] ?? ''), $hasBooking);
+        $s['inquiry_status'] = $s['status'];
         $c = $customers[(int)($r['customer_id'] ?? 0)] ?? [];
         $email = firstOf($c, ['email', 'email_address']) ?: ($s['customer_email'] ?? '');
         $s['customer_email'] = $email;

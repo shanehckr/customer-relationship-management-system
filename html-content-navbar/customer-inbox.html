@@ -139,6 +139,13 @@
           <label class="cib-field" for="ticketDescription">Concern details
             <textarea id="ticketDescription" name="description" rows="6" required placeholder="Describe your concern..."></textarea>
           </label>
+          <div class="cib-field cib-ticket-attachments-field">
+            <span>Attachments (Optional)</span>
+            <input id="cibTicketAttachments" name="attachments[]" type="file" accept=".jpg,.jpeg,.png,.webp,.mp4,.webm,image/jpeg,image/png,image/webp,video/mp4,video/webm" multiple hidden>
+            <div id="cibTicketAttachmentPreviews" class="cb-image-preview-list fb-photos" aria-live="polite"></div>
+            <p id="cibTicketAttachmentCount" class="cb-image-message" aria-live="polite">0 of 4 files selected</p>
+            <p id="cibTicketAttachmentMessage" class="cb-image-message" role="status" aria-live="polite"></p>
+          </div>
         </div>
         <p class="cib-state cib-form-state" id="cibCreateTicketState" role="status" aria-live="polite" hidden></p>
         <footer class="cib-modal-actions">

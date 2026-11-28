@@ -3,24 +3,6 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/config/environment.php';
 
-/**
- * session-init.php - ONE place for session setup. Require it instead of calling session_start() yourself.
- *
- * What it does
- *   1. Secure session cookie settings (HttpOnly, SameSite=Lax, Secure automatically when the site runs on HTTPS).
- *   2. Starts the session.
- *   3. 30-minute inactivity timeout: if a logged-in user has been idle too long, the session is cleared.
- *
- * Optional constants - define them BEFORE the require:
- *   define('SESSION_API', true);          JSON endpoint: reply 401 {"code":"session_expired"} when the session timed out.
- *   define('SESSION_NO_REDIRECT', true);  login/logout pages: never redirect, just continue as logged out.
- *   define('SESSION_NO_TOUCH', true);     background polling (e.g. the notification bell): does NOT count as activity.
- *
- * With none of them (a normal protected page), an expired session redirects to login.php?timeout=1.
- *
- * Session ID regeneration is done in login.php right after a successful login: session_regenerate_id(true).
- */
-
 const SESSION_TIMEOUT_SECONDS = 30 * 60 ;   // 30 minutes of inactivity
 
 if (session_status() !== PHP_SESSION_ACTIVE) {

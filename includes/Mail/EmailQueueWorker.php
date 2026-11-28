@@ -28,15 +28,17 @@ final class EmailQueueWorker
 
         $this->db->beginTransaction();
         try {
+            $disabledTypes = EmailService::disabledNotificationTypes();
             $sql = "SELECT notification_id, sender_email, sender_identity, from_name, reply_to_email,
                            recipient_email, recipient_name, email_subject, template_key, payload_encrypted,
                            attempt_count
                     FROM notification_logs
                     WHERE channel = 'EMAIL' AND delivery_status = 'QUEUED'
+                      AND notification_type NOT IN (" . implode(',', array_fill(0, count($disabledTypes), '?')) . ")
                       AND (next_attempt_at IS NULL OR next_attempt_at <= UTC_TIMESTAMP())
                       AND (locked_until IS NULL OR locked_until <= UTC_TIMESTAMP())";
             $sql .= ' AND sender_identity IN (' . implode(',', array_fill(0, count($availableIdentities), '?')) . ')';
-            $params = $availableIdentities;
+            $params = array_merge($disabledTypes, $availableIdentities);
             if ($notificationId !== null) {
                 $sql .= ' AND notification_id = ?';
                 $params[] = $notificationId;

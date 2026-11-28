@@ -5,9 +5,11 @@ declare(strict_types=1);
  * Menu Management API.
  *
  *   GET  ?action=list    any signed-in user (Customer too: the inquiry form "Menu & Dishes" step reads this)
+ *   GET  ?action=archived Admin / Manager
  *   POST ?action=add     Admin / Manager   multipart: item_name, category, display_price, serving_specs, photo
  *   POST ?action=edit    Admin / Manager   multipart: menu_item_id + the same fields (photo is optional)
- *   POST ?action=delete  Admin / Manager   form: menu_item_id
+ *   POST ?action=delete  Admin / Manager   archive item; form: menu_item_id
+ *   POST ?action=restore Admin / Manager   restore archived item; form: menu_item_id
  *
  * Database structure is provisioned centrally from database/catering_crm.sql.
  *
@@ -358,6 +360,33 @@ try {
         ]);
     }
 
+    // ---------- ARCHIVED LIST (Admin / Manager only) ----------
+    if ($_SERVER["REQUEST_METHOD"] === "GET" && $action === "archived") {
+        if (!$canManage) {
+            respond(403, ["success" => false, "message" => "Only an Admin or Manager can view archived menu items."]);
+        }
+        $result = $conn->query(
+            "SELECT menu_item_id, item_name, category, display_price, serving_specs, photo_path, status
+             FROM menu_items
+             WHERE status = 'Archived' AND category IN ('Lechon', 'Bilao', 'Viands')
+             ORDER BY FIELD(category, 'Lechon', 'Bilao', 'Viands'), menu_item_id ASC"
+        );
+        $rows = $result->fetch_all(MYSQLI_ASSOC);
+        $tiersById = $tiersReady ? menu_load_tiers($conn, array_column($rows, "menu_item_id")) : [];
+        $items = array_map(
+            fn(array $row): array => menu_item_json($row, $tiersById[(int) $row["menu_item_id"]] ?? []),
+            $rows
+        );
+
+        respond(200, [
+            "success" => true,
+            "items" => $items,
+            "categories" => MENU_CATEGORIES,
+            "can_manage" => true,
+            "csrf_token" => $_SESSION["menu_csrf_token"]
+        ]);
+    }
+
     // ---------- ADD ----------
     if ($action === "add") {
         menu_require_manager($canManage);
@@ -490,6 +519,23 @@ try {
         $stmt->execute();
         if ($stmt->affected_rows < 1) respond(404, ["success" => false, "message" => "Active menu item not found."]);
         respond(200, ["success" => true, "message" => "Menu item archived."]);
+    }
+
+    // ---------- RESTORE (preserves the original row and historical references) ----------
+    if ($action === "restore") {
+        menu_require_manager($canManage);
+        $id = (int) ($_POST["menu_item_id"] ?? 0);
+        if ($id < 1) {
+            respond(400, ["success" => false, "message" => "Archived menu item not found."]);
+        }
+        $stmt = $conn->prepare(
+            "UPDATE menu_items SET status = 'Active', archived_at = NULL
+             WHERE menu_item_id = ? AND status = 'Archived'"
+        );
+        $stmt->bind_param("i", $id);
+        $stmt->execute();
+        if ($stmt->affected_rows < 1) respond(404, ["success" => false, "message" => "Archived menu item not found."]);
+        respond(200, ["success" => true, "message" => "Menu item restored."]);
     }
 
     respond(400, ["success" => false, "message" => "Unknown action."]);

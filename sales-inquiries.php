@@ -1,16 +1,5 @@
 <?php
-/**
- * sales-inquiries.php - Sales Staff > My Inquiries
- *   GET  ?action=list           -> inquiries assigned to the logged-in staff (+ conversation_id, unread_count, quotation)
- *   POST ?action=update_stage   -> inquiry_ref, stage, reason   (only your own inquiries; Declined needs a reason,
- *                                   and moving a Declined inquiry to another stage re-opens it)
- *   GET  ?action=menu          -> the official menu (categories, portion tiers, fixed prices) for the Create Quotation page
- *   POST ?action=quotation_save -> inquiry_ref, items (JSON), valid_until, notes, mode = save | revise, deposit_rate, discount, extra_charge
- *                                   Same quotation for Buffet with Setup, Pickup and Delivery. Additional fee: Pickup none (forced to 0),
- *                                   Delivery / Buffet with Setup editable (the page starts Delivery at DELIVERY_FEE_DEFAULT).
- *   POST ?action=quotation_send -> inquiry_ref          (sends the latest Draft to the customer + posts it in the chat)
- */
-// Shared session setup: secure cookie settings + 30-minute inactivity timeout (replies 401 "session_expired" as JSON).
+
 define('SESSION_API', true);
 require_once __DIR__ . '/session-init.php';
 
@@ -122,6 +111,10 @@ if ($action === 'menu') {
     out(['success' => true, 'items' => array_values(salesMenuCatalog($db))]);
 }
 
+if ($action === 'quotation_config') {
+    out(['success' => true, 'deposit_rate' => (int)round(QUOTE_DEPOSIT_RATE * 100)]);
+}
+
 if ($action === 'list') {
     $st = $db->prepare("
         SELECT l.*, c.id AS conversation_id,
@@ -135,113 +128,24 @@ if ($action === 'list') {
     $st->execute([$staff['id']]);
     $rows = enrichLeads($db, $DB_CRM, $st->fetchAll());
     $quotes = quotesByInquiry($db, array_column($rows, 'lead_id'));
-    foreach ($rows as &$r) $r = quoteAttach($r, $quotes[(int)$r['lead_id']] ?? null);
+    foreach ($rows as &$r) {
+        $q = $quotes[(int)$r['lead_id']] ?? null;
+        $r = quoteAttach($r, $q);
+        $book = $db->prepare('SELECT 1 FROM bookings WHERE inquiry_id = ? LIMIT 1');
+        $book->execute([(int)$r['lead_id']]);
+        $hasBooking = (bool)$book->fetchColumn();
+        $r['inquiry_status'] = inquiryGeneralStatus((string)$r['stage'], $hasBooking);
+        $r['workflow_label'] = inquiryWorkflowLabel((string)$r['stage'], $q, $hasBooking);
+    }
     unset($r);
     out(['success' => true, 'inquiries' => $rows]);
-}
-
-if ($action === 'update_stage') {
-    if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('POST required.', 405);
-    $lead = myLead($db, $staff, (string)($_POST['inquiry_ref'] ?? ''));
-    $iid = (int)$lead[$LEAD_PK];
-    $stage = trim((string)($_POST['stage'] ?? ''));
-    if (!in_array($stage, STAGES, true)) fail('Invalid stage.');
-    $old = (string)$lead['stage'];
-    $reason = trim((string)($_POST['reason'] ?? ''));
-    if (mb_strlen($reason) > 500) fail('The reason is too long (max 500 characters).');
-    $declining = $stage === 'Declined' && $old !== 'Declined';
-    $reopening = $old === 'Declined' && $stage !== 'Declined';
-    $ref = !empty($lead['inquiry_ref']) ? $lead['inquiry_ref'] : 'INQ-' . str_pad((string)$iid, 4, '0', STR_PAD_LEFT);
-    $evLabel = trim((string)($lead['event_name'] ?? '')) !== '' ? '"' . $lead['event_name'] . '"' : 'your event';   // customers see the event name, not INQ-0000
-
-    if ($declining) {
-        if (mb_strlen($reason) < 3) fail('Please give the customer a short reason for declining.');
-        $bk = $db->prepare('SELECT booking_ref, booking_id FROM bookings WHERE inquiry_id = ? LIMIT 1');
-        $bk->execute([$iid]);
-        if ($b = $bk->fetch()) fail('A booking (' . ($b['booking_ref'] ?: 'BK-' . str_pad((string)$b['booking_id'], 4, '0', STR_PAD_LEFT)) . ') already exists for this inquiry, so it cannot be declined.');
-    }
-
-    $db->beginTransaction();
-    try {
-        if ($declining) {
-            $db->prepare("UPDATE leads SET stage = ?, decline_reason = ?, declined_at = ? WHERE `$LEAD_PK` = ?")->execute([$stage, $reason, now(), $iid]);
-            // an open quotation can no longer be accepted or paid against
-            $db->prepare("UPDATE quotations SET status = 'Withdrawn' WHERE inquiry_id = ? AND status IN ('Draft','Sent','Accepted')")->execute([$iid]);
-        } elseif ($reopening) {
-            $db->prepare("UPDATE leads SET stage = ?, decline_reason = NULL, declined_at = NULL WHERE `$LEAD_PK` = ?")->execute([$stage, $iid]);
-        } else {
-            $db->prepare("UPDATE leads SET stage = ? WHERE `$LEAD_PK` = ?")->execute([$stage, $iid]);
-        }
-
-        if ($declining || $reopening) {                       // tell the customer in the chat
-            $cv = $db->prepare("SELECT id FROM `$DB_CRM`.cib_conversations WHERE inquiry_id = ? LIMIT 1");
-            $cv->execute([$iid]);
-            if ($conv = $cv->fetch()) {
-                $text = $declining
-                    ? 'We are sorry, but we are unable to take your inquiry for ' . $evLabel . '. Reason: ' . $reason . ' You are welcome to send a new inquiry anytime.'
-                    : 'Good news: your inquiry for ' . $evLabel . ' has been reopened. Our team will continue working on it and send you an updated quotation.';
-                $db->prepare("INSERT INTO `$DB_CRM`.cib_messages (conversation_id, sender_type, sender_name, message, attachments, created_at) VALUES (?,?,?,?,NULL,?)")
-                   ->execute([$conv['id'], 'staff', $staff['name'], $text, now()]);
-                $db->prepare("UPDATE `$DB_CRM`.cib_conversations SET updated_at = ?, sales_read_at = ? WHERE id = ?")->execute([now(), now(), $conv['id']]);
-            }
-        }
-        $db->commit();
-    } catch (Throwable $e) {
-        if ($db->inTransaction()) $db->rollBack();
-        throw $e;
-    }
-    if ($declining || $reopening) {      // Bell: the customer (+ Admin / Manager) is told
-        $evPlain = trim((string)($lead['event_name'] ?? '')) !== '' ? $lead['event_name'] : 'your event';
-        notifySend($db, [
-            'type' => 'lead', 'kind' => 'inquiry', 'ref' => $ref,
-            'title' => $declining ? 'Inquiry declined' : 'Inquiry reopened',
-            'message' => $staff['name'] . ($declining ? ' declined ' : ' reopened ') . $ref . ' (' . $evPlain . ').',
-            'user_ids' => [(int)($lead['customer_id'] ?? 0)],
-            'exclude_user_id' => $staff['id'],
-            'customer' => [
-                'title' => $declining ? 'Your inquiry was declined' : 'Your inquiry was reopened',
-                'message' => $declining ? 'We are unable to take your inquiry for ' . $evPlain . '. Reason: ' . $reason
-                                        : 'Your inquiry for ' . $evPlain . ' has been reopened. We will send you an updated quotation.',
-            ],
-        ]);
-    }
-    if ($declining) {
-        $recipient = EmailNotificationService::customerRecipient($db, (int) $lead['customer_id'], (string) ($lead['customer_email'] ?? ''), (string) ($lead['customer_name'] ?? ''));
-        EmailNotificationService::queue(
-            $db,
-            (int) $lead['customer_id'],
-            $recipient['email'],
-            $recipient['name'],
-            'inquiry_declined',
-            'Inquiry declined - ' . $ref,
-            [
-                'heading' => 'Inquiry Declined',
-                'greeting' => $recipient['name'],
-                'message' => 'We are unable to proceed with this inquiry.',
-                'rows' => [
-                    'Inquiry reference' => $ref,
-                    'Event name' => $evPlain,
-                    'Status' => 'Declined',
-                    'Explanation' => $reason,
-                ],
-                'button_text' => 'View My Inquiries',
-                'button_url' => EmailNotificationService::customerAppUrl($db, 'customer-inquiries.html'),
-            ],
-            'inquiry_declined:' . $iid,
-            'lead',
-            $iid
-        );
-    }
-    $quote = quotesByInquiry($db, [$iid], false, (string)($lead['customer_name'] ?? ''))[$iid] ?? null;
-    out(['success' => true, 'quotation' => $quote,
-         'message' => $declining ? 'Inquiry declined. The customer was notified.' : ($reopening ? 'Inquiry reopened. The customer was notified.' : 'Stage updated.')]);
 }
 
 if ($action === 'quotation_save') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('POST required.', 405);
     $lead = myLead($db, $staff, (string)($_POST['inquiry_ref'] ?? ''));
     $iid = (int)$lead[$LEAD_PK];
-    if ($lead['stage'] === 'Declined') fail('This inquiry is declined. Move it back to In Progress to reopen it before preparing a quotation.');
+    if (in_array($lead['stage'], ['Declined', 'Cancelled', 'Completed'], true)) fail('This inquiry is closed and can no longer be changed.');
 
     [$items, $subtotal] = quotationMenuLines($db, $_POST['items'] ?? '');
 
@@ -267,18 +171,37 @@ if ($action === 'quotation_save') {
     $deposit = round($total * $rate / 100, 2);
     $itemsJson = json_encode(array_map(static function($item) { unset($item['tier_id']); return $item; }, $items), JSON_UNESCAPED_UNICODE);
 
-    $rows = quoteRows($db, $iid);
-    $latest = $rows[0] ?? null;
-    if ($latest && $latest['status'] === 'Accepted') fail('The customer already accepted this quotation, so it can no longer be changed.');
-
     $db->beginTransaction();
     try {
+        $leadLock = $db->prepare("SELECT stage FROM leads WHERE `$LEAD_PK` = ? FOR UPDATE");
+        $leadLock->execute([$iid]);
+        $lockedLead = $leadLock->fetch();
+        $lockedStage = (string)($lockedLead['stage'] ?? '');
+        if (!$lockedLead || in_array($lockedStage, ['Declined', 'Cancelled', 'Completed'], true)) {
+            $db->rollBack();
+            fail('This inquiry is closed and can no longer be changed.');
+        }
+        $latestLock = $db->prepare('SELECT * FROM quotations WHERE inquiry_id = ? ORDER BY version DESC LIMIT 1 FOR UPDATE');
+        $latestLock->execute([$iid]);
+        $latest = $latestLock->fetch() ?: null;
+        if ($mode === 'revise') {
+            if (!$latest || !in_array((string)$latest['status'], ['Declined', 'Negotiation'], true) || $lockedStage !== 'Negotiation') {
+                $db->rollBack();
+                fail('A revised quotation can only be prepared after the customer requests changes.');
+            }
+        } elseif ($latest && (string)$latest['status'] !== 'Draft') {
+            $db->rollBack();
+            fail('Only a new inquiry or an existing draft can be prepared.');
+        }
         if ($latest && $latest['status'] === 'Draft') {
+            if ($mode === 'revise') {
+                $db->rollBack();
+                fail('Edit the existing draft instead of creating another version.');
+            }
             $quoteId = (int)$latest['quotation_id']; $version = (int)$latest['version'];
             $db->prepare('UPDATE quotations SET items=?,discount=?,extra_charge=?,total=?,deposit_amount=?,notes=?,prepared_by=?,prepared_by_id=?,prepared_at=? WHERE quotation_id=?')
                ->execute([$itemsJson,$discount,$extra,$total,$deposit,$notes,$staff['name'],$staff['id'],now(),$quoteId]);
         } else {
-            if ($latest && $mode !== 'revise' && $latest['status'] !== 'Withdrawn') fail('This was already sent. Use "Prepare Revised Version" to change it.');
             $version = $latest ? (int)$latest['version'] + 1 : 1;
             $db->prepare('INSERT INTO quotations (lead_id,inquiry_id,created_by,version,status,items,discount,extra_charge,total,deposit_amount,notes,prepared_by,prepared_by_id,prepared_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
                ->execute([$iid,$iid,$staff['id'],$version,'Draft',$itemsJson,$discount,$extra,$total,$deposit,$notes,$staff['name'],$staff['id'],now()]);
@@ -295,9 +218,15 @@ if ($action === 'quotation_send') {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('POST required.', 405);
     $lead = myLead($db, $staff, (string)($_POST['inquiry_ref'] ?? ''));
     $iid = (int)$lead[$LEAD_PK];
-    if ($lead['stage'] === 'Declined') fail('This inquiry is declined. Move it back to In Progress to reopen it before sending a quotation.');
     $db->beginTransaction();
     try {
+        $leadLock = $db->prepare("SELECT stage FROM leads WHERE `$LEAD_PK` = ? FOR UPDATE");
+        $leadLock->execute([$iid]);
+        $lockedLead = $leadLock->fetch();
+        if (!$lockedLead || in_array((string)$lockedLead['stage'], ['Declined', 'Cancelled', 'Completed'], true)) {
+            $db->rollBack();
+            fail('This inquiry is closed and can no longer be changed.');
+        }
         $st = $db->prepare('SELECT * FROM quotations WHERE inquiry_id = ? ORDER BY version DESC LIMIT 1 FOR UPDATE');
         $st->execute([$iid]);
         $q = $st->fetch();

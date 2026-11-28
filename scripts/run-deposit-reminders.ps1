@@ -20,6 +20,15 @@ if ((Test-Path -LiteralPath $logFile) -and (Get-Item -LiteralPath $logFile).Leng
     Move-Item -LiteralPath $logFile -Destination ($logFile + '.1') -Force
 }
 $output = & $PhpPath $worker 2>&1
-$exitCode = $LASTEXITCODE
-if ($output) { Add-Content -LiteralPath $logFile -Value ($output | ForEach-Object { [string]$_ }) }
-exit $exitCode
+$deadlineExitCode = $LASTEXITCODE
+if ($output) { Add-Content -LiteralPath $logFile -Value ($output | ForEach-Object { '[deadlines] ' + [string]$_ }) }
+
+# Use the same scheduled task to deliver queued reminders. This keeps final payment
+# email delivery independent of browser requests and avoids creating another task.
+$emailWorker = Join-Path $projectRoot 'cron-email-queue.php'
+$emailOutput = & $PhpPath $emailWorker 2>&1
+$emailExitCode = $LASTEXITCODE
+if ($emailOutput) { Add-Content -LiteralPath $logFile -Value ($emailOutput | ForEach-Object { '[email queue] ' + [string]$_ }) }
+
+if ($deadlineExitCode -ne 0 -or $emailExitCode -ne 0) { exit 1 }
+exit 0

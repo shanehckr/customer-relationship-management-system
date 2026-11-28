@@ -220,6 +220,7 @@ const CRM_LEAD_STAGES = [
   "In Progress",
   "In Discussion",
   "Declined",
+  "Cancelled",
 ];
 const CRM_DEAL_STAGES = [
   "Quotation Preparation",
@@ -244,6 +245,7 @@ const CRM_STAGE_CLASS = {
   confirmed: "stage-won",
   completed: "stage-won",
   declined: "stage-loss",
+  cancelled: "stage-loss",
   // Accept legacy stage names returned by the API.
   qualified: "stage-qualified",
   unqualified: "stage-loss",
@@ -545,8 +547,8 @@ function crmRenderSalesDashboard(root, data) {
 // green = resolved / confirmed / low, teal = completed, purple = scheduled, slate / grey = new / closed / none.
 const CRM_PALETTE = { green: "#2bb673", blue: "#3b82f6", amber: "#f59e0b", orange: "#f97316", yellow: "#eab308", red: "#ef4444", teal: "#14b8a6", purple: "#8b5cf6", grey: "#94a3b8", slate: "#64748b" };
 // Dashboards keep "New Inquiry" (= available inquiries not yet claimed by sales staff) and add "Confirmed".
-const CRM_OPS_INQUIRY = [["New Inquiry", CRM_PALETTE.slate], ["In Progress", CRM_PALETTE.blue], ["Confirmed", CRM_PALETTE.green], ["Declined", CRM_PALETTE.red]];
-// Count for one inquiry stage; the API may still send the confirmed ones under "Completed".
+const CRM_OPS_INQUIRY = [["In Progress", CRM_PALETTE.blue], ["Confirmed", CRM_PALETTE.green], ["Declined", CRM_PALETTE.red], ["Cancelled", CRM_PALETTE.red]];
+// Count for one approved inquiry status; retain the legacy Completed alias for older dashboard payloads.
 function crmInquiryStageCount(src, label) {
   const s = src || {};
   const n = Number(s[label]);
@@ -554,8 +556,8 @@ function crmInquiryStageCount(src, label) {
   return label === "Confirmed" ? Number(s["Completed"]) || 0 : 0;
 }
 const CRM_OPS_BOOKING = [["Confirmed", CRM_PALETTE.blue], ["Preparing", CRM_PALETTE.amber], ["Ready for Pickup", CRM_PALETTE.purple], ["Out for Delivery", CRM_PALETTE.purple], ["On the Way", CRM_PALETTE.purple], ["Setting Up", CRM_PALETTE.purple], ["Completed", CRM_PALETTE.green], ["Cancelled", CRM_PALETTE.red]];
-const CRM_OPS_TICKET = [["Open", CRM_PALETTE.red], ["In Progress", CRM_PALETTE.blue], ["Waiting", CRM_PALETTE.amber], ["Resolved", CRM_PALETTE.green], ["Closed", CRM_PALETTE.slate]];
-const CRM_OPS_STATUS_CLASS = { "in progress": "stage-qualified", preparing: "stage-proposal", "ready for pickup": "stage-negotiation", "out for delivery": "stage-negotiation", "on the way": "stage-negotiation", "setting up": "stage-negotiation", confirmed: "stage-won", completed: "stage-won", cancelled: "stage-loss", declined: "stage-loss", "new inquiry": "stage-qualified", open: "stage-new", waiting: "stage-proposal", resolved: "stage-won", closed: "stage-new" };
+const CRM_OPS_TICKET = [["Open", CRM_PALETTE.red], ["In Progress", CRM_PALETTE.blue], ["Pending", CRM_PALETTE.amber], ["Resolved", CRM_PALETTE.green]];
+const CRM_OPS_STATUS_CLASS = { "in progress": "stage-qualified", preparing: "stage-proposal", "ready for pickup": "stage-negotiation", "out for delivery": "stage-negotiation", "on the way": "stage-negotiation", "setting up": "stage-negotiation", confirmed: "stage-won", completed: "stage-won", cancelled: "stage-loss", declined: "stage-loss", "new inquiry": "stage-qualified", open: "stage-new", waiting: "stage-proposal", pending: "stage-proposal", resolved: "stage-won", closed: "stage-new" };
 const CRM_OPS_PRIORITY_CLASS = { urgent: "stage-loss", high: "stage-proposal", medium: "stage-qualified", low: "stage-new" };
 
 // Bar chart reusing the Sales dashboard grid / axis; every bar can carry its own colour and be clicked to filter.
@@ -967,7 +969,7 @@ function crmUpdateStageFilter(typeValue) {
 //   inquiry_ref, new_staff_id, new_staff_name, previous_staff, reason, reason_note.
 //   On success the card shows the new staff and "crm:reassign-inquiry" is fired.
 // Delete: turned off on purpose. Inquiries are never deleted from this page (canDelete = false below).
-const CRM_INQUIRY_STAGES = ["In Progress", "Confirmed", "Declined"];
+const CRM_INQUIRY_STATUSES = ["In Progress", "Confirmed", "Declined", "Cancelled"];
 
 // Inquiry stage name shown everywhere: the API may still send "Completed", which this page calls "Confirmed".
 function crmInquiryStageName(stage) {
@@ -975,7 +977,7 @@ function crmInquiryStageName(stage) {
 }
 
 // Stage filter on the Sales Staff Inquiries page (same stages as the manager / admin filter above).
-const CRM_SALES_FILTER_STAGES = CRM_INQUIRY_STAGES;
+const CRM_SALES_FILTER_STAGES = ["In Progress", "Confirmed", "Declined", "Cancelled"];
 
 function crmInquiryPick(record, keys) {
   for (const key of keys) {
@@ -984,6 +986,54 @@ function crmInquiryPick(record, keys) {
       return String(value).trim();
   }
   return "";
+}
+
+/* Read-only address presentation: preserve source text while joining available locality fields once. */
+function crmFormatReadOnlyAddress(record, arrangementText) {
+  record = record && typeof record === "object" ? record : {};
+  let details = record.arrangement_details || record.delivery_details;
+  if (typeof details === "string") { try { details = JSON.parse(details); } catch (_) { details = null; } }
+  if (!details || typeof details !== "object" || Array.isArray(details)) details = {};
+  const get = (key) => {
+    const aliases = {
+      barangay: ["barangay", "delivery_barangay", "onsite_barangay"],
+      city: ["city", "city_municipality", "delivery_city", "onsite_city"],
+      province: ["province", "delivery_province", "onsite_province"],
+      landmark: ["landmark", "delivery_landmark", "onsite_landmark"],
+      instructions: ["instructions", "delivery_instructions"],
+      setup_notes: ["setup_notes", "onsite_setup_notes"],
+      pickup_notes: ["pickup_notes"],
+    }[key] || [key];
+    for (const source of [details, record]) {
+      for (const alias of aliases) {
+        const value = source[alias];
+        if (value != null && String(value).trim() !== "") return String(value).trim();
+      }
+    }
+    return "";
+  };
+  const parts = [];
+  const normalizePart = (value) => String(value).toLowerCase().replace(/\s+/g, " ").replace(/^[\s.,;]+|[\s.,;]+$/g, "");
+  const add = (value) => {
+    const text = String(value == null ? "" : value).trim();
+    if (!text) return;
+    const normalized = normalizePart(text);
+    const currentSegments = parts.join(", ").split(",").map(normalizePart);
+    if (!currentSegments.includes(normalized)) parts.push(text);
+  };
+  add(crmInquiryPick(record, ["event_location", "delivery_address", "location", "venue", "venue_address", "address"]));
+  ["barangay", "city", "province"].forEach((key) => add(get(key)));
+
+  const arrangement = String(arrangementText || "");
+  const extraRows = /pick-?up/i.test(arrangement)
+    ? [["pickup_notes", "Pickup Notes"]]
+    : /deliver/i.test(arrangement)
+      ? [["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
+      : crmArrangementHasPax(arrangement) ? [["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
+  return {
+    full: parts.join(", "),
+    extras: extraRows.map(([key, label]) => [label, get(key)]).filter((row) => row[1]),
+  };
 }
 
 function crmInquiryDate(value) {
@@ -1002,6 +1052,16 @@ function crmInquiryDate(value) {
 // The saved value for the on-site service is still "Buffet with setup" in older records; everywhere it is SHOWN it reads "On-site Catering".
 function crmArrangementLabel(value) {
   const s = String(value == null ? "" : value).trim();
+  const key = s.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const labels = {
+    "on site catering": "On Site Catering",
+    "onsite catering": "On Site Catering",
+    "food delivery": "Delivery",
+    "delivery": "Delivery",
+    "customer pickup": "Pickup",
+    "pickup": "Pickup",
+  };
+  if (labels[key]) return labels[key];
   return /^buffet(\s+(with\s+)?set-?\s?up|\s+service)?$/i.test(s) ? "On-site Catering" : s;
 }
 function crmArrangementHasPax(text) {
@@ -1028,7 +1088,7 @@ function crmDeadlineLabel(date, time) {
   const iso = String(date).slice(0, 10), tm = new Date();
   tm.setDate(tm.getDate() + 1);
   const tomorrowIso = tm.getFullYear() + "-" + String(tm.getMonth() + 1).padStart(2, "0") + "-" + String(tm.getDate()).padStart(2, "0");
-  const when = iso === crmTodayIso() ? "today, " : iso === tomorrowIso ? "tomorrow, " : "";   // from the day after tomorrow on, just the date
+  const when = iso === crmTodayIso() ? "Today, " : iso === tomorrowIso ? "Tomorrow, " : "";
   return when + (t ? day + ", " + t : day + ", 11:59 PM");   // no time chosen = the end of that day
 }
 function crmDeadlineProblem(date, time, what) {
@@ -1126,21 +1186,17 @@ function crmInquiryFields(record) {
   const guestsRaw = crmInquiryPick(record, ["expected_guests", "guests", "pax"]);
   const hasPax = crmArrangementHasPax(crmInquiryPick(record, ["arrangement", "service_type", "service"]));
   const guestsNum = hasPax ? guestsRaw.replace(/\s*(pax|guests?)$/i, "") : "";
-  const rawArrangementDetails = record && (record.arrangement_details || record.delivery_details);
-  let arrangementDetails = rawArrangementDetails && typeof rawArrangementDetails === "object" ? rawArrangementDetails : null;
-  if (!arrangementDetails && typeof rawArrangementDetails === "string") {
-    try { arrangementDetails = JSON.parse(rawArrangementDetails); } catch (_) { arrangementDetails = null; }
-  }
-  if (!arrangementDetails || typeof arrangementDetails !== "object" || Array.isArray(arrangementDetails)) arrangementDetails = null;
   const arrangement = crmInquiryPick(record, ["arrangement", "service_type", "service"]);
   return {
+    id: crmInquiryPick(record, ["lead_id", "inquiry_id", "id"]),
     customer: crmInquiryPick(record, ["customer_name", "customer", "client_name"]) || "Customer",
     ref: crmInquiryPick(record, ["inquiry_ref", "inquiry_code", "reference", "inquiry_id", "id"]),
     title: crmInquiryPick(record, ["event_title", "event_name", "inquiry_event_name", "title"]) || "—",
     arrangement: crmArrangementLabel(arrangement) || "—",
     locationLabel: /pick-?up/i.test(arrangement) ? "Pickup Location" : (/deliver/i.test(arrangement) ? "Delivery Address" : "Event Venue / Address"),
-    arrangementDetails,
-    stage: crmInquiryStageName(crmInquiryPick(record, ["stage", "status", "inquiry_status"]) || "New Inquiry"),
+    address: crmFormatReadOnlyAddress(record, arrangement),
+    stage: crmInquiryPick(record, ["workflow_label"]) || crmInquiryStageName(crmInquiryPick(record, ["stage", "status", "inquiry_status"]) || "Submitted"),
+    generalStatus: crmInquiryPick(record, ["inquiry_status"]) || crmInquiryStageName(crmInquiryPick(record, ["stage", "status"]) || "In Progress"),
     staff: crmInquiryPick(record, ["assigned_staff", "assigned_to", "staff_name"]) || "Unassigned",
     eventDate: crmInquiryDate(crmInquiryPick(record, ["event_date", "date"])),
     eventTime: crmInquiryPick(record, ["event_time_display"]) || crmTimeText(crmInquiryPick(record, ["event_time", "time"])),
@@ -1160,11 +1216,11 @@ function crmInquiryCardHTML(record, canDelete, index, canReassign) {
     f.customer.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("") || "?";
   const stageClass = CRM_STAGE_CLASS[f.stage.toLowerCase()] || "stage-new";
   const refAttr = crmEscape(f.ref);
-  const inqLocation = crmInquiryPick(record, ["event_location", "location", "venue", "venue_address"]) || "—";
+  const inqLocation = f.address.full || "—";
 
   return (
     '<article class="card iq-card av-card" data-index="' + index + '" data-ref="' + refAttr + '"' +
-    ' data-stage="' + crmEscape(f.stage.toLowerCase()) + '"' +
+      ' data-stage="' + crmEscape(f.generalStatus.toLowerCase()) + '"' +
     ' data-staff="' + crmEscape(f.staff.toLowerCase()) + '">' +
       '<div class="iq-card-head">' +
         crmAvatarHTML(initials, f.photo) +
@@ -1181,7 +1237,7 @@ function crmInquiryCardHTML(record, canDelete, index, canReassign) {
         (f.eventTime ? '<div><span class="stat-label">' + crmEscape(f.timeLabel) + '</span><span class="av-fact">' + crmEscape(f.eventTime) + "</span></div>" : "") +
         (f.hasPax ? '<div><span class="stat-label">Guests (PAX)</span><span class="av-fact is-green">' + crmEscape(guests) + "</span></div>" : "") +
         '<div><span class="stat-label">Catering Arrangement</span><span class="av-fact">' + crmEscape(f.arrangement) + "</span></div>" +
-        '<div><span class="stat-label">' + crmEscape(f.locationLabel) + '</span><span class="av-fact av-loc" title="' + crmEscape(inqLocation) + '">' + crmEscape(inqLocation) + "</span></div>" +
+        '<div><span class="stat-label">' + crmEscape(f.locationLabel) + '</span><span class="av-fact" title="' + crmEscape(inqLocation) + '">' + crmEscape(inqLocation) + "</span></div>" +
         '<div><span class="stat-label">Assigned Staff</span><span class="av-fact">' + crmEscape(f.staff) + "</span></div>" +
       "</div>" +
       '<div class="iq-actions">' +
@@ -1292,7 +1348,7 @@ function crmInitManagerInquiries(root) {
   window.activeTableFilters = filters;
   window.applyTableFilters = applyFilters;
 
-  window.populateDropdown("stagesFilterDropdown", CRM_INQUIRY_STAGES, "All Stages");
+  window.populateDropdown("stagesFilterDropdown", CRM_INQUIRY_STATUSES, "All Statuses");
 
   function render(list) {
     records = Array.isArray(list) ? crmInquirySort(list) : [];
@@ -1305,11 +1361,21 @@ function crmInitManagerInquiries(root) {
     window.populateDropdown("staffFilterDropdownList", staffNames, "All Staff");
     applyFilters();
     // coming from the Inbox ("Open Inquiry Details"): open that inquiry straight away
-    const wantInquiry = window.crmPendingInquiryRef;
-    if (wantInquiry && records.length) {
+    const wantInquiryId = window.crmPendingInquiryId;
+    const wantInquiryRef = window.crmPendingInquiryRef;
+    if (wantInquiryId || wantInquiryRef) {
+      window.crmPendingInquiryId = null;
       window.crmPendingInquiryRef = null;
-      const at = records.findIndex((r) => String(crmInquiryFields(r).ref) === String(wantInquiry));
-      if (at >= 0) showDetail(at);
+      const at = records.findIndex((r) =>
+        (wantInquiryId && String(crmInquiryFields(r).id) === String(wantInquiryId)) ||
+        (wantInquiryRef && String(crmInquiryFields(r).ref) === String(wantInquiryRef))
+      );
+      if (at >= 0) {
+        if (input) input.value = "";
+        filters.stage = "all"; filters.staff = "all";
+        applyFilters();
+        showDetail(at);
+      } else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("inquiry");
     }
   }
   window.crmRenderInquiries = render;
@@ -1565,12 +1631,13 @@ function crmAvDateTime(value) {
 function crmAvCardHTML(record, index, mine) {
   const f = crmInquiryFields(record);
   const guests = f.guestsNum ? f.guestsNum + " PAX" : "—";
-  const location = crmInquiryPick(record, ["event_location", "location", "venue", "venue_address"]) || "—";
+  const location = f.address.full || "—";
   const submittedRaw = crmInquiryPick(record, ["submitted_at", "created_at"]);
   const dateRaw = crmInquiryPick(record, ["event_date", "date"]).slice(0, 10);
   const ts = Date.parse(String(submittedRaw).replace(" ", "T")) || 0;
   const key = crmCalArrangementKey(f.arrangement);
-  const stageClass = CRM_STAGE_CLASS[f.stage.toLowerCase()] || "stage-new";
+  const badgeStage = mine && /^(confirmed|declined|cancelled)$/i.test(f.generalStatus) ? f.generalStatus : f.stage;
+  const stageClass = CRM_STAGE_CLASS[badgeStage.toLowerCase()] || "stage-new";
   // "My Inquiries" (data-mode="mine"): the card also gets an Open Chat button with the unread count.
   const unread = Number(crmInquiryPick(record, ["unread_count", "unread", "unread_messages"])) || 0;
   const actions = mine
@@ -1580,14 +1647,14 @@ function crmAvCardHTML(record, index, mine) {
       "</div>"
     : '<button type="button" class="btn modal-btn-save av-view" data-av-action="view">View Details</button>';
   return (
-    '<article class="card av-card" data-index="' + index + '" data-ref="' + crmEscape(f.ref) + '" data-arr="' + key + '" data-stage="' + crmEscape(f.stage.toLowerCase()) + '" data-date="' + crmEscape(dateRaw) + '" data-ts="' + ts + '">' +
+    '<article class="card av-card" data-index="' + index + '" data-ref="' + crmEscape(f.ref) + '" data-arr="' + key + '" data-stage="' + crmEscape(f.generalStatus.toLowerCase()) + '" data-date="' + crmEscape(dateRaw) + '" data-ts="' + ts + '">' +
       '<div class="iq-card-head">' +
         crmAvatarHTML(crmTicketInitials(f.customer), f.photo) +
         '<div class="iq-head-main">' +
           '<h4 class="iq-customer">' + crmEscape(f.customer) + "</h4>" +
           '<span class="iq-ref">' + crmEscape(f.ref) + "</span>" +
         "</div>" +
-        '<span class="stage-pill ' + stageClass + '">' + crmEscape(f.stage) + "</span>" +
+        '<span class="stage-pill ' + stageClass + '">' + crmEscape(badgeStage) + "</span>" +
       "</div>" +
       '<div class="av-title-row"><h4 class="av-title">' + crmEscape(f.title) + "</h4>" +
         '<time class="av-time">' + crmEscape(mine ? crmInquiryDate(submittedRaw) : crmAvDateTime(submittedRaw)) + "</time></div>" +
@@ -1596,7 +1663,7 @@ function crmAvCardHTML(record, index, mine) {
         (f.eventTime ? '<div><span class="stat-label">' + crmEscape(f.timeLabel) + '</span><span class="av-fact">' + crmEscape(f.eventTime) + "</span></div>" : "") +
         (f.hasPax ? '<div><span class="stat-label">Guests (PAX)</span><span class="av-fact is-green">' + crmEscape(guests) + "</span></div>" : "") +
         '<div><span class="stat-label">Catering Arrangement</span><span class="av-fact">' + crmEscape(f.arrangement) + "</span></div>" +
-        '<div><span class="stat-label">' + crmEscape(f.locationLabel) + '</span><span class="av-fact av-loc" title="' + crmEscape(location) + '">' + crmEscape(location) + "</span></div>" +
+        '<div><span class="stat-label">' + crmEscape(f.locationLabel) + '</span><span class="av-fact" title="' + crmEscape(location) + '">' + crmEscape(location) + "</span></div>" +
       "</div>" +
       actions +
     "</article>"
@@ -1637,13 +1704,7 @@ function crmAvDetailHTML(record, mine) {
       }).join("")
     : '<li class="av-d-menu-empty">No menu items were selected.</li>';
   const field = (label, value, cls) => '<div><span class="av-d-label">' + label + '</span><span class="av-d-value' + (cls ? " " + cls : "") + '">' + value + "</span></div>";
-  const detailRows = /deliver/i.test(f.arrangement)
-    ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
-    : /pick-?up/i.test(f.arrangement)
-      ? [["pickup_notes", "Pickup Notes"]]
-      : f.hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
-  const arrangementFields = f.arrangementDetails ? detailRows
-    .filter(([key]) => f.arrangementDetails[key]).map(([key, label]) => field(label, dash(f.arrangementDetails[key]))).join("") : "";
+  const arrangementFields = f.address.extras.map(([label, addressValue]) => field(label, dash(addressValue))).join("");
   return (
     '<button type="button" class="iq-back" data-iq-action="back"><i class="bi bi-arrow-left" aria-hidden="true"></i>' + (mine ? "Back to My Inquiries" : "Back to Available Inquiries") + "</button>" +
     '<div class="av-d-head">' +
@@ -1668,7 +1729,7 @@ function crmAvDetailHTML(record, mine) {
       '<div class="av-d-addr">' +
         '<div class="av-d-subhead">' + crmEscape(f.locationLabel) + "</div>" +
         '<div class="av-d-grid av-d-even av-d-addr-grid">' +
-          field(/deliver/i.test(f.arrangement) ? "Street / Address" : /pick-?up/i.test(f.arrangement) ? "Pickup Location" : "Venue / Address", dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
+          field(/deliver/i.test(f.arrangement) ? "Street / Address" : /pick-?up/i.test(f.arrangement) ? "Pickup Location" : "Venue / Address", dash(f.address.full)) + arrangementFields +
         "</div>" +
       "</div>" +
       '<div class="av-d-addr"><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>" +
@@ -1703,32 +1764,44 @@ function crmAvDetailHTML(record, mine) {
 //   quotation: { reference, version, status, amount, prepared_at, sent_at, prepared_by,
 //                history: [ { version, status, recipient, prepared_by, amount } ] }   (flat quotation_* keys also work)
 //   booking:   { reference, status }   (flat booking_ref / booking_status also work)
+function crmQuotationActionState(record, quotation, hasQuote) {
+  const quoteStatus = String(quotation && quotation.status || "").trim().toLowerCase();
+  const workflows = [record && record.stage, record && record.workflow_label].map((value) => String(value || "").trim().toLowerCase());
+  const general = String(record && (record.inquiry_status || record.status) || "").trim().toLowerCase();
+  if (/^(declined|cancelled)$/.test(general) || workflows.some((value) => /^(declined|cancelled)$/.test(value))) return "closed";
+  if (workflows.includes("negotiation") && /^(declined|negotiation)$/.test(quoteStatus)) return "negotiation";
+  if (!hasQuote) return "none";
+  if (quoteStatus === "draft" || quoteStatus === "revised draft") {
+    const version = Number(quotation && quotation.version) || 1;
+    return quoteStatus === "revised draft" || version > 1 ? "revisedDraft" : "draft";
+  }
+  if (quoteStatus === "sent") return "sent";
+  if (quoteStatus === "accepted") return "accepted";
+  return "unavailable";
+}
+
 function crmAvMineDetailHTML(record) {
   const f = crmInquiryFields(record);
   const pick = (keys) => crmInquiryPick(record, keys);
   const dash = (v) => crmEscape(v || "—");
-  const stageClass = CRM_STAGE_CLASS[f.stage.toLowerCase()] || "stage-new";
+  const badgeStage = /^(confirmed|declined|cancelled)$/i.test(f.generalStatus) ? f.generalStatus : f.stage;
+  const stageClass = CRM_STAGE_CLASS[badgeStage.toLowerCase()] || "stage-new";
   const staff = f.staff && f.staff !== "Unassigned" ? f.staff : "";
   const guests = f.guestsNum ? f.guestsNum + " Guests" : "—";
   const field = (label, value, cls) => '<div><span class="av-d-label">' + label + '</span><span class="av-d-value' + (cls ? " " + cls : "") + '">' + value + "</span></div>";
-  const detailRows = /deliver/i.test(f.arrangement)
-    ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
-    : /pick-?up/i.test(f.arrangement)
-      ? [["pickup_notes", "Pickup Notes"]]
-      : f.hasPax ? [["barangay", "Barangay"], ["city", "City / Municipality"], ["province", "Province"], ["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
-  const arrangementFields = f.arrangementDetails ? detailRows
-    .filter(([key]) => f.arrangementDetails[key]).map(([key, label]) => field(label, dash(f.arrangementDetails[key]))).join("") : "";
+  const arrangementFields = f.address.extras.map(([label, addressValue]) => field(label, dash(addressValue))).join("");
   const card = (letter, title, headRight, body, extra) =>
     '<section class="card iq-detail-card av-d-card' + (extra ? " " + extra : "") + '">' +
       '<div class="av-d-card-head"><h3 class="iq-section-title">' + letter + ". " + title + "</h3>" + (headRight || "") + "</div>" + body +
     "</section>";
 
   // A. Inquiry Information
-  const secA = card("A", "Inquiry Information", '<span class="stage-pill ' + stageClass + '" data-av-stage-pill>' + crmEscape(f.stage) + "</span>",
+  const secA = card("A", "Inquiry Information", '<span class="stage-pill ' + stageClass + '" data-av-stage-pill>' + crmEscape(badgeStage) + "</span>",
     '<div class="av-d-grid av-d-grid-3">' +
       field("Inquiry ID", dash(f.ref), "is-green") +
       field("Date Submitted", crmEscape(crmInquiryDate(pick(["submitted_at", "created_at"])) || "—")) +
-      field("Current Inquiry Stage", '<span data-av-stage-text>' + crmEscape(f.stage) + "</span>") +
+      field("Inquiry Status", crmEscape(f.generalStatus)) +
+      field("Detailed Progress", '<span data-av-stage-text>' + crmEscape(f.stage) + "</span>") +
     "</div>");
 
   // B. Customer Information
@@ -1742,6 +1815,9 @@ function crmAvMineDetailHTML(record) {
   // C. Event Information (ONE card: event facts on top, address below, special requests last)
   const addrTitle = f.locationLabel;
   const addrLabel = /deliver/i.test(f.arrangement) ? "Street / Address" : /pick-?up/i.test(f.arrangement) ? "Pickup Location" : "Venue / Address";
+  const addressDisplay = /deliver/i.test(f.arrangement)
+    ? '<div class="is-wide"><span class="av-d-value">' + dash(f.address.full) + "</span></div>"
+    : field(addrLabel, dash(f.address.full));
   const secC = card("C", "Event Information", "",
     '<div class="av-d-grid av-d-even">' +
       field("Event Name", dash(f.title)) +
@@ -1753,7 +1829,7 @@ function crmAvMineDetailHTML(record) {
     '<div class="av-d-addr">' +
       '<div class="av-d-subhead">' + crmEscape(addrTitle) + "</div>" +
       '<div class="av-d-grid av-d-even av-d-addr-grid">' +
-        field(addrLabel, dash(pick(["event_location", "location", "venue", "venue_address"]))) + arrangementFields +
+        addressDisplay + arrangementFields +
       "</div>" +
     "</div>" +
     '<div class="av-d-addr"><span class="av-d-label">Special Requests</span><div class="av-d-note">' + dash(pick(["special_requests", "customer_notes", "notes", "requirements"])) + "</div></div>");
@@ -1789,21 +1865,22 @@ function crmAvMineDetailHTML(record) {
     '<div class="av-d-version"><div><strong>' + crmEscape(["v" + String(crmInquiryPick(h, ["version"])).replace(/^v/i, ""), crmInquiryPick(h, ["status"]), crmInquiryPick(h, ["recipient", "customer"])].filter((x) => x && x !== "v").join(" · ")) + "</strong>" +
     (crmInquiryPick(h, ["prepared_by"]) ? "<span>Prepared by " + crmEscape(crmInquiryPick(h, ["prepared_by"])) + "</span>" : "") + "</div>" +
     '<span class="av-d-version-amt">' + crmEscape(crmAvMoney(crmInquiryPick(h, ["amount", "total"]))) + "</span></div>").join("");
-  // Once a quotation has been sent (or otherwise finalised) it can no longer be prepared or sent again:
-  // only Preview + Prepare Revised Version remain. Drafts / withdrawn quotations keep the normal buttons.
-  const quoteLocked = hasQuote && !/^(draft|withdrawn)$/i.test(String(qStatus || "").trim());
-  const quoteBtns =
-    '<div class="av-d-actions">' +
-      (quoteLocked
-        ? '<button type="button" class="btn csi-outline-btn av-d-btn" data-av-action="quotation-preview">Preview Quotation</button>' +
-          '<button type="button" class="btn av-d-btn av-d-btn-warn" data-av-action="quotation-revise">Prepare Revised Version</button>'
-        : '<button type="button" class="btn modal-btn-save av-d-btn" data-av-action="quotation-prepare">Prepare Quotation</button>' +
-          (hasQuote
-            ? '<button type="button" class="btn csi-outline-btn av-d-btn" data-av-action="quotation-preview">Preview Quotation</button>' +
-              '<button type="button" class="btn modal-btn-save av-d-btn" data-av-action="quotation-send">Send Quotation</button>' +
-              '<button type="button" class="btn av-d-btn av-d-btn-warn" data-av-action="quotation-revise">Prepare Revised Version</button>'
-            : "")) +
-    "</div>";
+  const actionState = crmQuotationActionState(record, q, hasQuote);
+  const prepareButton = '<button type="button" class="btn modal-btn-save av-d-btn" data-av-action="quotation-prepare">Prepare Quotation</button>';
+  const editButton = '<button type="button" class="btn modal-btn-white av-d-btn" data-av-action="quotation-edit">Edit Draft</button>';
+  const previewButton = '<button type="button" class="btn csi-outline-btn av-d-btn" data-av-action="quotation-preview">Preview Quotation</button>';
+  const sendButton = '<button type="button" class="btn modal-btn-save av-d-btn" data-av-action="quotation-send">Send Quotation</button>';
+  const reviseButton = '<button type="button" class="btn modal-btn-save av-d-btn" data-av-action="quotation-revise">Prepare Revised Version</button>';
+  const quoteBtns = '<div class="av-d-actions">' + ({
+    none: prepareButton,
+    draft: editButton + previewButton + sendButton,
+    revisedDraft: editButton + previewButton + sendButton,
+    sent: previewButton,
+    negotiation: previewButton + reviseButton,
+    accepted: previewButton,
+    closed: hasQuote ? previewButton : "",
+    unavailable: hasQuote ? previewButton : "",
+  }[actionState] || "") + "</div>";
   const secF = card("E", "Quotation Information",
     (qStatus ? '<span class="stage-pill ' + qStatusClass + ' av-d-head-pill">' + crmEscape(qStatus) + "</span>" : "") +
       (hasQuote ? '<span class="av-d-total">' + crmEscape(crmAvMoney(qAmountRaw)) + "</span>" : ""),
@@ -1838,7 +1915,7 @@ function crmAvMineDetailHTML(record) {
     '<div class="av-d-head">' +
       '<div class="av-d-head-main">' +
         '<div class="iq-detail-ref" role="heading" aria-level="2">' + dash(f.ref) + "</div>" +
-        '<span class="stage-pill ' + stageClass + '" data-av-stage-pill>' + crmEscape(f.stage) + "</span>" +
+        '<span class="stage-pill ' + stageClass + '" data-av-stage-pill>' + crmEscape(badgeStage) + "</span>" +
         '<span class="av-d-pill">Assigned</span>' +
       "</div>" +
       '<div class="av-d-claim"><button type="button" class="btn csi-outline-btn av-chat" data-av-action="chat"><i class="bi bi-chat" aria-hidden="true"></i>Open Chat</button></div>' +
@@ -1886,6 +1963,23 @@ function crmInitSalesAvailable(root) {
     records = Array.isArray(list) ? (mine ? crmInquirySort(list) : list.slice()) : [];
     grid.innerHTML = records.map((r, i) => crmAvCardHTML(r, i, mine)).join("");
     applyFilters();
+    const wantId = window.crmPendingInquiryId;
+    const wantRef = window.crmPendingInquiryRef;
+    if (wantId || wantRef) {
+      const at = records.findIndex((r) =>
+        (wantId && String(crmInquiryFields(r).id) === String(wantId)) ||
+        (wantRef && String(crmInquiryFields(r).ref) === String(wantRef))
+      );
+      window.crmPendingInquiryId = null;
+      window.crmPendingInquiryRef = null;
+      if (at >= 0) {
+        if (input) input.value = "";
+        if (dateInput) dateInput.value = "";
+        filters.arrangement = "all"; filters.stage = "all";
+        applyFilters();
+        showDetail(at);
+      } else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("inquiry");
+    }
   }
   window.crmRenderAvailableInquiries = render;
 
@@ -1902,7 +1996,7 @@ function crmInitSalesAvailable(root) {
 
   const stageMenu = $("#avStageMenu");
   if (stageMenu)
-    stageMenu.innerHTML = [["all", "All Stages"]].concat(CRM_SALES_FILTER_STAGES.map((n) => [n.toLowerCase(), n]))
+    stageMenu.innerHTML = [["all", "All Statuses"]].concat(CRM_SALES_FILTER_STAGES.map((n) => [n.toLowerCase(), n]))
       .map(([value, text]) => '<li><a class="dropdown-item custom-dropdown-item py-2 px-3" href="#" data-value="' + crmEscape(value) + '">' + crmEscape(text) + "</a></li>").join("");
 
   if (input) input.oninput = applyFilters;
@@ -1999,11 +2093,7 @@ function crmInitSalesAvailable(root) {
           openIndex = -1;
           showList();
           render(records);
-          if (state) {
-            state.textContent = data.message || "Inquiry claimed successfully. It is now in My Inquiries.";
-            state.classList.add("is-success");
-            state.hidden = false;
-          }
+          if (window.crmToast) window.crmToast("Inquiry Claimed Successfully", "success");
           document.dispatchEvent(new CustomEvent("crm:claim-inquiry", { detail: { ref } }));
         })
         .catch((error) => {
@@ -2113,26 +2203,7 @@ function crmBookingPaymentClass(payment) {
 /* Full booking address. The booking list only sends the street in "location"; the rest (barangay, city, province,
    landmark, instructions / notes) comes in record.arrangement_details (same shape the Inquiries API sends). */
 function crmBookingAddress(record, arrangementText) {
-  const street = crmInquiryPick(record, ["location", "venue", "venue_address", "address", "event_location"]);
-  let d = record && (record.arrangement_details || record.delivery_details);
-  if (typeof d === "string") { try { d = JSON.parse(d); } catch (_) { d = null; } }
-  if (!d || typeof d !== "object" || Array.isArray(d)) d = {};
-  const get = (k) => String(d[k] != null && d[k] !== "" ? d[k] : (record && record[k] != null ? record[k] : "")).trim();
-  const isPickup = /pick-?up/i.test(String(arrangementText || ""));
-  const parts = [street];
-  if (!isPickup) {
-    ["barangay", "city", "province"].forEach((k) => {
-      const v = get(k);
-      if (v && String(street).toLowerCase().indexOf(v.toLowerCase()) === -1) parts.push(v);
-    });
-  }
-  const extraRows = isPickup ? [["pickup_notes", "Pickup Notes"]]
-    : /deliver/i.test(String(arrangementText || "")) ? [["landmark", "Nearest Landmark"], ["instructions", "Delivery Instructions"]]
-    : crmArrangementHasPax(arrangementText) ? [["landmark", "Nearest Landmark"], ["setup_notes", "Setup Notes"]] : [];
-  return {
-    full: parts.filter(Boolean).join(", "),
-    extras: extraRows.map(([k, label]) => [label, get(k)]).filter((r) => r[1]),
-  };
+  return crmFormatReadOnlyAddress(record, arrangementText);
 }
 
 /* The status badge follows Booking Progress. The backend keeps booking_status at "Confirmed" while the staff moves the
@@ -2175,7 +2246,10 @@ function crmBookingFields(record) {
   const time = pick(["event_time", "time"]);
   const eventDate = crmInquiryDate(dateRaw);
   const eventTime = crmTimeText(time);
+  const arrangementText = pick(["arrangement", "service_type", "service"]);
+  const address = crmBookingAddress(record, arrangementText);
   return {
+    id: pick(["booking_id", "id"]),
     customer: pick(["customer_name", "customer", "client_name"]) || "Customer",
     photo: pick(["customer_photo", "photo_url"]),
     staffPhoto: pick(["staff_photo", "assigned_staff_photo"]),
@@ -2184,11 +2258,12 @@ function crmBookingFields(record) {
     title: pick(["event_title", "event_name", "title"]) || "—",
     status: (/^cancel/i.test(pick(["booking_status", "status"])) ? "Cancelled" : crmBookingProgressStatus(record)) || crmBookingStatusLabel(pick(["booking_status", "status"])) || "Confirmed",
     staff: pick(["assigned_staff", "assigned_to", "staff_name"]) || "Unassigned",
-    location: crmBookingAddress(record, pick(["arrangement", "service_type", "service"])).full || "—",
-    addressExtras: crmBookingAddress(record, pick(["arrangement", "service_type", "service"])).extras,
-    arrangement: crmArrangementLabel(pick(["arrangement", "service_type", "service"])) || "—",
-    hasPax: crmArrangementHasPax(pick(["arrangement", "service_type", "service"])),
-    guestsNum: crmArrangementHasPax(pick(["arrangement", "service_type", "service"])) ? guestsRaw.replace(/\s*(pax|guests?)$/i, "") : "",
+    location: address.full || "—",
+    addressExtras: address.extras,
+    locationLabel: /pick-?up/i.test(arrangementText) ? "Pickup Location" : /deliver/i.test(arrangementText) ? "Delivery Address" : "Event Venue / Address",
+    arrangement: crmArrangementLabel(arrangementText) || "—",
+    hasPax: crmArrangementHasPax(arrangementText),
+    guestsNum: crmArrangementHasPax(arrangementText) ? guestsRaw.replace(/\s*(pax|guests?)$/i, "") : "",
     dateIso: /^\d{4}-\d{2}-\d{2}/.test(dateRaw) ? dateRaw.slice(0, 10) : "",
     eventDate: eventDate,
     eventTime: eventTime,
@@ -2328,6 +2403,81 @@ function crmBookingProgressHTML(record) {
   return '<section class="card iq-detail-card bk-progress"><h3 class="iq-section-title">Booking Progress</h3><ol class="bk-prog-list">' + items + "</ol>" + action + "</section>";
 }
 
+/* Booking Progress confirmation uses the shared Bootstrap modal shell and existing CRM button styles. */
+function crmConfirmBookingProgress(currentLabel, nextLabel, completing, onConfirm) {
+  if (typeof bootstrap === "undefined" || !bootstrap.Modal) {
+    if (window.crmToast) window.crmToast("Unable to open the progress confirmation. Please try again.", "error");
+    return;
+  }
+  const el = document.createElement("div");
+  el.className = "modal fade crm-confirm-modal crm-progress-confirm-modal";
+  el.tabIndex = -1;
+  el.setAttribute("aria-hidden", "true");
+  el.innerHTML =
+    '<div class="modal-dialog modal-dialog-centered"><div class="modal-content custom-modal-card"><div class="modal-body">' +
+      '<div class="crm-progress-confirm-head">' +
+        '<div><h5 class="modal-title">Confirm Progress Update</h5>' +
+          '<p class="modal-delete-text mb-0">Review the booking progress change before confirming.</p></div>' +
+        '<button type="button" class="btn-close" data-progress-close aria-label="Close"></button>' +
+      '</div>' +
+      '<div class="crm-progress-transition" aria-label="Progress transition">' +
+        '<div class="crm-progress-value is-current"><span>Current Progress</span><strong data-progress-current></strong></div>' +
+        '<i class="bi bi-arrow-right" aria-hidden="true"></i>' +
+        '<div class="crm-progress-value is-next"><span>New Progress</span><strong data-progress-next></strong></div>' +
+      '</div>' +
+      (completing ? '<div class="crm-confirm-warning crm-progress-completion-note"><i class="bi bi-info-circle" aria-hidden="true"></i><div><strong>Booking completion</strong><p>The booking will be marked as Completed if all required conditions are met.</p></div></div>' : '') +
+      '<div class="crm-progress-confirm-footer">' +
+        '<button type="button" class="btn modal-btn-cancel" data-progress-cancel>Cancel</button>' +
+        '<button type="button" class="btn modal-btn-save" data-progress-confirm></button>' +
+      '</div>' +
+    '</div></div></div>';
+  const actionLabels = {
+    "preparing food": "Start Preparation",
+    "ready for pickup": "Mark as Ready",
+    "picked up": "Mark as Picked Up",
+    "out for delivery": "Mark as Out for Delivery",
+    delivered: "Mark as Delivered",
+    "on the way": "Mark as On the Way",
+    "setting up": "Mark as Setting Up",
+    "event served": "Mark as Event Served"
+  };
+  const actionLabel = actionLabels[String(nextLabel || "").trim().toLowerCase()] || ("Mark as " + nextLabel);
+  el.querySelector("[data-progress-current]").textContent = currentLabel;
+  el.querySelector("[data-progress-next]").textContent = nextLabel;
+  document.body.appendChild(el);
+  const modal = new bootstrap.Modal(el);
+  const confirm = el.querySelector("[data-progress-confirm]");
+  const cancel = el.querySelector("[data-progress-cancel]");
+  const close = el.querySelector("[data-progress-close]");
+  confirm.textContent = actionLabel;
+  let processing = false;
+  const hide = () => modal.hide();
+  cancel.addEventListener("click", hide);
+  close.addEventListener("click", hide);
+  el.addEventListener("hide.bs.modal", (event) => { if (processing) event.preventDefault(); });
+  confirm.addEventListener("click", async () => {
+    if (processing) return;
+    processing = true;
+    confirm.disabled = true;
+    confirm.textContent = "Updating...";
+    cancel.disabled = true;
+    close.disabled = true;
+    try {
+      await onConfirm();
+      processing = false;
+      modal.hide();
+    } catch (error) {
+      processing = false;
+      confirm.disabled = false;
+      confirm.textContent = actionLabel;
+      cancel.disabled = false;
+      close.disabled = false;
+    }
+  });
+  el.addEventListener("hidden.bs.modal", () => { modal.dispose(); el.remove(); });
+  modal.show();
+}
+
 function crmBookingDetailHTML(record, showStaff) {
   const f = crmBookingFields(record);
   const { dash, head, field, value, tile, person } = crmDetailKit();
@@ -2351,7 +2501,7 @@ function crmBookingDetailHTML(record, showStaff) {
           field("Service Arrangement", value(f.arrangement)) +
           (showStaff ? field("Assigned Staff", '<span class="iq-value">' + person(f.staff, f.staffPhoto, "Unassigned") + "</span>") : "") +
           (showStaff && assigned !== "—" ? field("Assignment Date", value(assigned)) : "") +
-          field("Venue Address", value(f.location), f.hasPax ? "tk-span-all" : "") +
+          field(f.locationLabel, value(f.location), f.hasPax ? "tk-span-all" : "") +
           f.addressExtras.map(([label, v]) => field(label, value(v))).join("") +
         "</div>" +
       "</section>" +
@@ -2757,12 +2907,15 @@ function crmInitManagerBookings(root) {
     const record = records[currentIndex];
     if (!record) return;
     if (act === "progress-next") {
-      const pmsg = detailView.querySelector("#bkProgState");
-      const psay = (text) => { if (pmsg) { pmsg.hidden = !text; pmsg.textContent = text || ""; } };
-      btn.disabled = true;
-      psay("Updating the progress...");
-      payCall("update_progress", { booking_id: record.booking_id, status: btn.dataset.status })
-        .then((data) => {
+      const progress = record.progress;
+      const next = progress && progress.next;
+      if (!next || next.key !== btn.dataset.status) return;
+      const currentIndex = Number(progress.current);
+      const currentLabel = progress.steps[currentIndex] || progress.status_label || "Not started";
+      const completesBooking = Array.isArray(progress.keys) && next.key === progress.keys[progress.keys.length - 1];
+      crmConfirmBookingProgress(currentLabel, next.label, completesBooking, () =>
+        payCall("update_progress", { booking_id: record.booking_id, status: next.key })
+          .then((data) => {
           record.progress = data.progress;
           record.fulfillment_status = data.fulfillment_status;
           record.booking_status = data.booking_status || record.booking_status;
@@ -2772,8 +2925,13 @@ function crmInitManagerBookings(root) {
           if (oldCard) oldCard.outerHTML = crmBookingCardHTML(record, currentIndex);
           if (typeof applyFilters === "function") applyFilters();
           showDetail(currentIndex, true);
+          if (window.crmToast) window.crmToast("Booking Progress Updated Successfully.", "success");
         })
-        .catch((error) => { btn.disabled = false; psay(error.message); });
+          .catch((error) => {
+            if (window.crmToast) window.crmToast(error.message || "Unable to update booking progress.", "error");
+            throw error;
+          })
+      );
       return;
     }
     if (act === "payreq-send") {
@@ -2841,6 +2999,34 @@ function crmInitManagerBookings(root) {
       if (!response.ok || !data || !Array.isArray(data.bookings))
         throw new Error((data && data.message) || "Unable to load bookings.");
       render(data.bookings);
+      const pendingBooking = window.crmPendingBookingRef;
+      const pendingFeedback = window.crmPendingFeedbackBookingRef;
+      if (pendingBooking || pendingFeedback) {
+        window.crmPendingBookingRef = null;
+        window.crmPendingFeedbackBookingRef = null;
+        const ref = pendingFeedback || pendingBooking;
+        const at = records.findIndex((record) =>
+          String(crmBookingFields(record).ref) === String(ref) ||
+          String(crmBookingFields(record).id) === String(ref)
+        );
+        if (at >= 0) {
+          if (input) input.value = "";
+          if (dateInput) dateInput.value = "";
+          if (dateFrom) dateFrom.value = "";
+          if (dateTo) dateTo.value = "";
+          filters.status = "all"; filters.payment = "all"; filters.staff = "all";
+          applyFilters();
+          if (pendingFeedback) {
+            setBookingTab("feedback");
+            fbFilter = "all";
+            renderFeedback();
+            if (records[at].feedback) showFeedbackDetail(at);
+            else showDetail(at);
+          } else showDetail(at);
+        } else if (typeof window.crmNavigationUnavailable === "function") {
+          window.crmNavigationUnavailable(pendingFeedback ? "feedback" : "booking");
+        }
+      }
     })
     .catch((error) => {
       console.warn("Bookings could not be loaded:", error);
@@ -2924,7 +3110,7 @@ function crmInitCsInbox(root) {
           '<span class="mi-item-line mi-item-sub"><span class="csi-ref">' + crmEscape(t.ticket_number) + "</span></span>" +
           '<span class="mi-item-line"><span class="csi-item-name">' + crmEscape(t.customer_name) + "</span>" +
             '<span class="csi-item-time">' + crmEscape(listTime(t.last_message_at)) + "</span></span>" +
-          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape(t.last_message || t.subject) + "</span>" +
+          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape((t.last_message_mine === true ? "You: " : "") + (t.last_message || t.subject)) + "</span>" +
             (Number(t.unread) > 0 ? '<span class="csi-dot" aria-label="Unread"></span>' : "") + "</span>" +
         "</span>" +
       "</button>"
@@ -3013,6 +3199,7 @@ function crmInitCsInbox(root) {
         window.crmPendingInboxTicket = null;
         const hit = st.tickets.find((t) => String(t.ticket_number) === String(want) || String(t.id) === String(want));
         if (hit) { el.search.value = ""; await select(hit.id); }
+        else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("ticket");
       }
     } catch (error) {
       if (quiet) return;
@@ -3184,8 +3371,10 @@ function crmInitManagerInbox(root) {
       subject: r.subject || "",
       status: r.status || "",
       priority: r.priority || "",
+      inquiryId: r.inquiry_id == null ? "" : String(r.inquiry_id),
       staff: String(r.staff_name || "").trim(),
       lastMessage: r.last_message || "",
+      lastMessageMine: r.last_message_mine === true,
       lastAt: r.last_message_at || r.created_at || "",
       unread: Number(r.unread) || 0,
       eventDate: r.event_date || "",
@@ -3259,7 +3448,7 @@ function crmInitManagerInbox(root) {
             ((st.tab === "support" && !t.staff) ? "" : '<span class="mi-item-staff' + (t.staff ? "" : " is-unassigned") + '"><i class="bi bi-person" aria-hidden="true"></i><span>' + crmEscape(t.staff || "Unassigned") + "</span></span>") + "</span>" +
           '<span class="mi-item-line"><span class="csi-item-name">' + crmEscape(t.name) + "</span>" +
             '<span class="csi-item-time">' + crmEscape(listTime(t.lastAt)) + "</span></span>" +
-          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape(t.lastMessage || t.subject) + "</span>" +
+           '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape((t.lastMessageMine ? "You: " : "") + (t.lastMessage || t.subject)) + "</span>" +
             (t.unread > 0 ? '<span class="csi-dot" aria-label="Unread"></span>' : "") + "</span>" +
         "</span>" +
       "</button>"
@@ -3431,13 +3620,14 @@ function crmInitManagerInbox(root) {
     const want = window.crmPendingInboxConversation;
     if (want) {
       window.crmPendingInboxConversation = null;
-      ["sales", "support"].some((tab) => {
+      const found = ["sales", "support"].some((tab) => {
         const hit = st[tab].find((t) => t.ref === String(want) || t.id === String(want));
         if (!hit) return false;
         switchTab(tab);
         select(hit.id);
         return true;
       });
+      if (!found && typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable(/^TCK-/i.test(String(want)) ? "ticket" : "conversation");
     }
   }
 
@@ -3510,7 +3700,10 @@ function crmInitManagerInbox(root) {
     const t = current();
     if (!t) return;
     if (st.tab === "support") goTo("manager-admin-ticket.html", "crmPendingTicketRef", t.ref);
-    else goTo("manager-admin-inquiries.html", "crmPendingInquiryRef", t.ref);
+    else {
+      window.crmPendingInquiryId = t.inquiryId || null;
+      goTo("manager-admin-inquiries.html", "crmPendingInquiryRef", t.ref);
+    }
   });
 
   applyRole(null);
@@ -3624,8 +3817,9 @@ function crmInitSalesInbox(parts) {
   // "Open Inquiry Details" (same button as the Admin / Manager inbox): opens the Inquiries page on this inquiry.
   el.openInq.addEventListener("click", () => {
     const c = current();
-    if (!c || !c.reference) return;
-    window.crmPendingInquiryRef = c.reference;
+    if (!c || (!c.inquiryId && !c.reference)) return;
+    window.crmPendingInquiryId = c.inquiryId || null;
+    window.crmPendingInquiryRef = c.reference || null;
     const page = "sales-inquiries.html";
     const links = Array.from(document.querySelectorAll('.sidebar-nav a[onclick*="' + page + '"]'));
     const link = links.find((a) => a.offsetParent !== null) || links[0] || null;
@@ -3698,7 +3892,7 @@ function crmInitSalesInbox(parts) {
           '<span class="mi-item-line mi-item-sub"><span class="csi-ref">' + crmEscape(c.reference) + "</span></span>" +
           '<span class="mi-item-line"><span class="csi-item-name">' + crmEscape(c.customer_name) + "</span>" +
             '<span class="csi-item-time">' + crmEscape(listTime(c.last_message_at)) + "</span></span>" +
-          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape(c.last_message || c.subject) + "</span>" +
+          '<span class="mi-item-line"><span class="csi-item-preview">' + crmEscape((c.last_message_mine === true ? "You: " : "") + (c.last_message || c.subject)) + "</span>" +
             (Number(c.unread) > 0 ? '<span class="csi-dot" aria-label="Unread"></span>' : "") + "</span>" +
         "</span>" +
       "</button>").join("");
@@ -3796,6 +3990,7 @@ function crmInitSalesInbox(parts) {
         window.crmPendingChatRef = "";
         const hit = st.items.find((c) => String(c.reference || "").toLowerCase() === want);
         if (hit) select(hit.id);
+        else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("conversation");
       }
     } catch (e) {
       console.error("Sales inbox:", e);
@@ -4085,15 +4280,21 @@ function crmBookingFeedbackHTML(feedback) {
       '<p class="tk-log-empty">The customer has not left feedback for this booking yet.</p></section>';
   }
   const stars = [1, 2, 3, 4, 5].map((n) => '<i class="bi ' + (n <= rating ? "bi-star-fill" : "bi-star") + '" aria-hidden="true"></i>').join("");
-  const photos = (Array.isArray(feedback.images) ? feedback.images : []).filter((i) => i && i.url).map((i) =>
-    '<a href="' + crmEscape(i.url) + '" target="_blank" rel="noopener"><img src="' + crmEscape(i.url) + '" alt="' + crmEscape(i.name || "Customer photo") + '" loading="lazy"></a>').join("");
+  const attachments = (Array.isArray(feedback.attachments) ? feedback.attachments : (Array.isArray(feedback.images) ? feedback.images : [])).filter((i) => i && (i.url || i.file_path)).map((i) => {
+    const url = crmEscape(i.url || i.file_path);
+    const name = crmEscape(i.name || i.original_name || "Customer attachment");
+    const video = /video/i.test(String(i.media_type || i.mime_type || "")) || /\.(mp4|webm)(?:$|\?)/i.test(String(i.url || i.file_path || ""));
+    return video
+      ? '<video src="' + url + '" controls playsinline preload="metadata" aria-label="' + name + '"></video>'
+      : '<a href="' + url + '" target="_blank" rel="noopener"><img src="' + url + '" alt="' + name + '" loading="lazy"></a>';
+  }).join("");
   return '<section class="card iq-detail-card">' + head("Customer Feedback") +
     '<div class="tk-contact-grid">' +
       field("Overall Rating", '<span class="iq-value"><span class="fb-stars" role="img" aria-label="' + rating + ' out of 5">' + stars + "</span> " + rating + " of 5 \u00B7 " + CRM_RATING_LABELS[rating] + "</span>") +
       field("Submitted", value(crmAvDateTime(feedback.created_at || ""))) +
       field("Comments", value(String(feedback.comments || "").trim() || "No comments."), "tk-span-all") +
     "</div>" +
-    (photos ? '<div class="fb-photos">' + photos + "</div>" : "") +
+    (attachments ? '<div class="fb-photos">' + attachments + "</div>" : "") +
   "</section>";
 }
 
@@ -4318,6 +4519,20 @@ function crmInitCalendar(root) {
   }
 
 
+  function agendaRowHTML(index) {
+    const ev = events[index];
+    const arr = CRM_CAL_ARRANGEMENTS[ev.key];
+    const pax = ev.guests ? '<span class="cal-event-pax">' + crmEscape(ev.guests) + " PAX</span>" : "";
+    return '<button type="button" class="cal-event cal-agenda-row is-' + ev.key + '" data-cal-i="' + index + '" title="' + crmEscape(ev.title + " - " + arr.label) + '">' +
+      '<span class="cal-event-time">' + crmEscape(ev.time) + "</span>" +
+      '<span class="cal-agenda-main"><span class="cal-event-title">' + crmEscape(ev.title) + "</span>" +
+        '<span class="cal-agenda-subline">' +
+          (ev.customer ? '<span class="cal-event-sub">' + crmEscape(ev.customer) + "</span>" : "") + pax +
+        "</span></span>" +
+      '<span class="cal-arr-pill is-' + ev.key + '"><i class="bi ' + arr.icon + '" aria-hidden="true"></i>' + crmEscape(arr.label) + "</span>" +
+    "</button>";
+  }
+
 
   function agendaHTML() {
 
@@ -4333,9 +4548,11 @@ function crmInitCalendar(root) {
 
       const d = crmCalParseIso(iso);
 
-      return '<section class="cal-agenda-day"><header><button type="button" class="cal-agenda-date' + (iso === todayIso ? " is-today" : "") + '" data-cal-day="' + iso + '">' + crmEscape(longDate(d)) + "</button>" + conflictBadge(iso) + "</header>" +
+      const count = eventsOn(iso).length;
+      return '<section class="cal-agenda-day"><header><button type="button" class="cal-agenda-date' + (iso === todayIso ? " is-today" : "") + '" data-cal-day="' + iso + '">' + crmEscape(longDate(d)) + "</button>" +
+        '<div class="cal-agenda-head-meta"><span class="cal-agenda-count">' + count + " booking" + (count === 1 ? "" : "s") + "</span>" + conflictBadge(iso) + "</div></header>" +
 
-        '<div class="cal-agenda-list">' + eventsOn(iso).map((n) => crmCalChipHTML(events[n], n, true)).join("") + "</div></section>";
+        '<div class="cal-agenda-list">' + eventsOn(iso).map(agendaRowHTML).join("") + "</div></section>";
 
     }).join("") + "</div>";
 
@@ -4832,6 +5049,7 @@ function crmTicketFields(t) {
     priority: pick(["priority"]) || "Medium",
     subject: pick(["ticket_name", "subject"]) || "—",
     description: pick(["description", "message", "concern", "details"]),
+    attachments: Array.isArray(t && t.attachments) ? t.attachments : [],
     date: pick(["created_at", "submitted_at"]).slice(0, 10),
     // read from the ticket the backend returns; "—" when missing
     created: pick(["created_at", "submitted_at"]),
@@ -4977,6 +5195,18 @@ function crmTicketDetailHTML(record, canManage) {
     ? entryList(f.activity, "activity")
     : '<p class="tk-log-empty">No activity recorded for this ticket yet.</p>';
   const closed = /^(resolved|closed)$/i.test(f.status);
+  const attachments = f.attachments.filter((file) => file && file.url);
+  const attachmentsHTML = attachments.length
+    ? '<div class="tk-attachments"><div class="tk-attachments-heading"><span class="iq-label is-caps">Attachments</span><span class="tk-attachments-count">' + attachments.length + (attachments.length === 1 ? ' file' : ' files') + '</span></div><div class="cb-image-preview-list fb-photos">' + attachments.map((file) => {
+        const name = String(file.name || "Ticket attachment");
+        const url = String(file.url);
+        const video = String(file.media_type || file.mime_type || "").toLowerCase().includes("video") || /\.(mp4|webm)(?:$|\?)/i.test(url);
+        const size = Number(file.size || 0);
+        const sizeLabel = size ? (size < 1048576 ? Math.max(1, Math.round(size / 1024)) + " KB" : (size / 1048576).toFixed(size >= 10485760 ? 0 : 1) + " MB") : "";
+        const media = video ? '<video controls playsinline preload="metadata" aria-label="' + crmEscape(name) + '" src="' + crmEscape(url) + '"></video>' : '<a class="cb-image-preview-media" href="' + crmEscape(url) + '" target="_blank" rel="noopener"><img loading="lazy" alt="' + crmEscape(name) + '" src="' + crmEscape(url) + '"></a>';
+        return '<div class="cb-image-preview cb-feedback-attachment">' + media + '<div class="cb-image-preview-details"><p class="cb-image-preview-name" title="' + crmEscape(name) + '">' + crmEscape(name) + '</p>' + (sizeLabel ? '<span class="cb-image-preview-size">' + sizeLabel + '</span>' : '') + '</div></div>';
+      }).join("") + '</div></div>'
+    : "";
 
   const statusPriority = canManage
     ? '<div class="tk-dates tk-dates-2">' +
@@ -5006,6 +5236,7 @@ function crmTicketDetailHTML(record, canManage) {
             : "") +
         field("Subject", '<span class="tk-concern-title">' + crmEscape(f.subject) + "</span>") +
         field("Description", '<div class="tk-date-tile tk-concern">' + crmEscape(f.description || "—") + "</div>") +
+        attachmentsHTML +
       "</section>" +
       '<section class="card iq-detail-card">' + head("Customer Information") +
         '<div class="tk-contact-grid">' +
@@ -5022,7 +5253,9 @@ function crmTicketDetailHTML(record, canManage) {
         tile("Last Activity", crmTicketLastActivity(f), "is-activity tk-block") +
         '<div class="tk-block">' + statusPriority + "</div>" +
       "</section>" +
-      '<section class="card iq-detail-card">' + head("Ticket Activity History", '<span class="tk-section-note">Operational Audit Trail</span>') + log + "</section>" +
+      (!canManage
+        ? '<section class="card iq-detail-card">' + head("Ticket Activity History", '<span class="tk-section-note">Operational Audit Trail</span>') + log + "</section>"
+        : "") +
       (canManage
         ? '<div class="tk-note-actions"><button type="button" class="btn modal-btn-save tk-resolve" data-tk-action="resolve"' +
             (closed ? " disabled" : "") + ">Resolve Ticket</button></div>"
@@ -5080,13 +5313,14 @@ function crmInitTicketCards(root) {
     applyFilters();
     // coming from the Inbox ("View Ticket Details"): open that ticket straight away
     const want = window.crmPendingTicketRef;
-    if (want && records.length) {
+    if (want) {
       window.crmPendingTicketRef = null;
       const hit = records.find((r) => {
         const f = crmTicketFields(r);
         return String(f.ref) === String(want) || String(f.id) === String(want);
       });
       if (hit) showDetail(hit);
+      else if (typeof window.crmNavigationUnavailable === "function") window.crmNavigationUnavailable("ticket");
     }
   }
   window.crmRenderTickets = render;
@@ -5833,10 +6067,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// ==========================================================================
 // MENU MANAGEMENT (Admin + Manager)  -  menu-management.html  <->  menu-management.php
 // The same menu is what customers pick from in the inquiry form (customer-pages.js).
-// ==========================================================================
 function crmInitMenuManagement(page) {
   const $ = (id) => page.querySelector('#' + id);
   const api = page.dataset.api || 'menu-management.php';
@@ -6475,26 +6707,6 @@ function crmInitMenuManagement(page) {
 }
 window.crmInitMenuManagement = crmInitMenuManagement;
 
-// ==========================================================================
-// SHARED REPORTS CODE
-//
-// ONE code path for every Reports page: Sales Staff, Customer Service Staff,
-// Manager, Admin ... Each report page only needs this HTML contract:
-//
-//   <main id="reportsPage" data-report-type="tickets" data-report-title="Customer Service Staff Report">
-//   - summary cards   : <span class="stat-label">..</span> + <div class="stat-number">..</div> inside a .card
-//   - vertical charts : <div class="rp-chart"  id=".." data-report-chart="Tickets by Status" data-items='[{"label":"Open","count":4}]'>
-//   - horizontal chart: <div class="rp-hchart" id=".." data-report-chart="Tickets by Assigned Staff" data-items='[{"label":"Jordan Lee","count":1}]'>
-//   - the table       : <table data-report-table="Customer Service Tickets"> (optional data-empty-text="...")
-//   - date label      : <span id="reportDateLabel">This Year</span>
-//   - buttons         : #exportCsvBtn (Excel) and #downloadPdfBtn
-//
-// data-report-type is only used by the console number check:
-//   "tickets"        -> Total Tickets / Open / Pending / Resolved
-//   anything else    -> sales: Total Leads / Total Deals / Confirmed Deals
-// ==========================================================================
-
-// Exact colors (same name on every page = same color)
 const CRM_REPORT_COLORS = {
   // sales
   'new inquiry': '#6B7280',
@@ -6505,6 +6717,7 @@ const CRM_REPORT_COLORS = {
   'negotiation': '#7C3AED',
   'confirmed': CRM_PALETTE.green,
   'declined': CRM_PALETTE.red,
+  'cancelled': CRM_PALETTE.red,
   // customer service: status
   'open': CRM_PALETTE.red,
   'pending': CRM_PALETTE.amber,
@@ -6558,21 +6771,8 @@ function crmHChartHTML(items) {
   '<div class="rp-haxis">' + ticks.map(t => '<span>' + t + '</span>').join('') + '</div>';
 }
 
-// Default colors for the Activities by Status chart (its names clash with the Sales colors,
-// e.g. "In Progress" is light blue for leads but yellow for activities).
-// An explicit "color" in an item always wins over these defaults.
 const CRM_ACTIVITY_COLORS = { 'upcoming': CRM_PALETTE.purple, 'in progress': CRM_PALETTE.blue, 'completed': CRM_PALETTE.green, 'cancelled': CRM_PALETTE.red };
 
-// Draw a bar chart. boxIdOrElement = 'ticketsByStatusChart' or the element itself.
-// items = [{ label: 'Open', count: 4 }, ...]   (a backend can call this after a date change)
-// A box with class "rp-hchart" is drawn horizontally, a box with class "rp-chart" vertically.
-//
-// COLORS: the color is decided HERE and saved into box._items, so the page, the PDF and the
-// Excel all use the same color. Order:
-//   1. an explicit "color" in the item
-//   2. Activities by Status colors (CRM_ACTIVITY_COLORS)
-//   3. a known status / stage / priority name (CRM_REPORT_COLORS)
-//   4. anything else (staff names, activity types ...) = green, never grey
 function crmDrawChart(boxIdOrElement, items) {
   const box = typeof boxIdOrElement === 'string' ? document.getElementById(boxIdOrElement) : boxIdOrElement;
   if (!box) return;
@@ -6601,19 +6801,17 @@ function crmDrawChart(boxIdOrElement, items) {
 }
 window.crmDrawChart = crmDrawChart;
 
-// ==========================================================================
 // ADMIN / MANAGER REPORTS  (manager-admin-report.html)
 // Same look as the Admin / Manager dashboard: the donut (crmOpsDonut), colour tables (CRM_OPS_*) and
 // pills (crmOpsPill) are REUSED. Only four drawings are new: line, meter (progress bars), stack, plus
 // the plain bar chart without axis. Each box picks its drawing from data-chart-style="line|donut|meter|stack".
-// ==========================================================================
 const CRM_RP_COLORS = {
   green: CRM_PALETTE.green, blue: CRM_PALETTE.blue, orange: CRM_PALETTE.amber, teal: CRM_PALETTE.teal, grey: CRM_PALETTE.grey, slate: CRM_PALETTE.slate, red: CRM_PALETTE.red,
   customerMix: { 'new customers': CRM_PALETTE.green, 'returning customers': CRM_PALETTE.blue },
   arrangement: { 'customer pickup': CRM_PALETTE.amber, 'food delivery': CRM_PALETTE.green, 'on-site catering': CRM_PALETTE.blue, 'buffet with setup': CRM_PALETTE.blue },
   priority: { low: CRM_PALETTE.green, medium: CRM_PALETTE.yellow, high: CRM_PALETTE.orange, urgent: CRM_PALETTE.red },
   ticketStatus: { 'open': CRM_PALETTE.red, 'in progress': CRM_PALETTE.blue, 'waiting for customer': CRM_PALETTE.amber, 'resolved': CRM_PALETTE.green, 'closed': CRM_PALETTE.slate },
-  stage: { 'new inquiry': CRM_PALETTE.slate, 'in progress': CRM_PALETTE.blue, 'confirmed': CRM_PALETTE.green, 'declined': CRM_PALETTE.red }
+  stage: { 'new inquiry': CRM_PALETTE.slate, 'in progress': CRM_PALETTE.blue, 'confirmed': CRM_PALETTE.green, 'declined': CRM_PALETTE.red, 'cancelled': CRM_PALETTE.red }
 };
 
 function crmRpFmt(v) { return Number.isInteger(v) ? String(v) : String(Math.round(v * 10) / 10); }
@@ -6729,29 +6927,6 @@ function crmRpApplyPeriod(page, period) {
   page.querySelectorAll('.rp-sub[data-sub]').forEach(p => { p.textContent = p.getAttribute('data-sub').replace('{period}', period); });
 }
 
-// ==========================================================================
-// FILL THE ADMIN / MANAGER REPORT FROM reports-api.php?range=weekly|monthly|yearly|custom
-// (manager-admin-report.html: Customer Report, Sales Report, Ticket Report, Feedback Report)
-//
-// JSON contract (every part is optional, a missing list just draws "No data yet"):
-// {
-//   "scope_role": "Organization-Wide Analytics ( Admin )",
-//   "range":    { "from": "2026-11-01", "to": "2026-11-30" },
-//   "customer": { "total":13, "new":7, "returning":4,
-//                 "trend":[{"label":"Nov 1-7","count":2}],
-//                 "by_staff":[{"label":"Priya Nair","count":7},{"label":"Unassigned","count":1}] },
-//   "sales":    { "inquiries":12, "quotations":10, "confirmed_bookings":6, "verified_revenue":39020,
-//                 "stages":[{"label":"New Inquiry","count":2},{"label":"In Progress","count":7},{"label":"Confirmed","count":4},{"label":"Declined","count":3}],
-//                 "arrangement":[{"label":"On-site Catering","count":3},{"label":"Food Delivery","count":2},{"label":"Customer Pickup","count":1}],
-//                 "finance":{ "quotation_value":87900, "booking_value":62700, "verified_payments":39020, "outstanding":34800 } },
-//   "ticket":   { "total":10, "open":3, "in_progress":3, "resolved":3,
-//                 "statuses":[{"label":"Open","count":3}, ...], "priority":[{"label":"High","count":3}, ...] },
-//   "feedback": { "total":8, "average":4.38, "satisfied":7, "low":1, "requested":12, "responded":8,
-//                 "distribution":[{"label":"5 Stars","count":5}, ... {"label":"1 Star","count":1}],
-//                 "trend":[{"label":"Nov 1-7","count":4.5}],            // count = average rating of that bucket
-//                 "recent":[{"date":"2026-11-10","booking":"BK-0012","customer":"Ana Reyes","event":"Wedding","rating":5,"comment":"...","photos":2,"staff":"Priya Nair"}] }
-// }
-// ==========================================================================
 function crmFillReports(data) {
   const page = document.getElementById('reportsPage');
   if (!page) return;
@@ -6782,19 +6957,18 @@ function crmFillReports(data) {
   const s = data.sales || {};
   setText('inquiriesSubmitted', num(s.inquiries)); setText('quotationsSent', num(s.quotations));
   setText('confirmedBookings', num(s.confirmed_bookings)); setText('verifiedRevenue', peso(s.verified_revenue)); setText('outstandingBalance', peso(((s.finance || {}).outstanding)));
-  // Always list the same four stages as the dashboard (New Inquiry, In Progress, Confirmed, Declined),
-  // even when the API leaves one out; "Completed" counts as Confirmed. Any extra stage the API sends is kept.
-  const stageNames = CRM_OPS_INQUIRY.map(x => x[0]);
-  const stageSum = {};
+  // Always list only the approved general inquiry statuses; new submissions map to In Progress.
+  const statusNames = CRM_OPS_INQUIRY.map(x => x[0]);
+  const statusCounts = {};
   list(s.stages).forEach(i => {
     let label = String(i.label || '').trim();
     if (/^completed$/i.test(label)) label = 'Confirmed';
+    if (/^new inquiry$|^new$/i.test(label)) label = 'In Progress';
     const k = label.toLowerCase();
-    stageSum[k] = (stageSum[k] || 0) + num(i.count);
+    statusCounts[k] = (statusCounts[k] || 0) + num(i.count);
   });
-  const stageRows = stageNames.map(label => ({ label, count: stageSum[label.toLowerCase()] || 0 }));
-  Object.keys(stageSum).forEach(k => { if (!stageNames.some(n => n.toLowerCase() === k)) stageRows.push({ label: k.replace(/\b\w/g, ch => ch.toUpperCase()), count: stageSum[k] }); });
-  draw('inquiryStageChart', stageRows.map(paint({ 'new inquiry': CRM_PALETTE.slate, 'in progress': CRM_PALETTE.blue, 'confirmed': CRM_PALETTE.green, 'declined': CRM_PALETTE.red }, CRM_PALETTE.grey)));
+  const statusRows = statusNames.map(label => ({ label, count: statusCounts[label.toLowerCase()] || 0 }));
+  draw('inquiryStageChart', statusRows.map(paint({ 'in progress': CRM_PALETTE.blue, 'confirmed': CRM_PALETTE.green, 'declined': CRM_PALETTE.red, 'cancelled': CRM_PALETTE.red }, CRM_PALETTE.grey)));
   draw('bookingArrangementChart', list(s.arrangement).map(paint({ 'on-site catering': CRM_PALETTE.blue, 'buffet with setup': CRM_PALETTE.blue, 'food delivery': CRM_PALETTE.green, 'customer pickup': CRM_PALETTE.amber }, CRM_PALETTE.grey)));
   const f = s.finance || {};
   const finRows = [['Quotation Value Sent', f.quotation_value, ''], ['Confirmed Booking Value', f.booking_value, ''],
@@ -6806,8 +6980,8 @@ function crmFillReports(data) {
   // ---------- Ticket Report ----------
   const t = data.ticket || {};
   setText('totalTickets', num(t.total)); setText('openTicketsCount', num(t.open));
-  setText('inProgressTickets', num(t.in_progress)); setText('resolvedTickets', num(t.resolved));
-  draw('ticketsByStatusChart', list(t.statuses).map(paint({ open: CRM_PALETTE.red, 'in progress': CRM_PALETTE.blue, waiting: CRM_PALETTE.amber, 'waiting for customer': CRM_PALETTE.amber, pending: CRM_PALETTE.amber, resolved: CRM_PALETTE.green, closed: CRM_PALETTE.slate, cancelled: CRM_PALETTE.grey }, CRM_PALETTE.grey)));
+  setText('inProgressTickets', num(t.in_progress)); setText('pendingTickets', num(t.pending)); setText('resolvedTickets', num(t.resolved));
+  draw('ticketsByStatusChart', list(t.statuses).map(paint({ open: CRM_PALETTE.red, 'in progress': CRM_PALETTE.blue, pending: CRM_PALETTE.amber, resolved: CRM_PALETTE.green, waiting: CRM_PALETTE.amber, closed: CRM_PALETTE.green }, CRM_PALETTE.grey)));
   draw('ticketsByPriorityChart', list(t.priority).map(paint({ urgent: CRM_PALETTE.red, high: CRM_PALETTE.orange, medium: CRM_PALETTE.yellow, low: CRM_PALETTE.green }, CRM_PALETTE.grey)));
 
   // ---------- Feedback Report ----------
@@ -6964,12 +7138,10 @@ function crmBadgeReportTables(root) {
 }
 window.crmBadgeReportTables = crmBadgeReportTables;
 
-// ==========================================================================
 // ACTIVITY TAB: COMPLETION RATE DONUT
 // Completion rate = Completed / Total Activities, read from the two summary cards.
 // Updates the donut ring (--pct), the % inside it and the big % next to it.
 // Called automatically by crmRenderReports() and crmApplyReportData().
-// ==========================================================================
 function crmUpdateCompletionRate() {
   const donut = document.getElementById('completionDonut');
   if (!donut) return;
@@ -6987,21 +7159,6 @@ function crmUpdateCompletionRate() {
 }
 window.crmUpdateCompletionRate = crmUpdateCompletionRate;
 
-// ==========================================================================
-// REFRESH A REPORT WITH NEW NUMBERS (this is what makes the Date filter "work")
-// The Date dropdown only changes the label and calls window.onReportRangeChange(rangeText).
-// Whoever defines that function (your backend) loads the numbers for that range and calls:
-//
-//   crmApplyReportData({
-//     stats:  ['8', '4', '2', '2'],                 // same order as the cards (or { 'Total Tickets': 8, ... })
-//     charts: { ticketsByStatusChart: [{label:'Open',count:4}, ...], ticketsByPriorityChart: [...] },   // by chart id (or data-report-chart title)
-//     rows:   [['T-001','Late delivery','Lara Cruz','Open','High','Ana Reyes'], ...]    // "#" column is added automatically
-//   });
-//
-//   window.onReportRangeChange = function (range) {
-//     fetch('report_data.php?range=' + encodeURIComponent(range)).then(r => r.json()).then(crmApplyReportData);
-//   };
-// ==========================================================================
 function crmApplyReportData(data) {
   const page = document.getElementById('reportsPage');
   if (!page || !data) return;
@@ -7146,11 +7303,9 @@ function crmReportData(pane) {
 const crmSum = items => items.reduce((s, i) => s + (Number(i.count) || 0), 0);
 const crmSlug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-// ==========================================================================
 // NUMBER CHECK
 // The cards, the charts and the table must tell the same story.
 // This only WARNS in the console (F12) so the wrong number is easy to find.
-// ==========================================================================
 function crmCheckReportNumbers() {
   const panes = Array.from(document.querySelectorAll('#reportsPage .tab-pane[data-report-type]'));
   if (!panes.length) return crmCheckOneReport(crmReportData());
@@ -7195,10 +7350,8 @@ function crmCheckOneReport(d) {
   msgs.forEach(m => console.warn('[Reports] ' + d.title + ': ' + m));
 }
 
-// ==========================================================================
 // REPORT INTERACTIONS (date range hook + table search), shared by every report page.
 // Delegated handlers keep working when navbar.js replaces the page content.
-// ==========================================================================
 if (!window.__crmReportInteractionsBound) {
   window.__crmReportInteractionsBound = true;
 
@@ -8178,12 +8331,10 @@ if (!window.__crmDropdownAutoScrollBound) {
   window.initCrmSettingsPage = initCrmSettingsPage;
 })();
 
-// ==========================================================================
 // SEARCH BARS: every search box gets the same green "X" clear button
 // (Contacts, Leads & Deals, Tickets, Activities, Reports, Settings).
 // Pages are swapped in by navbar.js, so new search boxes are upgraded as they appear.
 // The look of the X is in adminpages.css (::-webkit-search-cancel-button).
-// ==========================================================================
 (function () {
   if (window.__crmSearchClearBound) return;
   window.__crmSearchClearBound = true;
@@ -8214,10 +8365,8 @@ if (!window.__crmDropdownAutoScrollBound) {
   else document.addEventListener("DOMContentLoaded", start);
 })();
 
-// ==========================================================================
 // NO BROWSER AUTOFILL: removes Chrome's saved-address / email dropdown
 // from every form field on every page and modal.
-// ==========================================================================
 (function () {
   if (window.__crmNoAutofillBound) return;
   window.__crmNoAutofillBound = true;
@@ -8265,7 +8414,7 @@ if (!window.__crmDropdownAutoScrollBound) {
    Sales Staff > My Inquiries > View Details > F. Quotation Information
    Answers the crm:quotation-* events fired by the four buttons (Prepare Quotation, Preview,
    Send, Prepare Revised Version) using sales-inquiries.php (quotation_save / quotation_send).
-   Deposit = 20% of the total. No CSS here: it only uses classes that already exist in all-pages.css
+   Deposit rate is provided by the server quotation configuration. No CSS here: it only uses classes that already exist in all-pages.css
    (custom-modal-card, iw-dialog, modal-input-field, modal-input-label, modal-btn-*, csi-outline-btn,
    ci-food, ci-summary, ci-lines, ci-note, stage-pill, and Bootstrap utilities.
    ============================================================================================ */
@@ -8274,7 +8423,7 @@ if (!window.__crmDropdownAutoScrollBound) {
   window.__crmQuotationUi = true;
 
   const API = "sales-inquiries.php";
-  const DEPOSIT_RATE = 0.2;
+  let quotationConfigPromise = null;
   const esc = (v) => crmEscape(v);
   const peso = (n) => "₱\u00A0" + (Number(n) || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const ymd = (d) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -8301,6 +8450,23 @@ if (!window.__crmDropdownAutoScrollBound) {
         if (!r.ok || !data || data.success === false) throw new Error((data && data.message) || "Request failed (HTTP " + r.status + ").");
         return data;
       }));
+  }
+
+  function loadQuotationConfig() {
+    if (!quotationConfigPromise) {
+      quotationConfigPromise = fetch(API + "?action=quotation_config", {
+        credentials: "same-origin", headers: { Accept: "application/json" }, cache: "no-store"
+      }).then((response) => response.json().then((data) => {
+        if (!response.ok || !data || !data.success || !Number.isFinite(Number(data.deposit_rate))) {
+          throw new Error((data && data.message) || "Unable to load quotation settings.");
+        }
+        return { depositRatePercent: Number(data.deposit_rate) };
+      })).catch((error) => {
+        quotationConfigPromise = null;
+        throw error;
+      });
+    }
+    return quotationConfigPromise;
   }
 
   // same Bootstrap modal + card the other CRM modals use; iw-dialog is the existing 780px-wide dialog
@@ -8334,8 +8500,11 @@ if (!window.__crmDropdownAutoScrollBound) {
   // opens the new full-page 2-step editor (quotation-page.js); falls back to the old modal if that script / template is not on the page
   function openEditor(c) {
     c.post = post; c.toast = toast; c.applyResult = applyResult; c.peso = peso;
-    if (typeof window.crmOpenQuotationPage === "function" && window.crmOpenQuotationPage(c)) return;
-    openForm(c);
+    loadQuotationConfig().then((config) => {
+      c.depositRatePercent = config.depositRatePercent;
+      if (typeof window.crmOpenQuotationPage === "function" && window.crmOpenQuotationPage(c)) return;
+      openForm(c);
+    }).catch((error) => toast(error.message || "Unable to load quotation settings.", "error"));
   }
 
   function startingRows(record, base) {
@@ -8352,6 +8521,8 @@ if (!window.__crmDropdownAutoScrollBound) {
   /* ---------- Prepare / edit / revise form ---------- */
   function openForm(ctx) {
     const base = ctx.base || null;
+    const depositRatePercent = Number(base && base.deposit_rate || ctx.depositRatePercent);
+    const depositRate = depositRatePercent / 100;
     const revise = ctx.mode === "revise";
     const nextVersion = base ? (base.status === "Draft" ? base.version : base.version + 1) : 1;
     const f = crmInquiryFields(ctx.record);
@@ -8373,7 +8544,7 @@ if (!window.__crmDropdownAutoScrollBound) {
         '<div class="mt-3"><label class="modal-input-label" for="qtNotes">Message to the customer (optional)</label>' +
           '<textarea id="qtNotes" class="modal-input-field" rows="3" maxlength="2000" placeholder="Inclusions, payment reminders, special arrangements...">' + esc(base ? base.notes : "") + "</textarea></div>" +
         '<div class="mt-4"><div class="d-flex justify-content-between"><span class="text-muted">Total</span><strong data-qt-total></strong></div>' +
-          '<div class="d-flex justify-content-between"><span class="text-muted">Deposit to reserve the date (' + Math.round(DEPOSIT_RATE * 100) + '%)</span><strong data-qt-deposit></strong></div>' +
+          '<div class="d-flex justify-content-between"><span class="text-muted">Deposit to reserve the date (' + depositRatePercent + '%)</span><strong data-qt-deposit></strong></div>' +
           '<div class="d-flex justify-content-between"><span class="text-muted">Balance after the deposit</span><strong data-qt-balance></strong></div></div>' +
         '<p class="text-danger mt-3 mb-0" data-qt-err hidden></p>' +
       "</div>" +
@@ -8394,8 +8565,8 @@ if (!window.__crmDropdownAutoScrollBound) {
         total += Math.round(amt * 100) / 100;
       });
       $("[data-qt-total]").textContent = peso(total);
-      $("[data-qt-deposit]").textContent = peso(total * DEPOSIT_RATE);
-      $("[data-qt-balance]").textContent = peso(total - total * DEPOSIT_RATE);
+      $("[data-qt-deposit]").textContent = peso(total * depositRate);
+      $("[data-qt-balance]").textContent = peso(total - total * depositRate);
     }
     function drawRows() {
       box.innerHTML = rows.map((r, i) =>
@@ -8474,8 +8645,8 @@ if (!window.__crmDropdownAutoScrollBound) {
   }
 
   const ctxOf = (e) => ({ ref: e.detail.ref, record: e.detail.record, refresh: e.detail.refresh });
-  const isDeclined = (record) => /declin/i.test(String(crmInquiryFields(record).stage || ""));
-  const DECLINED_MSG = "This inquiry is declined. Move it back to In Progress to reopen it first.";
+  const isDeclined = (record) => /declin|cancel/i.test(String(crmInquiryFields(record).generalStatus || ""));
+  const DECLINED_MSG = "This inquiry is closed and can no longer be changed.";
 
   /* "Why are you declining?" popup used by the Save Stage Update button (returns the reason, or null if cancelled) */
   window.crmAskReason = function (opts) {
@@ -8513,17 +8684,24 @@ if (!window.__crmDropdownAutoScrollBound) {
     const ctx = ctxOf(e);
     const q = ctx.record && ctx.record.quotation;
     if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
-    if (q && q.status === "Accepted") return toast("The customer already accepted this quotation.", "warning");
-    if (q && q.status !== "Draft" && q.status !== "Withdrawn") return toast("A quotation was already sent. Use “Prepare Revised Version” to change it.", "warning");
-    openEditor(Object.assign(ctx, { mode: "save", base: q || null }));
+    if (q) return toast("A quotation already exists. Edit its draft or use the available quotation action.", "warning");
+    openEditor(Object.assign(ctx, { mode: "save", base: null }));
+  });
+
+  document.addEventListener("crm:quotation-edit", (e) => {
+    const ctx = ctxOf(e);
+    const q = ctx.record && ctx.record.quotation;
+    if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
+    if (!q || !/^draft$/i.test(String(q.status || ""))) return toast("Only an existing draft can be edited.", "warning");
+    openEditor(Object.assign(ctx, { mode: "save", base: q }));
   });
 
   document.addEventListener("crm:quotation-revise", (e) => {
     const ctx = ctxOf(e);
     const q = ctx.record && ctx.record.quotation;
     if (isDeclined(ctx.record)) return toast(DECLINED_MSG, "warning");
-    if (!q || q.status === "Draft") return openEditor(Object.assign(ctx, { mode: "save", base: q || null }));
-    if (q.status === "Accepted") return toast("The customer already accepted this quotation, so it can no longer be revised.", "warning");
+    const state = crmQuotationActionState(ctx.record, q, !!q);
+    if (state !== "negotiation") return toast("A revised version can only be prepared after the customer requests changes.", "warning");
     openEditor(Object.assign(ctx, { mode: "revise", base: q }));
   });
 
@@ -8673,21 +8851,23 @@ if (!window.__crmDropdownAutoScrollBound) {
 
     /* ---------- static fill ---------- */
     var arrLabel = crmArrangementLabel(rec.arrangement || "");
+    var readOnlyAddress = crmFormatReadOnlyAddress(rec, rec.arrangement || "");
+    var addressLabel = /pick-?up/i.test(arrLabel) ? "Pickup Location" : /deliver/i.test(arrLabel) ? "Delivery Address" : "Event Venue / Address";
     out("page-title", (revise ? "Prepare Revised " : base && base.status === "Draft" ? "Edit " : "Create ") + "Quotation");
     out("mode", "Mode: " + (revise ? "Revised" : "New") + " Quotation");
     out("inquiry-ref", inquiryRef);
     out("customer", rec.customer_name || "");
     out("event", rec.event_name || rec.event_title || "");
     out("date", longDate(rec.event_date));
-    out("location", rec.event_location || rec.venue || "");
+    out("location", readOnlyAddress.full);
+    out("location-label", addressLabel);
     out("arrangement", arrLabel);
     out("doc-version", "Quotation \u2014 Version V" + version);
     out("doc-ref", quoteCode);
     out("doc-v", "V" + version);
     out("issue", longDate(ymd(new Date())));
     out("menu-hint", "These are the dishes the customer chose. If the customer wants changes, press Edit Items to change the portion or quantity, remove an item, or add any item from the official menu.");
-    var back = rec.inquiry_ref || rec.reference || "";
-    out("back-label", "Back to Inquiry Details" + (back ? " (" + back + ")" : ""));
+    out("back-label", "Back to Inquiry Details");
     var key = arrKey(arrLabel);
     qa("[data-arr]").forEach(function (c) { c.classList.toggle("is-on", c.getAttribute("data-arr") === key); });
 
@@ -8701,7 +8881,7 @@ if (!window.__crmDropdownAutoScrollBound) {
     /* Food Delivery: show the customer's delivery address next to the fee, since the fee depends on it */
     var addrWrap = hook("addr-wrap");
     if (addrWrap) addrWrap.hidden = key !== "delivery";
-    out("addr", rec.event_location || rec.venue || rec.venue_address || "\u2014");
+    out("addr", readOnlyAddress.full || "\u2014");
     hook("bracket-wrap").hidden = key !== "onsite";
     out("pax", paxNum ? paxNum + " PAX" : "Not provided");
     out("bracket", rec.service_fee_bracket || "\u2014");
@@ -8815,7 +8995,7 @@ if (!window.__crmDropdownAutoScrollBound) {
       validTimeEl.addEventListener("blur", syncValidTime);
     }
     syncValidTime();
-    rateEl.value = base && base.deposit_rate ? base.deposit_rate : 20;
+    rateEl.value = base && base.deposit_rate ? base.deposit_rate : ctx.depositRatePercent;
     discEl.value = base && base.discount ? base.discount : 0;
     extraEl.value = base ? (base.extra_charge || 0) : feeDefault;
     /* editable unless Customer Pickup: clear any readonly / disabled left on the field by the page template */

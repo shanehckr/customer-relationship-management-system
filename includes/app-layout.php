@@ -371,10 +371,10 @@
     <!-- ExcelJS: needed by download-export.js for a real .xlsx file (without it "Export Excel" falls back to CSV). Load it BEFORE pages.js / download-export.js. -->
     <script src="all-pages-js/exceljs.min.js?v=4.4.0"></script>
     <script src="all-pages-js/loading.js"></script>
-    <script src="all-pages-js/navbar.js?v=11"></script>
+    <script src="all-pages-js/navbar.js?v=12"></script>
     <script src="all-pages-js/toast.js?v=2"></script>
     <script src="all-pages-js/pages.js?v=33"></script>
-   <script src="all-pages-js/customer-pages.js?v=18"></script>
+   <script src="all-pages-js/customer-pages.js?v=19"></script>
     <script src="all-pages-js/customer-settings.js?v=2"></script>
     <script src="all-pages-js/settings.js?v=6"></script>
     <script src="all-pages-js/legal-pages.js?v=4"></script>

@@ -18,7 +18,7 @@ $crmConfig = is_file(__DIR__ . '/config.local.php') ? (require __DIR__ . '/confi
 define('XENDIT_SECRET_KEY',     (string)($crmConfig['xendit_secret_key'] ?? ''));       // Settings > Developers > API keys (Money-in = Write)
 define('XENDIT_CALLBACK_TOKEN', (string)($crmConfig['xendit_callback_token'] ?? ''));   // Settings > Developers > Callbacks (only needed for the webhook)
 unset($crmConfig);
-define('APP_BASE_URL',          'http://localhost/customer-relationship-management-system');                    // folder that holds this file, NO trailing slash
+define('APP_BASE_URL',          rtrim(crmApplicationBaseUrl(), '/')); // shared CRM_APP_BASE_URL; localhost is for local development only
 define('CUSTOMER_PAGE',         'index.php');                      // page the customer lands on after paying
 define('BALANCE_RETURN_PAGE',   CUSTOMER_PAGE);                    // where the customer lands after paying a "Request Full Payment" (the page that loads My Bookings)
 define('XENDIT_CURRENCY',       'PHP');
@@ -167,7 +167,7 @@ function finalizePayment(AppDatabase $db, int $payRowId, array $pay): void {
 
         // paid twice, or the inquiry/quotation was closed while the customer was at the checkout page: keep the money
         // on record but do NOT create anything; staff must refund / resolve it in the Xendit dashboard.
-        if ($existing || !$lead || !$q || $lead['stage'] === 'Declined' || in_array($q['status'], ['Withdrawn', 'Declined', 'Superseded'], true)) {
+        if ($existing || !$lead || !$q || in_array($lead['stage'], ['Declined', 'Cancelled'], true) || in_array($q['status'], ['Withdrawn', 'Declined', 'Superseded'], true)) {
             $flag = $existing ? 'duplicate' : 'needs_review';
             $db->prepare('UPDATE xendit_payments SET status = ?, payment_id = ?, method = ?, amount = ?, paid_at = ? WHERE id = ?')
                ->execute([$flag, $payId, $method, $paid, now(), $payRowId]);
@@ -536,7 +536,7 @@ if ($action === 'create_checkout') {
     if (!$q) fail('Quotation not found.', 404);
     $q = quoteHydrate($db, $q);
     $iid = (int)$q['inquiry_id'];
-    if ($q['lead_stage'] === 'Declined') fail('This inquiry was declined.', 409);
+    if (in_array($q['lead_stage'], ['Declined', 'Cancelled'], true)) fail('This inquiry is closed.', 409);
     if (!in_array($q['status'], ['Sent', 'Accepted'], true)) fail('This quotation is no longer open for payment (' . strtolower($q['status']) . ').', 409);
     // the deposit must be paid before the "valid until" date AND time set by the Sales Staff (an Accepted quotation made before times existed keeps the old rule)
     if (($q['status'] === 'Sent' || !empty($q['valid_until_time'])) && $q['valid_until'] && deadlineExpired($q['valid_until'], $q['valid_until_time'] ?? null)) {
@@ -560,7 +560,7 @@ if ($action === 'create_checkout') {
     $state->execute([(int)$q['quotation_id'], $iid]);
     $current = $state->fetch();
     if (!$current || $current['version'] != $q['version'] || !in_array($current['status'], ['Sent', 'Accepted'], true)
-        || in_array($current['stage'], ['Declined', 'Completed', 'Confirmed'], true)) {
+        || in_array($current['stage'], ['Declined', 'Cancelled', 'Completed', 'Confirmed'], true)) {
         deadlineInquiryLock($db, $iid, false);
         fail('This quotation is no longer open for payment.', 409);
     }

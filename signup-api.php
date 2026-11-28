@@ -34,12 +34,15 @@ function fail(string $message, int $status = 422, array $extra = []): void
 
 function normalizePhone(string $raw): ?string
 {
-    $digits = preg_replace("/[\s().-]/", "", trim($raw)) ?? "";
-    $digits = ltrim($digits, "+");
-    if (preg_match("/^09\d{9}$/", $digits)) return substr($digits, 1);
-    if (preg_match("/^9\d{9}$/", $digits)) return $digits;
-    if (preg_match("/^639\d{9}$/", $digits)) return substr($digits, 2);
-    return null;
+    $number = str_replace(" ", "", trim($raw, " "));
+
+    // The signup form sends the 10-digit national part; its +63 prefix is a fixed UI label.
+    if (preg_match("/^9\d{9}$/", $number)) {
+        $number = "+63" . $number;
+    }
+
+    if (!preg_match("/^\+639\d{9}$/", $number)) return null;
+    return substr($number, 3);
 }
 
 function signupSessionHash(): string

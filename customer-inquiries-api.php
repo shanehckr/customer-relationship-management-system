@@ -27,6 +27,10 @@ if ($action === 'pickup_location') {
     out(['success' => true, 'pickup_location' => $configuredPickupLocation]);
 }
 
+if ($action === 'booking_rules') {
+    out(['success' => true, 'booking_rules' => customerInquiryDateRules()]);
+}
+
 if ($action === 'list') {
     if (empty($_SESSION['csrf_token'])) $_SESSION['csrf_token'] = bin2hex(random_bytes(16));
     $st = $db->prepare("SELECT l.*, c.id AS conversation_id FROM leads l
@@ -62,24 +66,11 @@ if ($action === 'list') {
         ] : null;
         // Progress follows the booking only after the verified-deposit booking row exists.
         $r['progress_step'] = $b ? 6 : inquiryProgressStep((string)$r['stage'], $q);
-        if ($b) {
-            $r['status'] = $r['inquiry_status'] = 'Converted to Booking';
-        } else {
-            $stage = (string)$r['stage'];
-            // A legacy/completed lead without its verified booking row must not be presented as paid.
-            if ($stage === 'Completed') $r['progress_step'] = ($q && $q['status'] === 'Accepted') ? 4 : 2;
-            $label = match ($stage) {
-                'New Inquiry' => 'Submitted',
-                'In Progress', 'In Discussion', 'Quotation Preparation' => 'Under Review',
-                'Quotation Sent', 'Negotiation' => 'Quotation Sent',
-                'Confirmed' => 'Quotation Accepted',
-                'Declined' => 'Declined',
-                'Completed' => ($q && $q['status'] === 'Accepted') ? 'Quotation Accepted' : 'Under Review',
-                default => $stage,
-            };
-            if ($q && $q['status'] === 'Accepted') $label = 'Quotation Accepted';
-            $r['status'] = $r['inquiry_status'] = $label;
-        }
+        $stage = (string)$r['stage'];
+        if ($stage === 'Completed' && !$b) $r['progress_step'] = ($q && $q['status'] === 'Accepted') ? 4 : 2;
+        $r['workflow_label'] = inquiryWorkflowLabel($stage, $q, (bool)$b);
+        $r['inquiry_status'] = inquiryGeneralStatus($stage, (bool)$b);
+        $r['status'] = $r['inquiry_status'];
     }
     unset($r);
     out(['success' => true, 'csrf_token' => $_SESSION['csrf_token'], 'inquiries' => $rows]);
@@ -294,12 +285,10 @@ if ($action === 'create') {
     out(['success' => true, 'message' => 'Inquiry submitted. We will be in touch soon.', 'inquiry_ref' => $ref, 'inquiry_id' => $leadId]);
 }
 
-/** 1 Submitted, 2 Under review, 3 Quotation, 4 Confirmation (quotation accepted), 5 Completed. */
+/** 1 Submitted, 2 Under review, 3 Quotation sent, 4 Quotation accepted, 5 Deposit verified, 6 Booking confirmed. */
 function inquiryProgressStep(string $stage, ?array $quote): int {
-    if ($stage === 'Declined') return 0;           // no progress bar for a declined inquiry
-    if ($stage === 'Completed') return 5;
     if ($quote && $quote['status'] === 'Accepted') return 4;
-    if ($stage === 'Confirmed') return 4;
+    if ($stage === 'Cancelled' && $quote && ($quote['status'] ?? '') === 'Declined') return 3;
     if ($stage === 'Quotation Sent' || $stage === 'Negotiation') return 3;
     if ($stage === 'New Inquiry') return 1;
     return 2;
@@ -323,6 +312,7 @@ if ($action === 'quotation_respond') {
         $q = $st->fetch();
         if (!$q) { $db->rollBack(); fail('Quotation not found.', 404); }
         $q = quoteHydrate($db, $q);
+        if (in_array((string)$q['lead_stage'], ['Declined', 'Cancelled', 'Completed'], true)) { $db->rollBack(); fail('This inquiry is closed and can no longer be changed.', 409); }
         if ($decision === 'change') {
             // a change request is allowed while the quotation is open (Sent) or accepted but not yet paid
             $paid = in_array($q['lead_stage'], ['Confirmed', 'Completed'], true);
@@ -338,7 +328,8 @@ if ($action === 'quotation_respond') {
         $newStatus = $decision === 'accept' ? 'Accepted' : 'Declined';
         $db->prepare('UPDATE quotations SET status = ?, responded_at = ? WHERE quotation_id = ?')->execute([$newStatus, now(), $q['quotation_id']]);
         syncNormalizedQuotationVersion($db, (int)$q['quotation_id']);
-        if ($decision !== 'accept') $db->prepare("UPDATE leads SET stage = 'Negotiation' WHERE `$LEAD_PK` = ?")->execute([$iid]);
+        if ($decision === 'change') $db->prepare("UPDATE leads SET stage = 'Negotiation' WHERE `$LEAD_PK` = ?")->execute([$iid]);
+        elseif ($decision === 'decline') $db->prepare("UPDATE leads SET stage = 'Cancelled', declined_at = ? WHERE `$LEAD_PK` = ?")->execute([now(), $iid]);
 
         $ref = '**' . (trim((string)($q['lead_event_name'] ?? '')) !== '' ? $q['lead_event_name'] : 'my event') . '**';   // the event name replaces the QT-0000 (v1) label
         if ($decision === 'accept') {
@@ -346,7 +337,7 @@ if ($action === 'quotation_respond') {
         } elseif ($decision === 'change') {
             $text = 'I would like to request changes to the quotation for ' . $ref . ($q['status'] === 'Accepted' ? ' (I had accepted it, but changed my mind before paying)' : '') . '. Requested changes: ' . mb_substr($reason, 0, 1000) . ' Could you please send a revised quotation?';
         } else {
-            $text = 'I am declining the quotation for ' . $ref . '.' . ($reason !== '' ? ' Reason: ' . mb_substr($reason, 0, 500) : '') . ' Could you please send a revised one?';
+            $text = 'I am declining the quotation and will not proceed with ' . $ref . '.' . ($reason !== '' ? ' Reason: ' . mb_substr($reason, 0, 500) : '');
         }
         $cv = $db->prepare("SELECT id FROM `$DB_CRM`.cib_conversations WHERE inquiry_id = ? LIMIT 1");
         $cv->execute([$iid]);
@@ -395,7 +386,7 @@ if ($action === 'quotation_respond') {
             [
                 'heading' => 'Deposit Payment Required',
                 'greeting' => $recipient['name'],
-                'message' => 'You accepted the quotation, but your booking is not confirmed yet. Pay the required 20% deposit to reserve the event date. We will confirm your booking after the payment is verified.',
+        'message' => 'You accepted the quotation, but your booking is not confirmed yet. Pay the required ' . (int)($q['deposit_rate'] ?? round(QUOTE_DEPOSIT_RATE * 100)) . '% deposit to reserve the event date. We will confirm your booking after the payment is verified.',
                 'amount' => 'PHP ' . number_format((float) $q['deposit_amount'], 2),
                 'rows' => [
                     'Inquiry or quotation reference' => quoteRef($iid),

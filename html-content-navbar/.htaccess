@@ -1,0 +1,6 @@
+# HTML fragments must only be delivered through page-content.php after authentication and RBAC checks.
+<IfModule mod_headers.c>
+    Header always set Cache-Control "no-store, private"
+    Header always set Pragma "no-cache"
+</IfModule>
+Require all denied

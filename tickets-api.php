@@ -91,7 +91,7 @@ $action = $_GET["action"] ?? "";
 $method = $_SERVER["REQUEST_METHOD"] ?? "";
 $postActions = ["update_status", "update_priority", "resolve", "add_note"];
 
-if (!(($method === "GET" && $action === "list") || ($method === "POST" && in_array($action, $postActions, true)))) {
+if (!(($method === "GET" && in_array($action, ["list", "attachment"], true)) || ($method === "POST" && in_array($action, $postActions, true)))) {
     header("Allow: GET, POST");
     ticketsFail(405, "This Tickets API operation is not supported.");
 }
@@ -120,6 +120,20 @@ try {
     $canManage = $roleName === TICKET_MANAGER_ROLE;
     $staffName = trim((string) $me["full_name"]) !== "" ? trim((string) $me["full_name"]) : $roleName;
     $staffRoleLabel = $roleName === TICKET_MANAGER_ROLE ? "CS Staff" : $roleName;
+
+    if ($method === "GET" && $action === "attachment") {
+        $ticketId = filter_var($_GET["ticket_id"] ?? null, FILTER_VALIDATE_INT, ["options" => ["min_range" => 1]]);
+        $file = (string)($_GET["file"] ?? "");
+        if (!$ticketId || !preg_match('/\A[a-f0-9]{32}\.(?:jpg|jpeg|png|webp|mp4|webm)\z/i', $file)) ticketsFail(404, "Attachment not found.");
+        $stored = ticketsRows($conn, "SELECT m.attachments FROM cib_ticket_messages m JOIN cib_tickets t ON t.id = m.ticket_id WHERE t.id = ? AND m.sender_type = ? ORDER BY m.id ASC LIMIT 1", "is", [(int)$ticketId, "customer"])[0]["attachments"] ?? "";
+        $items = json_decode((string)$stored, true) ?: [];
+        $mime = ""; $allowed = false;
+        foreach ($items as $item) if (is_array($item) && hash_equals((string)($item["stored_name"] ?? ""), $file)) { $allowed = true; $mime = (string)($item["mime_type"] ?? ""); break; }
+        $path = dirname(__DIR__, 2) . DIRECTORY_SEPARATOR . "crm-private" . DIRECTORY_SEPARATOR . "ticket-attachments" . DIRECTORY_SEPARATOR . $file;
+        if (!$allowed || !in_array($mime, ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/webm"], true) || !is_file($path)) ticketsFail(404, "Attachment not found.");
+        header_remove("Content-Type"); header("Content-Type: " . $mime); header("Content-Length: " . (string)filesize($path)); header("X-Content-Type-Options: nosniff"); header("Content-Disposition: inline; filename=\"" . $file . "\""); header("Cache-Control: private, no-store");
+        readfile($path); exit;
+    }
 
     /* ------------------------- 2. TABLES ------------------------- */
     // The Inbox creates cib_tickets / cib_ticket_messages. Make sure they exist, then add what this page needs.
@@ -173,6 +187,7 @@ try {
             "SELECT t.id, t.customer_id, t.ticket_number, t.subject, t.status, t.priority, t.created_at, t.updated_at,
                     (SELECT m.message FROM cib_ticket_messages m WHERE m.ticket_id = t.id
                         ORDER BY (m.sender_type = 'customer') DESC, m.id ASC LIMIT 1) AS description,
+                    (SELECT m.attachments FROM cib_ticket_messages m WHERE m.ticket_id = t.id AND m.sender_type = 'customer' ORDER BY m.id ASC LIMIT 1) AS initial_attachments,
                     $nameSql AS customer_name, $emailSql AS customer_email, $phoneSql AS customer_phone, $photoSql AS customer_photo_path
              FROM cib_tickets t
              LEFT JOIN users u ON u.user_id = t.customer_id
@@ -248,6 +263,15 @@ try {
                 "ticket_no" => $t["ticket_number"] ?: "TCK-" . str_pad((string) $id, 4, "0", STR_PAD_LEFT),
                 "ticket_name" => $t["subject"],
                 "description" => (string) ($t["description"] ?? ""),
+                "attachments" => array_map(static function ($file) use ($id) {
+                    if (!is_array($file)) return [];
+                    $stored = (string)($file["stored_name"] ?? "");
+                    if (preg_match('/\A[a-f0-9]{32}\.(?:jpg|jpeg|png|webp|mp4|webm)\z/i', $stored)) {
+                        $file["url"] = "tickets-api.php?action=attachment&ticket_id=" . $id . "&file=" . rawurlencode($stored);
+                    }
+                    unset($file["stored_name"]);
+                    return $file;
+                }, (array)(json_decode((string)($t["initial_attachments"] ?? ""), true) ?: [])),
                 "customer_id" => (int) $t["customer_id"],
                 "customer_name" => $customer,
                 "customer_email" => (string) ($t["customer_email"] ?? ""),

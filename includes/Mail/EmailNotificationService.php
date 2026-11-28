@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/EmailTemplateRenderer.php';
 require_once __DIR__ . '/EmailService.php';
+require_once dirname(__DIR__, 2) . '/config/environment.php';
 
 final class EmailNotificationService
 {
@@ -27,6 +28,12 @@ final class EmailNotificationService
         string $relatedRecordType = '',
         int $relatedRecordId = 0
     ): ?int {
+        // Keep low-value lifecycle emails off the queue while preserving essential
+        // transaction confirmations and security mail.
+        if (EmailService::isNotificationDisabled($notificationType)) {
+            return null;
+        }
+
         $recipientEmail = trim($recipientEmail);
         if (!filter_var($recipientEmail, FILTER_VALIDATE_EMAIL)) {
             error_log('Email notification skipped: no valid recipient email.');
@@ -86,7 +93,7 @@ final class EmailNotificationService
             $config = EmailService::fromApplicationConfig($db)->configuration();
             return rtrim((string) ($config['base_url'] ?? ''), '/') . '/';
         } catch (Throwable $e) {
-            return 'http://localhost/customer-relationship-management-system/';
+            return crmApplicationBaseUrl();
         }
     }
 

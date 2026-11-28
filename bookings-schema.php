@@ -8,14 +8,6 @@ function ensureBookingsSchema(AppDatabase $db): void {
     // Schema is provisioned centrally from database/catering_crm.sql.
 }
 
-/* =====================================================================================================
-   Booking progress (food + service), updated by the assigned Sales Staff.
-   Steps depend on the service arrangement:
-     Customer Pickup   : Booking Confirmed > Fully Paid > Preparing Food > Ready for Pickup > Picked Up
-     Delivery          : Booking Confirmed > Fully Paid > Preparing Food > Out for Delivery > Delivered
-     Buffet with setup : Booking Confirmed > Fully Paid > Preparing Food > On the Way > Setting Up > Event Served
-   "Booking Confirmed" and "Fully Paid" come from the booking itself; the rest are saved in bookings.fulfillment_status.
-   ===================================================================================================== */
 function bookingProgressKind(string $arrangement): string {
     $a = strtolower($arrangement);
     if (strpos($a, 'pick') !== false) return 'pickup';

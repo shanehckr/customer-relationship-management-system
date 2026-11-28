@@ -698,10 +698,13 @@ CREATE TABLE cib_ticket_messages (
  ticket_id INT UNSIGNED NOT NULL,
  sender_type VARCHAR(20) NOT NULL,
  sender_name VARCHAR(120) NOT NULL DEFAULT '',
+ sender_id INT UNSIGNED NULL,
  message TEXT NULL,
  attachments LONGTEXT NULL,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  INDEX idx_cib_ticket_messages (ticket_id,id),
+ INDEX idx_cib_ticket_sender (sender_id),
+ CONSTRAINT fk_cib_ticket_msg_sender FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE SET NULL ON UPDATE RESTRICT,
  CONSTRAINT fk_cib_tm_ticket FOREIGN KEY (ticket_id) REFERENCES cib_tickets(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

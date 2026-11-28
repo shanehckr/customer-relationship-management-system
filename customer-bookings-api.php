@@ -48,6 +48,14 @@ function ownBooking(AppDatabase $db, int $customerId, $id): array {
 
 function money($v): float { return (float)($v ?? 0); }
 
+function feedbackIniBytes(string $value): int {
+    $value = trim($value);
+    if ($value === '' || $value === '0') return 0;
+    if (!preg_match('/^(\d+(?:\.\d+)?)\s*([KMG])?$/i', $value, $match)) return 0;
+    $factor = strtoupper($match[2] ?? '') === 'G' ? 1073741824 : (strtoupper($match[2] ?? '') === 'M' ? 1048576 : (strtoupper($match[2] ?? '') === 'K' ? 1024 : 1));
+    return (int)round((float)$match[1] * $factor);
+}
+
 /**
  * The booking row can be missing pax / arrangement (they were typed on the inquiry and never copied over).
  * Look them up on the linked inquiry so "Expected Guests" can show for Buffet with Set-up.
@@ -192,18 +200,8 @@ function shapeBooking(AppDatabase $db, array $b): array {
     if ($deposit <= 0 && $total > 0) $deposit = round($total * 0.20, 2);
     $percent = $total > 0 ? (int)round($paid / $total * 100) : ($paid > 0 ? 100 : 0);
 
-    // Feedback (if any)
-    $fb = null;
-    $st = $db->prepare('SELECT * FROM booking_feedback WHERE booking_id = ? LIMIT 1');
-    $st->execute([(int)$b['booking_id']]);
-    if ($f = $st->fetch()) {
-        $fb = [
-            'rating'     => (int)$f['rating'],
-            'comments'   => (string)($f['comments'] ?? ''),
-            'images'     => $f['images'] ? (json_decode($f['images'], true) ?: []) : [],
-            'created_at' => str_replace(' ', 'T', $f['created_at']),
-        ];
-    }
+    // Include saved feedback and attachments.
+    $fb = bookingFeedbackMap($db, [(int)$b['booking_id']])[(int)$b['booking_id']] ?? null;
 
     $dateLabel = '';
     if (!empty($b['event_date'])) {
@@ -271,30 +269,55 @@ function shapeBooking(AppDatabase $db, array $b): array {
     ];
 }
 
-/* ---------- file uploads (for feedback images) ---------- */
-function saveFeedbackImages(int $limit = 4): array {   // $limit = how many more photos this booking can still take (max 4 in total)
+/* Feedback attachments (four combined maximum). */
+function saveFeedbackAttachments(int $limit = 4): array {
     $saved = [];
     if ($limit <= 0) return $saved;
     if (empty($_FILES['feedback_images']) || !is_array($_FILES['feedback_images']['name'])) return $saved;
     $dir = __DIR__ . '/uploads/feedback';
     $url = 'uploads/feedback';
-    $max = 25 * 1024 * 1024;
-    $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-    if (!is_dir($dir) && !mkdir($dir, 0775, true)) fail('Could not create the feedback folder.', 500);
+    $limits = ['image/jpeg' => 25 * 1024 * 1024, 'image/png' => 25 * 1024 * 1024, 'image/webp' => 25 * 1024 * 1024,
+               'video/mp4' => 50 * 1024 * 1024, 'video/webm' => 50 * 1024 * 1024];
+    $extensions = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/webp' => 'webp', 'video/mp4' => 'mp4', 'video/webm' => 'webm'];
+    $names = array_values(array_filter($_FILES['feedback_images']['name'], static fn($name) => (string)$name !== ''));
+    if (count($names) > $limit) fail('You can attach up to four photos or videos.');
+    $finfo = new finfo(FILEINFO_MIME_TYPE);
+    $validated = [];
     foreach ($_FILES['feedback_images']['name'] as $i => $original) {
-        if (count($saved) >= $limit) break;
         if ($_FILES['feedback_images']['error'][$i] === UPLOAD_ERR_NO_FILE) continue;
-        if ($_FILES['feedback_images']['error'][$i] !== UPLOAD_ERR_OK) fail('A photo could not be uploaded.');
-        if ($_FILES['feedback_images']['size'][$i] > $max) fail('Each photo must be 25 MB or smaller.');
+        $error = (int)$_FILES['feedback_images']['error'][$i];
+        if ($error !== UPLOAD_ERR_OK) {
+            if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) fail('The upload exceeds the server limit. Increase PHP upload_max_filesize and post_max_size to support the selected attachment.');
+            fail('An attachment could not be uploaded.');
+        }
+        $tmp = $_FILES['feedback_images']['tmp_name'][$i];
+        $mime = $finfo->file($tmp) ?: '';
+        if (!isset($limits[$mime])) fail('Only JPG, PNG, WebP, MP4, or WebM attachments are allowed.');
+        if ((int)$_FILES['feedback_images']['size'][$i] > $limits[$mime]) {
+            $type = str_starts_with($mime, 'video/') ? 'video' : 'image';
+            fail('Each ' . $type . ' must be ' . ($type === 'video' ? '50' : '25') . ' MB or smaller.');
+        }
         $ext = strtolower(pathinfo($original, PATHINFO_EXTENSION));
-        if (!in_array($ext, $allowed, true)) fail('Only JPG, PNG, or WebP photos are allowed.');
-        $safe = bin2hex(random_bytes(8)) . '.' . $ext;
-        if (!move_uploaded_file($_FILES['feedback_images']['tmp_name'][$i], $dir . '/' . $safe)) fail('Could not save the photo.', 500);
+        if (!in_array($ext, $mime === 'image/jpeg' ? ['jpg', 'jpeg'] : [$extensions[$mime]], true)) fail('The attachment extension does not match its file type.');
+        $mediaType = str_starts_with($mime, 'video/') ? 'VIDEO' : 'IMAGE';
+        $validated[] = ['original' => $original, 'tmp' => $tmp, 'mime' => $mime, 'ext' => $ext, 'media_type' => $mediaType, 'size' => (int)$_FILES['feedback_images']['size'][$i]];
+    }
+    if (!is_dir($dir) && !mkdir($dir, 0775, true)) fail('Could not create the feedback folder.', 500);
+    foreach ($validated as $file) {
+        $safe = bin2hex(random_bytes(8)) . '.' . $file['ext'];
+        if (!move_uploaded_file($file['tmp'], $dir . '/' . $safe)) {
+            foreach ($saved as $attachment) {
+                $path = __DIR__ . '/' . ltrim((string)$attachment['url'], '/');
+                if (is_file($path)) @unlink($path);
+            }
+            fail('Could not save the attachment.', 500);
+        }
         $saved[] = [
-            'name' => basename($original),
+            'name' => basename($file['original']),
             'url'  => $url . '/' . $safe,
-            'size' => (int)$_FILES['feedback_images']['size'][$i],
-            'mime_type' => 'image/' . ($ext === 'jpg' ? 'jpeg' : $ext),
+            'size' => $file['size'],
+            'mime_type' => $file['mime'],
+            'media_type' => $file['media_type'],
         ];
     }
     return $saved;
@@ -331,6 +354,10 @@ switch ($action) {
     case 'feedback':
     case 'submit_feedback': {   // customer-pages.js posts ?action=submit_feedback
         if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail('POST required.', 405);
+        $postLimit = feedbackIniBytes((string)ini_get('post_max_size'));
+        if ($postLimit > 0 && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > $postLimit) {
+            fail('The upload exceeds the server request limit. Increase PHP post_max_size to upload these attachments.', 413);
+        }
         $b = ownBooking($db, $customerId, $_POST['booking_id'] ?? 0);
 
         // Feedback opens only after the event is finished (Completed).
@@ -341,33 +368,42 @@ switch ($action) {
         $comments = trim((string)($_POST['comments'] ?? ''));
         if (mb_strlen($comments) > 1000) fail('Comments are too long (max 1000 characters).');
 
-        // One feedback per booking. Photos already saved count toward the limit of 4.
-        $existing = $db->prepare('SELECT feedback_id, images FROM booking_feedback WHERE booking_id = ? ORDER BY feedback_id DESC LIMIT 1');
+        // Keep feedback immutable; the unique booking constraint prevents concurrent duplicates.
+        $existing = $db->prepare('SELECT feedback_id FROM booking_feedback WHERE booking_id = ? LIMIT 1');
         $existing->execute([(int)$b['booking_id']]);
-        $prev = $existing->fetch();
-        $prevImages = ($prev && $prev['images']) ? (json_decode($prev['images'], true) ?: []) : [];
-        $images = saveFeedbackImages(4 - count($prevImages));
-        $allImages = array_slice(array_merge($prevImages, $images), 0, 4);
+        if ($existing->fetchColumn()) fail('Feedback has already been submitted for this booking.', 409);
+        $attachments = saveFeedbackAttachments(4);
 
         $payload = [
             'booking_id'  => (int)$b['booking_id'],
             'customer_id' => $customerId,
             'rating'      => $rating,
             'comments'    => $comments,
-            'images'      => json_encode($allImages),
+            'images'      => json_encode($attachments),
             'created_at'  => now(),
         ];
-        // INSERT ... ON DUPLICATE KEY UPDATE (unique key on booking_id): a double-click or an edit updates the same row.
-        $db->prepare('INSERT INTO booking_feedback (booking_id, customer_id, rating, comments, images, created_at) VALUES (?,?,?,?,?,?)
-                      ON DUPLICATE KEY UPDATE rating = VALUES(rating), comments = VALUES(comments), images = VALUES(images), created_at = VALUES(created_at)')
-           ->execute([$payload['booking_id'], $customerId, $rating, $comments, $payload['images'], $payload['created_at']]);
-        $feedbackIdQuery = $db->prepare('SELECT feedback_id FROM booking_feedback WHERE booking_id = ?');
-        $feedbackIdQuery->execute([$payload['booking_id']]);
-        $feedbackId = (int)$feedbackIdQuery->fetchColumn();
-        $attachmentInsert = $db->prepare("INSERT INTO feedback_attachments (feedback_id, media_type, file_path, original_name, mime_type, file_size)
-                                          VALUES (?, 'IMAGE', ?, ?, ?, ?)");
-        foreach ($images as $image) {
-            $attachmentInsert->execute([$feedbackId, (string)$image['url'], (string)$image['name'], (string)$image['mime_type'], (int)$image['size']]);
+        try {
+            $db->beginTransaction();
+            $db->prepare('INSERT INTO booking_feedback (booking_id, customer_id, rating, comments, images, created_at) VALUES (?,?,?,?,?,?)')
+               ->execute([$payload['booking_id'], $customerId, $rating, $comments, $payload['images'], $payload['created_at']]);
+            $feedbackId = (int)$db->lastInsertId();
+            $attachmentInsert = $db->prepare('INSERT INTO feedback_attachments (feedback_id, media_type, file_path, original_name, mime_type, file_size) VALUES (?,?,?,?,?,?)');
+            foreach ($attachments as $attachment) {
+                $attachmentInsert->execute([$feedbackId, $attachment['media_type'], $attachment['url'], $attachment['name'], $attachment['mime_type'], $attachment['size']]);
+            }
+            $db->commit();
+        } catch (Throwable $e) {
+            if ($db->inTransaction()) $db->rollBack();
+            foreach ($attachments as $attachment) {
+                $path = __DIR__ . '/' . ltrim((string)$attachment['url'], '/');
+                if (is_file($path)) @unlink($path);
+            }
+            $duplicate = ($e instanceof mysqli_sql_exception && (int)$e->getCode() === 1062)
+                || (string)$e->getCode() === '23000'
+                || stripos($e->getMessage(), 'duplicate entry') !== false;
+            if ($duplicate) fail('Feedback has already been submitted for this booking.', 409);
+            error_log('customer-bookings-api: feedback save failed: ' . $e->getMessage());
+            fail('Could not save your feedback. Please try again.', 500);
         }
 
         // Bell: the Sales Staff of this booking (+ Admin / Manager) sees the new feedback.
@@ -381,9 +417,11 @@ switch ($action) {
             'exclude_user_id' => $customerId,
         ]);
         out(['success' => true, 'feedback' => [
-            'rating'   => $rating,
+            'rating' => $rating,
             'comments' => $comments,
-            'images'   => json_decode($payload['images'], true),
+            'images' => $attachments,
+            'attachments' => $attachments,
+            'created_at' => str_replace(' ', 'T', $payload['created_at']),
         ]]);
     }
 

@@ -120,6 +120,6 @@ return [
     'retry_max_seconds' => 3600,
     'claim_seconds' => 300,
     'batch_limit' => 25,
-    'base_url' => rtrim($env('CRM_APP_BASE_URL', 'http://localhost/customer-relationship-management-system/'), '/') . '/',
+    'base_url' => crmApplicationBaseUrl(),
     'token_minutes' => 30,
 ];

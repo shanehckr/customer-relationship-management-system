@@ -238,18 +238,25 @@ document.addEventListener("DOMContentLoaded", () => {
 // Load page content into the application shell.
 
 // Fetch a page, then try the configured fallback if the request fails.
-const PAGES_FOLDER = 'html-content-navbar/';
+const PAGES_FOLDER = 'page-content.php?page=';
 function crmFetchPage(file, fallback) {
-  const fetchOptions = file === "settings-pages.html" || file === "ticket-pages.html" || file === "manager-admin-customers.html"
-    ? { cache: "no-store" }
-    : undefined;
-  return fetch(PAGES_FOLDER + file, fetchOptions)
+  return fetch(PAGES_FOLDER + encodeURIComponent(file), { credentials: "same-origin", cache: "no-store" })
     .then((response) => {
-      if (!response.ok) throw new Error("Could not fetch page: " + file);
+      if (response.redirected && new URL(response.url).pathname.endsWith("/login.php")) {
+        window.location.assign(response.url);
+        const error = new Error("Your session has expired. Please log in again.");
+        error.status = 401;
+        throw error;
+      }
+      if (!response.ok) {
+        const error = new Error("Could not fetch page: " + file);
+        error.status = response.status;
+        throw error;
+      }
       return response.text();
     })
     .catch((error) => {
-      if (fallback && fallback !== file) {
+      if (error.status !== 401 && error.status !== 403 && fallback && fallback !== file) {
         console.warn(file + " was not found, showing " + fallback + " instead.");
         return crmFetchPage(fallback);
       }
@@ -341,8 +348,8 @@ container.innerHTML = doc.body.innerHTML;
         const alertBox = document.createElement("div");
         alertBox.className = "alert alert-danger";
         alertBox.setAttribute("role", "alert");
-        alertBox.textContent = "This page could not be loaded (" + PAGES_FOLDER + file + "). " +
-          "Check that the file exists in that folder, then refresh the application. " +
+        alertBox.textContent = "This page could not be loaded (" + file + "). " +
+          "Check that you have permission to view it, then refresh the application. " +
           (error && error.message ? "Details: " + error.message : "");
         container.replaceChildren(alertBox);
       }

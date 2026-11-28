@@ -11,6 +11,46 @@ final class EmailService
 {
     private EmailTemplateRenderer $renderer;
 
+    /** Email-only lifecycle events intentionally disabled by the notification policy. */
+    public static function disabledNotificationTypes(): array
+    {
+        return [
+            'inquiry_received',
+            'quotation_revised',
+            'deposit_payment_required',
+            'booking_ready_for_pickup',
+            'booking_completed',
+            'booking_progress_update',
+            'booking_status_update',
+            'booking_progress',
+            'progress_update',
+            'event_reminder',
+            'booking_event_reminder',
+            'event_eve_reminder',
+            'event_day_reminder',
+            'feedback_request',
+            'booking_feedback_request',
+            'feedback_requested',
+            'deposit_reminder',
+            'deposit_payment_reminder',
+            'payment_deposit_reminder',
+            'deposit_due_reminder',
+            'balance_reminder',
+            'balance_payment_reminder',
+            'payment_balance_reminder',
+            'full_payment_reminder',
+            'payment_full_reminder',
+            'remaining_balance_reminder',
+            'inquiry_cancelled',
+            'inquiry_cancelled_by_customer',
+        ];
+    }
+
+    public static function isNotificationDisabled(string $type): bool
+    {
+        return in_array($type, self::disabledNotificationTypes(), true);
+    }
+
     public function __construct(private AppDatabase $db, private array $config)
     {
         $this->renderer = new EmailTemplateRenderer();
